@@ -8,6 +8,7 @@
   "connection_name",
   "company",
   "enabled",
+  "access_mode",
   "column_break_status",
   "status",
   "status_message",
@@ -119,6 +120,14 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Enabled"
+  },
+  {
+   "default": "Read and Write",
+   "description": "Read Only: the app only reads from Koomyo and never writes to it (no suppliers, Purchase Orders, receipts, ingredient costs or ERPNext ids). Read and Write also sends what is made in ERPNext.",
+   "fieldname": "access_mode",
+   "fieldtype": "Select",
+   "label": "Koomyo Access",
+   "options": "Read and Write\nRead Only"
   },
   {
    "fieldname": "column_break_status",

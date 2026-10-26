@@ -101,6 +101,8 @@ The stock step is its own Event Log row, so a stock problem never holds up the i
 
 **Opening Stock Date.** Stock events dated before this day are skipped, because the Warehouses' opening stock already contains them. Set it to the day after you entered opening stock.
 
+**Koomyo Access.** **Read and Write** (the default) also sends what is made in ERPNext: suppliers, Purchase Orders and receipts, ingredient costs, and the ERPNext id on Koomyo's records. **Read Only** only ever reads from Koomyo. Nothing is written back, the key doesn't need the write scopes, and the ERPNext-to-Koomyo purchasing doesn't run. Sales, refunds, shifts, stock, customers and orders made in Koomyo still come into ERPNext as usual. Work queued for Koomyo is skipped and can be sent later with Retry after switching back.
+
 **Dry Run.** With Dry Run ticked, every event is checked against the maps and ERPNext's rules, but nothing is saved and nothing is written to Koomyo. The Event Log says what would have been made. Untick it and press **Feed > Book Dry-Run Events** to book them for real.
 
 ### 5. In Koomyo: the webhook

@@ -75,6 +75,14 @@ def handles(*event_types: str, switch: str | None = None, scopes: tuple[str, ...
 # Work that starts in ERPNext (a submitted Purchase Order, ...) goes through the same Event
 # Log and processor under these types; Koomyo never sends them.
 OUTBOUND_PREFIX = "erpnext."
+# Connection setting "Koomyo Access": with Read Only the app never writes to Koomyo.
+READ_ONLY = "Read Only"
+
+
+def read_only(connection) -> bool:
+	return connection.get("access_mode") == READ_ONLY
+
+
 # Follow-up steps the app queues itself (Koomyo never sends these types either).
 INTERNAL_PREFIXES = (OUTBOUND_PREFIX, "koomyo.")
 
@@ -100,6 +108,9 @@ def required_scopes(connection=None) -> list[str]:
 	types = switched_on_types(connection, include_outbound=True) if connection is not None else list(DISPATCH)
 	for event_type in types:
 		scopes.update(HANDLER_SCOPES.get(event_type, ()))
+	if connection is not None and read_only(connection):
+		# Nothing is written to Koomyo, so the write scopes are not needed.
+		scopes = {s for s in scopes if not s.endswith(".write")}
 	return sorted(scopes)
 
 
@@ -320,6 +331,16 @@ def process_event(log_name: str):
 		)
 		return
 
+	if log.event_type.startswith(OUTBOUND_PREFIX) and read_only(connection):
+		_finish(
+			log,
+			"Skipped",
+			message=_(
+				"This connection is Read Only, so nothing is written to Koomyo. Set Koomyo Access to Read and Write and press Retry to send it."
+			),
+		)
+		return
+
 	switch = HANDLER_SWITCH.get(log.event_type)
 	if switch and not connection.get(switch):
 		label = _(connection.meta.get_label(switch))
@@ -413,6 +434,8 @@ class DryRunWrite(Exception):
 
 def koomyo_write(connection, client, method: str, path: str, body: dict | None, idempotency_key: str) -> dict:
 	"""Every write to Koomyo goes through here: dry run stops it, and it always carries an Idempotency-Key."""
+	if read_only(connection):
+		raise Skipped(_("This connection is Read Only: nothing is written to Koomyo."))
 	if connection.dry_run:
 		raise DryRunWrite(_("would send {0} {1}").format(method, path))
 	return client.request(method, path, json=body, idempotency_key=idempotency_key[:200])
@@ -428,6 +451,8 @@ def store_outbound(
 	connection, event_type: str, doc, action: str = "", extra: dict | None = None
 ) -> str | None:
 	"""Queue work that starts in ERPNext. One row per document version (the idempotency key)."""
+	if read_only(connection):
+		return None
 	key = idempotency_key(doc.doctype, doc.name, doc.modified, action)
 	if frappe.db.exists(EVENT_LOG, {"connection": connection.name, "event_id": key}):
 		return None

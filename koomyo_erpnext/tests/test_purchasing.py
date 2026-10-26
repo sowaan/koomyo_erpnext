@@ -388,3 +388,77 @@ class TestKoomyoMadeOrders(PurchasingTestCase):
 		log = self.book(self.koomyo_order())
 		self.assertEqual(log.status, "Skipped")
 		self.assertIn("Book Orders Made in Koomyo", log.message)
+
+
+class TestReadOnly(PurchasingTestCase):
+	"""Koomyo Access = Read Only: the app reads from Koomyo and never writes to it."""
+
+	def set_access(self, mode):
+		self.conn_a.reload()
+		self.conn_a.access_mode = mode
+		self.conn_a.save()
+
+	def test_nothing_is_queued_or_written(self):
+		self.set_access("Read Only")
+		self.make_po()
+		item = frappe.get_doc("Item", self.cheese)
+		item.valuation_rate = 1999
+		item.save()
+		frappe.db.commit()
+		self.run_queue()
+		self.assertEqual(self.outbound(), [], "ERPNext-made documents are not even queued")
+		self.assertEqual(self.fake_a.writes, [])
+
+	def test_work_queued_before_is_skipped_then_sent_after_switching_back(self):
+		self.make_po()  # queued while Read and Write
+		self.set_access("Read Only")
+		self.run_queue()
+		(log,) = self.outbound()
+		self.assertEqual(log.status, "Skipped")
+		self.assertIn("Read Only", log.message)
+		self.assertEqual(self.fake_a.writes, [])
+
+		self.set_access("Read and Write")
+		from koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koomyo_event_log import retry
+
+		retry([log.name])
+		self.run_queue()
+		self.assertEqual(frappe.db.get_value("Koomyo Event Log", log.name, "status"), "Done")
+		self.assertEqual(len(self.writes("/purchase-orders")), 1)
+
+	def test_reading_still_works_and_no_reference_is_written_back(self):
+		self.set_access("Read Only")
+		self.fake_a.lists["/categories"] = []
+		self.fake_a.lists["/menu-items"] = []
+		self.fake_a.lists["/ingredients"] = [self.fake_a.ingredients[MOZZARELLA]]
+		self.fake_a.add_ingredient("new-ing", "Olives", "kg")
+		self.fake_a.lists["/ingredients"].append(self.fake_a.ingredients["new-ing"])
+		from koomyo_erpnext.sync import catalog
+
+		with self.koomyo():
+			summary = catalog.load_catalog(self.conn_a.name)
+		self.assertEqual(summary["ingredients"]["created"], 1)
+		self.assertEqual(self.fake_a.writes, [], "the ERPNext id is not written to Koomyo")
+		log = self.book(self.koomyo_order_event())
+		self.assertEqual(log.status, "Skipped", "a Koomyo-made order is read, then skipped here as it is off")
+
+	def test_write_scopes_not_asked_for(self):
+		from koomyo_erpnext.sync import events
+
+		self.assertIn("purchasing.write", events.required_scopes(self.conn_a))
+		self.set_access("Read Only")
+		scopes = events.required_scopes(self.conn_a)
+		self.assertFalse([s for s in scopes if s.endswith(".write")], scopes)
+		self.assertIn("purchasing.read", scopes)
+		self.fake_a.account["key"]["scopes"] = [
+			s for s in self.fake_a.account["key"]["scopes"] if not s.endswith(".write")
+		]
+		with self.koomyo():
+			result = self.conn_a.test_connection()
+		self.assertEqual(result["missing_scopes"], [])
+
+	def koomyo_order_event(self):
+		event = load_fixture("event_purchase_received")
+		event["data"]["external_refs"] = {}
+		event.update({"tenant_id": TENANT_A, "seq": 97, "id": "evt-ro-po"})
+		return event

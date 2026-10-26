@@ -89,7 +89,13 @@ def update_primary_contact(customer, data: dict):
 def write_reference(connection, client, entity_type: str, record: dict, doc):
 	"""PUT /refs/{type}/{id}: store the ERPNext id on the Koomyo record (once; skipped if it is already there)."""
 	system = connection.ref_system or "erpnext"
-	if connection.dry_run or (record.get("external_refs") or {}).get(system) == doc.name:
+	from koomyo_erpnext.sync.events import read_only
+
+	if (
+		connection.dry_run
+		or read_only(connection)
+		or (record.get("external_refs") or {}).get(system) == doc.name
+	):
 		return
 	client = client or KoomyoClient.for_connection(connection)
 	koomyo_write(
