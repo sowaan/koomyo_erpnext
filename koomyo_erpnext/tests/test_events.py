@@ -328,3 +328,36 @@ class TestCleanup(EventsTestCase):
 		frappe.db.sql("update `tabKoomyo Event Log` set modified=%s where event_id in ('e1', 'e3')", old)
 		events.cleanup_event_log()
 		self.assertEqual(sorted(r.event_id for r in self.logs()), ["e2", "e3"])
+
+
+class TestConcurrency(EventsTestCase):
+	def test_deadlock_is_retried_not_left_processing(self):
+		self.add_shift(self.fake_a, 1, "e1")
+
+		def deadlock(event, connection):
+			frappe.db.rollback()  # what the database does on a deadlock: the savepoint is gone too
+			raise frappe.QueryDeadlockError("Deadlock found when trying to get lock")
+
+		use_test_handler(self, "shift.opened", deadlock)
+		with self.koomyo():
+			events.catch_up(self.conn_a.name)
+		events.process_pending(self.conn_a.name)
+		row = self.logs(self.conn_a.name)[0]
+		self.assertEqual((row.status, row.error_class), ("Failed", "Retryable"))
+		self.assertIn("busy", row.message)
+		self.assertIsNotNone(row.next_retry_on)
+
+	def test_only_one_processor_per_connection(self):
+		self.add_shift(self.fake_a, 1, "e1")
+		with self.koomyo():
+			events.catch_up(self.conn_a.name)
+		with patch.object(events, "acquire_lock", return_value=False):
+			events.process_pending(self.conn_a.name)
+		self.assertEqual(self.handled, [], "another processor holds the connection")
+		events.process_pending(self.conn_a.name)
+		self.assertEqual(len(self.handled), 1)
+
+	def test_lock_is_released_after_processing(self):
+		events.process_pending(self.conn_a.name)
+		lock = events.processing_lock_name(self.conn_a.name)
+		self.assertEqual(frappe.db.sql("select is_free_lock(%s)", (lock,))[0][0], 1)

@@ -431,6 +431,6 @@ class KoomyoIntegrationTestCase(KoomyoTestCase):
 		return patch_koomyo(self.fake_a, self.fake_b)
 
 	def logs(self, connection=None, **filters):
-		if connection:
-			filters["connection"] = connection
+		# Only this test's connections: real connections on the site keep their own rows.
+		filters["connection"] = connection or ("in", (self.conn_a.name, self.conn_b.name))
 		return frappe.get_all("Koomyo Event Log", filters=filters, fields=["*"], order_by="seq asc")

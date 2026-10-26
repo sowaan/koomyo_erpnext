@@ -252,18 +252,54 @@ def due_events(connection_name: str, limit: int = PROCESS_BATCH) -> list[str]:
 
 
 def process_pending(connection_name: str):
-	"""Handle every due event of one connection, oldest `seq` first. Commits per event."""
+	"""Handle every due event of one connection, oldest `seq` first. Commits per event.
+
+	Only one processor runs per connection at a time (a database lock): a second one, from
+	the scheduler, a button or a webhook, leaves at once and the first carries on to the end.
+	"""
 	if not frappe.db.get_value(CONNECTION, connection_name, "enabled"):
 		return
-	seen = set()
-	while True:
-		names = [n for n in due_events(connection_name) if n not in seen]
-		if not names:
-			return
-		for name in names:
-			seen.add(name)
-			process_event(name)
-			frappe.db.commit()
+	lock = processing_lock_name(connection_name)
+	if not acquire_lock(lock):
+		return
+	try:
+		seen = set()
+		while True:
+			names = [n for n in due_events(connection_name) if n not in seen]
+			if not names:
+				return
+			for name in names:
+				seen.add(name)
+				process_event(name)
+				frappe.db.commit()
+	finally:
+		release_lock(lock)
+
+
+def processing_lock_name(connection_name: str) -> str:
+	import hashlib
+
+	# MariaDB lock names are at most 64 characters.
+	return "koomyo-" + hashlib.sha1(f"{frappe.local.site}:{connection_name}".encode()).hexdigest()[:32]
+
+
+def acquire_lock(name: str) -> bool:
+	"""A session lock that outlives commits and is freed if the worker dies."""
+	return frappe.db.sql("select get_lock(%s, 0)", (name,))[0][0] == 1
+
+
+def release_lock(name: str):
+	frappe.db.sql("select release_lock(%s)", (name,))
+
+
+def _undo():
+	"""Roll the handler's work back. After a deadlock the database has already rolled back the
+	whole transaction (and the savepoint with it): then roll back fully, to the Processing row
+	committed just before the handler ran."""
+	try:
+		frappe.db.rollback(save_point="koomyo_event")
+	except Exception:
+		frappe.db.rollback()
 
 
 def process_event(log_name: str):
@@ -309,34 +345,43 @@ def process_event(log_name: str):
 		if dry_run:
 			raise DryRunDone(result)
 	except DryRunWrite as e:
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		log.dry_run = 1
 		_finish(log, "Skipped", message=_("Dry run: {0}. Nothing was sent to Koomyo.").format(e))
 	except DryRunDone as e:
 		what = e.describe()  # read before the rollback removes it
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		log.dry_run = 1
 		_finish(
 			log, "Skipped", message=_("Dry run: this event would make {0}. Nothing was saved.").format(what)
 		)
 	except Skipped as e:
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		_finish(log, "Skipped", message=str(e))
 	except NeedsMapping as e:
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		_finish(log, "Failed", error_class="NeedsMapping", message=str(e))
 	except (Retryable, KoomyoAPIError) as e:
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		if isinstance(e, KoomyoAPIError) and not e.is_retryable:
 			_finish(log, "Failed", error_class="Fatal", message=str(e))
 		else:
 			_fail_retryable(log, str(e))
 	except Fatal as e:
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		_finish(log, "Failed", error_class="Fatal", message=str(e))
+	except (frappe.QueryDeadlockError, frappe.QueryTimeoutError, frappe.TimestampMismatchError) as e:
+		# Another process touched the same rows at the same moment: a passing clash, try again.
+		_undo()
+		_fail_retryable(
+			log,
+			_("The database was busy with the same records ({0}). It will be tried again.").format(
+				type(e).__name__
+			),
+		)
 	except frappe.ValidationError as e:
 		# ERPNext refused the document (closed period, a missing default, ...): its message says why.
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		_finish(
 			log,
 			"Failed",
@@ -345,7 +390,7 @@ def process_event(log_name: str):
 			error=traceback.format_exc(),
 		)
 	except Exception as e:
-		frappe.db.rollback(save_point="koomyo_event")
+		_undo()
 		_finish(
 			log,
 			"Failed",
