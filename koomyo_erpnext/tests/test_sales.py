@@ -353,6 +353,47 @@ class TestSalesInvoice(SalesTestCase):
 		self.assertEqual(frappe.db.get_value("Item", large.item_code, "koomyo_id"), "size-L")
 		self.assertMoney(inv.grand_total, "2139.00")
 
+	def test_free_order_books_at_zero_not_the_price_list(self):
+		# Koomyo sold a complimentary item: 0.00 due, 0.00 paid. ERPNext must not re-price it.
+		event = order_event(
+			lines=[
+				{
+					"item_id": "menu-free",
+					"name": "Chicken Max",
+					"size": None,
+					"size_id": None,
+					"quantity": 1,
+					"unit_price": "0.00",
+					"line_total": "0.00",
+				}
+			],
+			payments=[("cash", "0.00")],
+			items_subtotal="0.00",
+			total="0.00",
+			amount_due="0.00",
+			amount_paid="0.00",
+		)
+		# The Item has a list price of 499 (as every loaded menu item does).
+		from koomyo_erpnext.sync.items import menu_item
+
+		code = menu_item(self.conn_a, event["data"]["items"][0])
+		frappe.get_doc(
+			{
+				"doctype": "Item Price",
+				"item_code": code,
+				"price_list": "_Koomyo Selling",
+				"price_list_rate": 499,
+			}
+		).insert()
+		log = self.book(event)
+		self.assertEqual(log.status, "Done", log.message)
+		inv = self.invoice()
+		self.assertMoney(inv.grand_total, "0.00")
+		self.assertMoney(inv.items[0].amount, "0.00")
+		self.assertEqual(inv.docstatus, 1)
+		self.assertEqual(self.payments(inv), [], "nothing was paid, so no Payment Entry")
+		self.assertEqual(gl("Sales Invoice", inv.name), {})
+
 	def test_totals_that_do_not_add_up_book_nothing(self):
 		event = order_event(
 			lines=[{"quantity": 1, "unit_price": "1000.00", "line_total": "1000.00"}],

@@ -246,18 +246,21 @@ def add_order_line(invoice, connection, line: dict, income_account: str, cost_ce
 	chosen = [escape_html(n) for n in chosen if n]
 	description = escape_html(label) + (" — " + ", ".join(chosen) if chosen else "")
 
-	invoice.append(
-		"items",
-		{
-			"item_code": item_code,
-			"item_name": label[:140],
-			"description": description,
-			"qty": quantity,
-			"rate": to_field(unit_price),
-			"income_account": income_account,
-			"cost_center": cost_center,
-		},
-	)
+	row = {
+		"item_code": item_code,
+		"item_name": label[:140],
+		"description": description,
+		"qty": quantity,
+		"rate": to_field(unit_price),
+		"income_account": income_account,
+		"cost_center": cost_center,
+	}
+	if not unit_price:
+		# ERPNext fills a rate of 0 from the Item's price list. Koomyo sold this line for nothing
+		# (a complimentary item), so book it at the list price with a 100% line discount: the
+		# line total is exactly 0.
+		row["discount_percentage"] = 100
+	invoice.append("items", row)
 	extras = line_total - unit_price * quantity
 	if extras < 0:
 		raise Fatal(
