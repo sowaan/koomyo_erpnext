@@ -53,6 +53,7 @@ class FakeKoomyo:
 			self.account["key"]["scopes"] = list(scopes)
 		self.branches = load_fixture("branches")["data"]
 		self.events: list[dict] = []
+		self.orders: dict[str, dict] = {}
 		self.down = False
 		# path -> list of FakeResponse to return first (then normal routing)
 		self.scripted: dict[str, list[FakeResponse]] = {}
@@ -86,6 +87,8 @@ class FakeKoomyo:
 			)
 		if path == "/events":
 			return self._events(params or {})
+		if path.startswith("/orders/") and path[len("/orders/") :] in self.orders:
+			return FakeResponse(200, self.orders[path[len("/orders/") :]])
 		return error_response(404, "not_found")
 
 	def _events(self, params):

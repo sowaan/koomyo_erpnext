@@ -6,8 +6,17 @@ const KOOMYO_RETRY = "koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koo
 frappe.listview_settings["Koomyo Event Log"] = {
 	add_fields: ["status", "error_class"],
 	get_indicator(doc) {
-		const colors = { Pending: "orange", Processing: "blue", Done: "green", Skipped: "gray", Failed: "red" };
-		const label = doc.status === "Failed" && doc.error_class ? `${__("Failed")}: ${doc.error_class}` : __(doc.status);
+		const colors = {
+			Pending: "orange",
+			Processing: "blue",
+			Done: "green",
+			Skipped: "gray",
+			Failed: "red",
+		};
+		const label =
+			doc.status === "Failed" && doc.error_class
+				? `${__("Failed")}: ${doc.error_class}`
+				: __(doc.status);
 		return [label, colors[doc.status] || "gray", `status,=,${doc.status}`];
 	},
 	onload(listview) {

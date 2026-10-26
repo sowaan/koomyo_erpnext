@@ -33,8 +33,14 @@ class TestWebhook(KoomyoIntegrationTestCase):
 		self.assertEqual(rows[0].event_id, event["id"])
 		self.assertEqual(rows[0].received_via, "Webhook")
 		self.assertEqual(rows[0].company, self.conn_a.company)
-		# Nothing syncs order.paid yet in this version: stored and visible as Skipped.
-		self.assertEqual(rows[0].status, "Skipped")
+		self.assertEqual(rows[0].status, "Pending")
+		# Sync Sales is off on this connection: processing skips it, visibly and replayably.
+		from koomyo_erpnext.sync import events
+
+		events.process_pending(self.conn_a.name)
+		row = self.logs(self.conn_a.name)[0]
+		self.assertEqual(row.status, "Skipped")
+		self.assertIn("Sync Sales is off", row.message)
 
 	def test_handled_type_is_pending_and_enqueued(self):
 		from koomyo_erpnext.sync import events

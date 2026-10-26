@@ -8,7 +8,8 @@ from frappe.utils import get_datetime, get_url, now_datetime, today
 
 from koomyo_erpnext.client import KoomyoClient, validate_base_url
 from koomyo_erpnext.exceptions import KoomyoAPIError
-from koomyo_erpnext.sync.events import handled_types, required_scopes
+from koomyo_erpnext.sync.events import required_scopes, switched_on_types
+from koomyo_erpnext.utils import parse_money
 
 CLOCK_DRIFT_WARN_SECONDS = 60
 
@@ -17,18 +18,23 @@ class KoomyoConnection(Document):
 	def onload(self):
 		if self.webhook_token:
 			self.webhook_url = webhook_url(self.webhook_token)
-		self.events_to_register = events_to_register()
+		self.events_to_register = events_to_register(self)
 
 	def validate(self):
 		self.base_url = validate_base_url(self.base_url)
 		if not self.webhook_token:
 			self.webhook_token = frappe.generate_hash(length=32)
 		self.webhook_url = webhook_url(self.webhook_token)
-		self.events_to_register = events_to_register()
+		self.events_to_register = events_to_register(self)
+		if self.key_scopes:
+			scopes = {s.strip() for s in self.key_scopes.split(",")}
+			self.missing_scopes = ", ".join(s for s in required_scopes(self) if s not in scopes)
 
 		self.reset_test_when_credentials_change()
 		self.validate_company_change()
 		self.validate_branch_map()
+		self.validate_payment_and_tax_maps()
+		self.validate_defaults()
 		self.validate_unique_restaurant_and_company()
 		self.validate_enable()
 
@@ -64,7 +70,6 @@ class KoomyoConnection(Document):
 			for doctype, fieldname in (
 				("Cost Center", "cost_center"),
 				("Warehouse", "warehouse"),
-				("POS Profile", "pos_profile"),
 			):
 				value = row.get(fieldname)
 				if value and frappe.db.get_value(doctype, value, "company") != self.company:
@@ -96,6 +101,63 @@ class KoomyoConnection(Document):
 				_(
 					"Koomyo branch {0} is already mapped in connection {1} for the same Koomyo restaurant. Each branch can go to one Company only."
 				).format(frappe.bold(branch_id), frappe.bold(other))
+			)
+
+	def validate_payment_and_tax_maps(self):
+		seen = set()
+		for row in self.payment_map:
+			row.koomyo_method = (row.koomyo_method or "").strip()
+			if row.koomyo_method in seen:
+				frappe.throw(
+					_("Payment Map row {0}: method {1} is mapped twice.").format(row.idx, row.koomyo_method)
+				)
+			seen.add(row.koomyo_method)
+			self.check_account_company(row.account, _("Payment Map row {0}").format(row.idx))
+			if row.fee_percent:
+				self.check_account_company(row.fee_account, _("Payment Map row {0}").format(row.idx))
+		for row in self.tax_map:
+			if (row.tax_rate or "").strip():
+				try:
+					parse_money(row.tax_rate.strip())
+				except ValueError:
+					frappe.throw(
+						_("Tax Map row {0}: {1} is not a rate such as 15 or 15.00.").format(
+							row.idx, row.tax_rate
+						)
+					)
+			self.check_account_company(row.account_head, _("Tax Map row {0}").format(row.idx))
+
+	def validate_defaults(self):
+		for fieldname in (
+			"income_account",
+			"delivery_fee_account",
+			"channel_markup_account",
+			"payment_adjustment_account",
+		):
+			self.check_account_company(self.get(fieldname), _(self.meta.get_label(fieldname)))
+		if self.price_list:
+			currency = frappe.db.get_value("Price List", self.price_list, "currency")
+			company_currency = frappe.get_cached_value("Company", self.company, "default_currency")
+			if currency != company_currency:
+				frappe.throw(
+					_("Price List {0} is in {1}; Company {2} works in {3}.").format(
+						self.price_list, currency, self.company, company_currency
+					)
+				)
+		if (
+			self.default_cost_center
+			and frappe.db.get_value("Cost Center", self.default_cost_center, "company") != self.company
+		):
+			frappe.throw(
+				_("{0} does not belong to Company {1}.").format(self.default_cost_center, self.company)
+			)
+
+	def check_account_company(self, account, where):
+		if account and frappe.db.get_value("Account", account, "company") != self.company:
+			frappe.throw(
+				_("{0}: Account {1} does not belong to Company {2}.").format(
+					where, frappe.bold(account), frappe.bold(self.company)
+				)
 			)
 
 	def validate_unique_restaurant_and_company(self):
@@ -154,7 +216,7 @@ class KoomyoConnection(Document):
 			return result
 
 		scopes = sorted(account["key"]["scopes"])
-		missing = [s for s in required_scopes() if s not in scopes]
+		missing = [s for s in required_scopes(self) if s not in scopes]
 		self.restaurant_name = account["name"]
 		self.tenant_id = account["tenant_id"]
 		self.koomyo_currency = account["currency"]
@@ -243,6 +305,26 @@ class KoomyoConnection(Document):
 		return _("Reading the Koomyo events feed in the background. Watch the Event Log.")
 
 	@frappe.whitelist()
+	def book_dry_run_events(self):
+		"""After a dry run: queue every event that was only checked, so it is booked for real."""
+		self.check_permission("write")
+		if self.dry_run:
+			frappe.throw(_("Switch Dry Run off first."))
+		from koomyo_erpnext.sync.events import enqueue_processing, reset_for_retry
+
+		names = frappe.get_all(
+			"Koomyo Event Log",
+			filters={"connection": self.name, "dry_run": 1, "status": "Skipped"},
+			pluck="name",
+			order_by="seq asc",
+		)
+		for name in names:
+			reset_for_retry(frappe.get_doc("Koomyo Event Log", name))
+		if names:
+			enqueue_processing(self.name)
+		return _("{0} event(s) queued to be booked.").format(len(names))
+
+	@frappe.whitelist()
 	def restart_feed(self):
 		"""After a gap longer than the feed keeps: start reading again from today.
 
@@ -266,11 +348,11 @@ def webhook_url(token: str) -> str:
 	return get_url(f"/api/method/koomyo_erpnext.api.webhook?c={token}")
 
 
-def events_to_register() -> str:
-	types = handled_types()
+def events_to_register(connection) -> str:
+	types = switched_on_types(connection)
 	if not types:
 		return _(
-			"None yet. This version only stores events; you can add the endpoint now and press Send test in Koomyo."
+			"None yet. Switch on a sync below; you can add the endpoint now and press Send test in Koomyo."
 		)
 	return ", ".join(types)
 

@@ -17,6 +17,7 @@
   "webhook_secret",
   "column_break_api",
   "start_from_date",
+  "dry_run",
   "section_restaurant",
   "restaurant_name",
   "tenant_id",
@@ -34,6 +35,23 @@
   "webhook_token",
   "section_branches",
   "branch_map",
+  "section_syncs",
+  "sync_sales",
+  "sync_refunds",
+  "partial_refunds",
+  "column_break_sales",
+  "walk_in_customer",
+  "menu_item_group",
+  "income_account",
+  "price_list",
+  "default_cost_center",
+  "delivery_fee_account",
+  "channel_markup_account",
+  "payment_adjustment_account",
+  "section_payment_map",
+  "payment_map",
+  "section_tax_map",
+  "tax_map",
   "section_feed",
   "last_seq",
   "last_caught_up_on",
@@ -130,6 +148,13 @@
    "fieldtype": "Date",
    "label": "Start From Date",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Check every event against the maps and ERPNext rules, but save nothing. The Event Log says what would have been made.",
+   "fieldname": "dry_run",
+   "fieldtype": "Check",
+   "label": "Dry Run"
   },
   {
    "collapsible": 0,
@@ -242,6 +267,118 @@
    "fieldtype": "Table",
    "label": "Branch Map",
    "options": "Koomyo Branch Map"
+  },
+  {
+   "fieldname": "section_syncs",
+   "fieldtype": "Section Break",
+   "label": "Sales and Refunds"
+  },
+  {
+   "default": "0",
+   "description": "order.paid becomes a submitted Sales Invoice with one Payment Entry per payment.",
+   "fieldname": "sync_sales",
+   "fieldtype": "Check",
+   "label": "Sync Sales"
+  },
+  {
+   "default": "0",
+   "description": "refund.created becomes a Credit Note against the order's Sales Invoice, with its payment out.",
+   "fieldname": "sync_refunds",
+   "fieldtype": "Check",
+   "label": "Sync Refunds"
+  },
+  {
+   "default": "Leave for Manual Booking",
+   "depends_on": "sync_refunds",
+   "description": "Koomyo sends a refund amount without lines. Proportional reverses revenue and taxes in the same share, exact to the cent. Full refunds always mirror the invoice.",
+   "fieldname": "partial_refunds",
+   "fieldtype": "Select",
+   "label": "Partial Refunds",
+   "options": "Leave for Manual Booking\nProportional Credit Note"
+  },
+  {
+   "fieldname": "column_break_sales",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "walk_in_customer",
+   "fieldtype": "Link",
+   "label": "Walk-in Customer",
+   "mandatory_depends_on": "sync_sales",
+   "options": "Customer"
+  },
+  {
+   "description": "Koomyo menu items are created here as non-stock Items the first time they are sold.",
+   "fieldname": "menu_item_group",
+   "fieldtype": "Link",
+   "label": "Menu Item Group",
+   "mandatory_depends_on": "sync_sales",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "income_account",
+   "fieldtype": "Link",
+   "label": "Income Account",
+   "mandatory_depends_on": "sync_sales",
+   "options": "Account"
+  },
+  {
+   "description": "Shown on the invoices only; the rates always come from Koomyo.",
+   "fieldname": "price_list",
+   "fieldtype": "Link",
+   "label": "Selling Price List",
+   "mandatory_depends_on": "sync_sales",
+   "options": "Price List"
+  },
+  {
+   "fieldname": "default_cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center for Records Without a Branch",
+   "options": "Cost Center"
+  },
+  {
+   "description": "Needed once an order has a delivery fee.",
+   "fieldname": "delivery_fee_account",
+   "fieldtype": "Link",
+   "label": "Delivery Fee Account",
+   "options": "Account"
+  },
+  {
+   "description": "Needed once an order has a channel markup (for example Foodpanda).",
+   "fieldname": "channel_markup_account",
+   "fieldtype": "Link",
+   "label": "Channel Markup Account",
+   "options": "Account"
+  },
+  {
+   "description": "Needed once an order has a payment-method discount or surcharge.",
+   "fieldname": "payment_adjustment_account",
+   "fieldtype": "Link",
+   "label": "Payment Method Discount Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "section_payment_map",
+   "fieldtype": "Section Break",
+   "label": "Payment Methods"
+  },
+  {
+   "fieldname": "payment_map",
+   "fieldtype": "Table",
+   "label": "Payment Map",
+   "options": "Koomyo Payment Map"
+  },
+  {
+   "description": "Koomyo sends one tax amount and rate per order, and whether prices include tax. Map each rate to a tax account. The most exact row wins: branch and rate, then rate, then branch, then an empty row.",
+   "fieldname": "section_tax_map",
+   "fieldtype": "Section Break",
+   "label": "Taxes"
+  },
+  {
+   "fieldname": "tax_map",
+   "fieldtype": "Table",
+   "label": "Tax Map",
+   "options": "Koomyo Tax Map"
   },
   {
    "collapsible": 1,

@@ -58,7 +58,9 @@ class TestConnection(KoomyoIntegrationTestCase):
 		self.assertIn("events.read", conn.missing_scopes)
 
 	def test_handler_scopes_are_required(self):
+		events.DISPATCH["shift.opened"] = lambda e, c: None
 		events.HANDLER_SCOPES["shift.opened"] = ("shifts.read",)
+		self.addCleanup(events.DISPATCH.pop, "shift.opened", None)
 		self.addCleanup(events.HANDLER_SCOPES.pop, "shift.opened", None)
 		self.fake_a.account["key"]["scopes"] = ["events.read", "catalog.read"]
 		conn = self.fresh()

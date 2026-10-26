@@ -30,7 +30,7 @@ One branch serves both versions; `koomyo_erpnext/compat.py` holds the few differ
 - **Alerts**: a connection with a revoked key or a feed gap shows **Needs Attention** or **Needs Re-sync** and emails the alert address once a day.
 - **Koomyo Manager** role. Combine it with a User Permission on Company so an accountant sees only their Company's connection and events.
 
-No event type books documents yet. Sales and refunds come in slice 2. Until then, events are stored and shown as Skipped, and the webhook endpoint can be registered and checked with Koomyo's **Send test**.
+**Sales and refunds (slice 2).** With **Sync Sales** on, each paid Koomyo order becomes a submitted Sales Invoice plus one Payment Entry per payment, matching Koomyo's `amount_due` to the cent. With **Sync Refunds** on, each refund becomes a Credit Note and the payment out. Partial refunds follow the **Partial Refunds** setting (see `docs/API_GAPS.md`). **Dry Run** checks everything and saves nothing.
 
 ### Install
 

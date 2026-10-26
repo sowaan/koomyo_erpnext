@@ -1,0 +1,48 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T16:58:30Z",
+ "currency": "PKR",
+ "data": {
+  "branch_id": "90000000-0000-4000-8000-000000000001",
+  "business_date": "2026-10-12",
+  "cash_variance": "-723.50",
+  "closed_at": "2026-10-12T16:58:30Z",
+  "closed_by": "e3f4cd91-f745-4a67-9d5b-480ed538b3e0",
+  "counted_cash": "2450.00",
+  "currency": "PKR",
+  "expected_cash": "3173.50",
+  "external_refs": {},
+  "id": "525f08ca-00c2-408e-a6b2-8815be64ad98",
+  "notes": null,
+  "object": "shift",
+  "opened_at": "2026-10-12T16:52:51Z",
+  "opened_by": "e3f4cd91-f745-4a67-9d5b-480ed538b3e0",
+  "opening_cash": "1000.00",
+  "payments_by_method": [
+   {
+    "amount": "2173.50",
+    "method": "cash",
+    "orders": 2,
+    "settles_as_cash": true
+   }
+  ],
+  "refunds": {
+   "amount": "724.50",
+   "count": 1
+  },
+  "rider_cash_handed_in": "0.00",
+  "status": "closed"
+ },
+ "entity": {
+  "id": "525f08ca-00c2-408e-a6b2-8815be64ad98",
+  "type": "shift"
+ },
+ "id": "2082f75d-6c64-474e-8655-3af6a0f27e6d",
+ "object": "event",
+ "seq": 18,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "shift.closed"
+}

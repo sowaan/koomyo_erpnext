@@ -3,12 +3,17 @@
 
 frappe.ui.form.on("Koomyo Event Log", {
 	refresh(frm) {
+		// Every field is written by the app; the only action is Retry.
+		frm.disable_save();
 		if (["Failed", "Skipped"].includes(frm.doc.status)) {
 			frm.add_custom_button(__("Retry"), () =>
 				frappe
-					.call("koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koomyo_event_log.retry", {
-						names: [frm.doc.name],
-					})
+					.call(
+						"koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koomyo_event_log.retry",
+						{
+							names: [frm.doc.name],
+						}
+					)
 					.then((r) => {
 						frappe.show_alert(r.message);
 						frm.reload_doc();

@@ -1,0 +1,39 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T16:54:14Z",
+ "currency": "PKR",
+ "data": {
+  "amount": "724.50",
+  "branch_id": "90000000-0000-4000-8000-000000000001",
+  "business_date": "2026-10-12",
+  "created_at": "2026-10-12T16:54:14Z",
+  "currency": "PKR",
+  "external_refs": {},
+  "id": "f2a6054e-c2ce-4ead-a08a-ecc7a22f2871",
+  "object": "refund",
+  "order": {
+   "customer_id": null,
+   "id": "a8955e7a-335a-4ad0-a872-56b6d2479f80",
+   "number": "ORD-PFB-20261012-0002",
+   "payment_status": "paid",
+   "total": "724.50"
+  },
+  "order_id": "a8955e7a-335a-4ad0-a872-56b6d2479f80",
+  "order_number": "ORD-PFB-20261012-0002",
+  "payment_method": "cash",
+  "reason": "Order cancelled: test",
+  "shift_id": "525f08ca-00c2-408e-a6b2-8815be64ad98"
+ },
+ "entity": {
+  "id": "f2a6054e-c2ce-4ead-a08a-ecc7a22f2871",
+  "type": "refund"
+ },
+ "id": "92d98b66-f567-452c-9d67-119baded028e",
+ "object": "event",
+ "seq": 5,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "refund.created"
+}

@@ -8,8 +8,7 @@
   "koomyo_branch_id",
   "koomyo_branch_name",
   "cost_center",
-  "warehouse",
-  "pos_profile"
+  "warehouse"
  ],
  "fields": [
   {
@@ -44,14 +43,6 @@
    "label": "Warehouse",
    "options": "Warehouse",
    "reqd": 1
-  },
-  {
-   "columns": 1,
-   "fieldname": "pos_profile",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "POS Profile",
-   "options": "POS Profile"
   }
  ],
  "istable": 1,

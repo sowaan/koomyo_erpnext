@@ -17,7 +17,8 @@ from datetime import timedelta
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, get_datetime, getdate, now_datetime
+from frappe.utils import add_to_date, get_datetime, getdate, now_datetime, strip_html
+from frappe.utils.data import convert_utc_to_system_timezone
 
 from koomyo_erpnext.client import KoomyoClient, check_event
 from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping, Retryable, Skipped
@@ -44,23 +45,28 @@ Handler = Callable[[dict, "frappe.model.document.Document"], tuple[str, str] | N
 # event type -> handler. Filled by the sync modules with @handles(...).
 DISPATCH: dict[str, Handler] = {}
 HANDLER_SCOPES: dict[str, tuple[str, ...]] = {}
+HANDLER_SWITCH: dict[str, str | None] = {}
 
 # Back-off before automatic retry n (1-based) of a Retryable failure.
 RETRY_BACKOFF_MINUTES = (1, 5, 15, 30, 60, 120, 240, 480)
 
 
-def handles(*event_types: str, scopes: tuple[str, ...] = ()):
+def handles(*event_types: str, switch: str | None = None, scopes: tuple[str, ...] = ()):
 	"""Register a handler for one or more event types.
 
 	A handler takes (event, connection) and creates its ERPNext documents in the
 	current transaction. It returns (doctype, name) of the main document, or None,
 	or raises Retryable / NeedsMapping / Skipped / Fatal.
+
+	`switch` is the Check field on Koomyo Connection that turns the sync on;
+	`scopes` are the API key scopes the sync needs (docs: reference/scopes).
 	"""
 
 	def decorator(fn: Handler) -> Handler:
 		for event_type in event_types:
 			DISPATCH[event_type] = fn
 			HANDLER_SCOPES[event_type] = tuple(scopes)
+			HANDLER_SWITCH[event_type] = switch
 		return fn
 
 	return decorator
@@ -70,10 +76,17 @@ def handled_types() -> list[str]:
 	return sorted(DISPATCH)
 
 
-def required_scopes() -> list[str]:
+def switched_on_types(connection) -> list[str]:
+	"""Event types this connection books: their sync switch is on."""
+	return sorted(t for t in DISPATCH if not HANDLER_SWITCH.get(t) or connection.get(HANDLER_SWITCH[t]))
+
+
+def required_scopes(connection=None) -> list[str]:
+	"""Scopes for what is switched on (all handled types when no connection is given)."""
 	scopes = set(BASE_SCOPES)
-	for event_scopes in HANDLER_SCOPES.values():
-		scopes.update(event_scopes)
+	types = switched_on_types(connection) if connection is not None else handled_types()
+	for event_type in types:
+		scopes.update(HANDLER_SCOPES.get(event_type, ()))
 	return sorted(scopes)
 
 
@@ -214,6 +227,18 @@ def process_event(log_name: str):
 		)
 		return
 
+	switch = HANDLER_SWITCH.get(log.event_type)
+	if switch and not connection.get(switch):
+		label = _(connection.meta.get_label(switch))
+		_finish(
+			log,
+			"Skipped",
+			message=_(
+				"{0} is off for this connection. Switch it on and press Retry to book this event."
+			).format(label),
+		)
+		return
+
 	log.attempts = (log.attempts or 0) + 1
 	log.status = "Processing"
 	log.save(ignore_permissions=True)
@@ -221,8 +246,18 @@ def process_event(log_name: str):
 
 	event = json.loads(log.payload)
 	frappe.db.savepoint("koomyo_event")
+	dry_run = bool(connection.dry_run)
 	try:
 		result = handler(event, connection)
+		if dry_run:
+			raise DryRunDone(result)
+	except DryRunDone as e:
+		what = e.describe()  # read before the rollback removes it
+		frappe.db.rollback(save_point="koomyo_event")
+		log.dry_run = 1
+		_finish(
+			log, "Skipped", message=_("Dry run: this event would make {0}. Nothing was saved.").format(what)
+		)
 	except Skipped as e:
 		frappe.db.rollback(save_point="koomyo_event")
 		_finish(log, "Skipped", message=str(e))
@@ -238,6 +273,16 @@ def process_event(log_name: str):
 	except Fatal as e:
 		frappe.db.rollback(save_point="koomyo_event")
 		_finish(log, "Failed", error_class="Fatal", message=str(e))
+	except frappe.ValidationError as e:
+		# ERPNext refused the document (closed period, a missing default, ...): its message says why.
+		frappe.db.rollback(save_point="koomyo_event")
+		_finish(
+			log,
+			"Failed",
+			error_class="Fatal",
+			message=_("ERPNext refused it: {0}").format(strip_html(str(e)) or type(e).__name__),
+			error=traceback.format_exc(),
+		)
 	except Exception as e:
 		frappe.db.rollback(save_point="koomyo_event")
 		_finish(
@@ -248,8 +293,29 @@ def process_event(log_name: str):
 			error=traceback.format_exc(),
 		)
 	else:
+		log.dry_run = 0
 		reference = result if isinstance(result, tuple | list) and len(result) == 2 else (None, None)
 		_finish(log, "Done", reference=reference)
+	finally:
+		# Messages ERPNext printed while building documents mean nothing to a background job.
+		frappe.local.message_log = []
+
+
+class DryRunDone(Exception):
+	"""Raised after a handler succeeded in dry-run mode, so everything it made is rolled back."""
+
+	def __init__(self, result):
+		self.result = result
+		super().__init__("dry run")
+
+	def describe(self) -> str:
+		if not (isinstance(self.result, tuple | list) and len(self.result) == 2 and self.result[0]):
+			return _("no document")
+		doctype, name = self.result
+		if frappe.get_meta(doctype).has_field("grand_total"):
+			total = frappe.db.get_value(doctype, name, "grand_total")
+			return _("a {0} for {1}").format(_(doctype), frappe.format(total, "Currency"))
+		return _("a {0}").format(_(doctype))
 
 
 def _fail_retryable(log, message: str):
@@ -465,11 +531,14 @@ def cleanup_event_log():
 
 
 def _utc_naive(value):
-	"""RFC 3339 UTC text -> naive datetime in UTC (stored as is; the label says UTC)."""
+	"""RFC 3339 UTC text -> naive datetime in the site's time zone (how Frappe stores datetimes)."""
 	if not isinstance(value, str) or not value:
 		return None
 	try:
-		return get_datetime(value.replace("Z", "+00:00")).replace(tzinfo=None)
+		moment = get_datetime(value.replace("Z", "+00:00"))
+		if moment.tzinfo is None:
+			return None
+		return convert_utc_to_system_timezone(moment.replace(tzinfo=None)).replace(tzinfo=None)
 	except Exception:
 		return None
 
@@ -485,3 +554,7 @@ def _date_or_none(value):
 
 def _short_text(value, length: int = 140):
 	return value[:length] if isinstance(value, str) else None
+
+
+# Register the handlers of every sync (each module calls @handles at import time).
+from koomyo_erpnext.sync import refunds, sales

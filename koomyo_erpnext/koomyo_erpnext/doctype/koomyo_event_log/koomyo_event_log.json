@@ -30,6 +30,7 @@
   "entity_id",
   "column_break_3",
   "branch_id",
+  "dry_run",
   "section_payload",
   "payload"
  ],
@@ -102,7 +103,7 @@
   {
    "fieldname": "event_created",
    "fieldtype": "Datetime",
-   "label": "Happened At (UTC)",
+   "label": "Happened At",
    "read_only": 1
   },
   {
@@ -199,6 +200,12 @@
    "fieldname": "branch_id",
    "fieldtype": "Data",
    "label": "Branch ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dry_run",
+   "fieldtype": "Check",
+   "label": "Dry Run",
    "read_only": 1
   },
   {

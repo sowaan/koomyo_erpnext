@@ -1,0 +1,51 @@
+{
+ "actions": [],
+ "creation": "2026-10-26 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "tax_rate",
+  "koomyo_branch_id",
+  "account_head"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "description": "The rate as Koomyo sends it, such as 15 or 15.00. Leave empty to match any rate.",
+   "fieldname": "tax_rate",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Koomyo Tax Rate %"
+  },
+  {
+   "columns": 3,
+   "description": "Leave empty to match every branch.",
+   "fieldname": "koomyo_branch_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Koomyo Branch ID"
+  },
+  {
+   "columns": 3,
+   "fieldname": "account_head",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Tax Account",
+   "options": "Account",
+   "reqd": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-26 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Koomyo Erpnext",
+ "name": "Koomyo Tax Map",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

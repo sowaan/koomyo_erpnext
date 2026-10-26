@@ -85,6 +85,7 @@ required_apps = ["erpnext"]
 before_install = "koomyo_erpnext.install.before_install"
 after_install = "koomyo_erpnext.install.after_install"
 before_migrate = "koomyo_erpnext.install.before_migrate"
+after_migrate = "koomyo_erpnext.install.after_migrate"
 
 # Uninstallation
 # ------------
@@ -268,3 +269,6 @@ scheduler_events = {
 		"koomyo_erpnext.sync.events.daily_alerts",
 	],
 }
+
+# Custom fields koomyo_connection / koomyo_id / koomyo_branch on every doctype the app writes.
+fixtures = [{"dt": "Custom Field", "filters": [["module", "=", "Koomyo Erpnext"]]}]

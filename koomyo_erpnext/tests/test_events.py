@@ -186,7 +186,7 @@ class TestCatchUp(EventsTestCase):
 		self.assertEqual([c["params"].get("after") for c in calls], [0, 3, 6])
 		self.assertEqual(calls[0]["params"]["since"], "2026-10-01")
 		self.assertNotIn("since", calls[1]["params"])
-		self.assertEqual(calls[0]["params"]["types"], "shift.opened")
+		self.assertIn("shift.opened", calls[0]["params"]["types"].split(","))
 
 	def test_feed_and_webhook_share_the_duplicate_guard(self):
 		event = self.add_shift(self.fake_a, 1, "e1")
@@ -316,8 +316,7 @@ class TestCatchUp(EventsTestCase):
 		self.assertTrue(all(kw["deduplicate"] for _a, kw in self.enqueued))
 
 	def test_nothing_handled_reads_nothing(self):
-		events.DISPATCH.pop("shift.opened")
-		with self.koomyo():
+		with self.koomyo(), patch.dict(events.DISPATCH, clear=True):
 			summary = events.catch_up(self.conn_a.name)
 		self.assertTrue(summary["done"])
 		self.assertEqual(self.fake_a.calls, [])
