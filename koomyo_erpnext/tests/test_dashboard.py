@@ -35,9 +35,12 @@ class TestDashboard(KoomyoIntegrationTestCase):
 
 	def test_numbers(self):
 		data = get_dashboard()
-		self.assertEqual(
-			data["totals"], {"connections": 2, "attention": 1, "failed": 2, "pending": 1, "done_today": 1}
-		)
+		mine = [c for c in data["connections"] if c["name"] in (self.conn_a.name, self.conn_b.name)]
+		self.assertEqual(len(mine), 2)
+		self.assertEqual(sum(c["counts"]["Failed"] for c in mine), 2)
+		self.assertEqual(sum(c["counts"]["Pending"] for c in mine), 1)
+		self.assertEqual(sum(1 for c in mine if c["status"] == "Needs Attention"), 1)
+		self.assertGreaterEqual(data["totals"]["failed"], 2)
 		a = next(c for c in data["connections"] if c["name"] == self.conn_a.name)
 		self.assertEqual((a["counts"]["Failed"], a["needs_mapping"], a["last_day"]["Done"]), (1, 1, 1))
 		self.assertIsNotNone(a["oldest_pending"])
@@ -72,7 +75,7 @@ class TestDashboard(KoomyoIntegrationTestCase):
 			frappe.db.delete("User Permission", {"user": USER})
 			frappe.db.commit()
 		self.assertEqual([c["name"] for c in data["connections"]], [self.conn_a.name])
-		self.assertEqual(data["totals"]["failed"], 1)
+		self.assertEqual(sum(c["counts"]["Failed"] for c in data["connections"]), 1)
 
 	def test_guest_refused(self):
 		frappe.set_user("Guest")

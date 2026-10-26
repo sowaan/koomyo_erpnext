@@ -28,8 +28,9 @@ class TestCustomers(SalesTestCase):
 			conn.save()
 
 	def tearDown(self):
+		mine = (self.conn_a.name, self.conn_b.name)
 		super().tearDown()  # invoices and payments first: they link to the customers
-		for name in frappe.get_all("Customer", filters={"koomyo_connection": ("is", "set")}, pluck="name"):
+		for name in frappe.get_all("Customer", filters={"koomyo_connection": ("in", mine)}, pluck="name"):
 			contact = frappe.db.get_value("Customer", name, "customer_primary_contact")
 			frappe.delete_doc("Customer", name, force=True, ignore_permissions=True)
 			if contact:

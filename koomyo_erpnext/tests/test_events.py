@@ -301,9 +301,12 @@ class TestCatchUp(EventsTestCase):
 
 	def test_scheduler_gives_each_connection_its_own_jobs(self):
 		events.schedule_catch_up()
-		catch_up_ids = sorted(kw["job_id"] for _a, kw in self.enqueued if _a[0].endswith(".catch_up"))
-		self.assertEqual(len(catch_up_ids), 2)
-		self.assertEqual(len(set(catch_up_ids)), 2)
+		mine = (self.conn_a.name, self.conn_b.name)
+		jobs = [
+			kw for _a, kw in self.enqueued if _a[0].endswith(".catch_up") and kw["connection_name"] in mine
+		]
+		self.assertEqual(sorted(kw["connection_name"] for kw in jobs), sorted(mine))
+		self.assertEqual(len({kw["job_id"] for kw in jobs}), 2)
 		self.assertTrue(all(kw["deduplicate"] for _a, kw in self.enqueued))
 
 	def test_nothing_handled_reads_nothing(self):

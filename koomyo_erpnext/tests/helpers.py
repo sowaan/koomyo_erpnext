@@ -273,26 +273,53 @@ def hard_delete(doctype: str, name: str):
 	frappe.db.delete(doctype, {"name": name})
 
 
+TEST_COMPANY_PREFIX = "_Koomyo Test"
+
+
+def test_connections() -> list[str]:
+	"""Connections of the test Companies only: real connections on the same site are never touched."""
+	return frappe.get_all(
+		"Koomyo Connection", filters={"company": ("like", f"{TEST_COMPANY_PREFIX}%")}, pluck="name"
+	)
+
+
 def clean_koomyo_data():
-	"""Remove everything a test made from Koomyo data (documents, GL rows, items, logs)."""
-	for doctype in KOOMYO_DOCTYPES_TO_CLEAN:
+	"""Remove everything the tests made from Koomyo data (documents, GL rows, items, logs, connections)."""
+	connections = test_connections()
+	if connections:
+		for doctype in KOOMYO_DOCTYPES_TO_CLEAN:
+			for name in frappe.get_all(
+				doctype,
+				filters={"koomyo_connection": ("in", connections)},
+				pluck="name",
+				order_by="creation desc",
+			):
+				frappe.db.delete("GL Entry", {"voucher_type": doctype, "voucher_no": name})
+				frappe.db.delete("Payment Ledger Entry", {"voucher_type": doctype, "voucher_no": name})
+				frappe.db.delete("Payment Ledger Entry", {"against_voucher_no": name})
+				frappe.db.delete("Comment", {"reference_doctype": doctype, "reference_name": name})
+				frappe.db.delete("Stock Ledger Entry", {"voucher_type": doctype, "voucher_no": name})
+				frappe.db.delete("Repost Item Valuation", {"voucher_type": doctype, "voucher_no": name})
+				hard_delete(doctype, name)
+		for name in frappe.get_all("Item", filters={"koomyo_connection": ("in", connections)}, pluck="name"):
+			for table in ("Bin", "Stock Ledger Entry", "Item Price"):
+				frappe.db.delete(table, {"item_code": name})
+			frappe.delete_doc("Item", name, force=True, ignore_permissions=True)
 		for name in frappe.get_all(
-			doctype, filters={"koomyo_connection": ("is", "set")}, pluck="name", order_by="creation desc"
+			"Koomyo Backfill", filters={"connection": ("in", connections)}, pluck="name"
 		):
-			frappe.db.delete("GL Entry", {"voucher_type": doctype, "voucher_no": name})
-			frappe.db.delete("Payment Ledger Entry", {"voucher_type": doctype, "voucher_no": name})
-			frappe.db.delete("Payment Ledger Entry", {"against_voucher_no": name})
-			frappe.db.delete("Comment", {"reference_doctype": doctype, "reference_name": name})
-			frappe.db.delete("Stock Ledger Entry", {"voucher_type": doctype, "voucher_no": name})
-			frappe.db.delete("Repost Item Valuation", {"voucher_type": doctype, "voucher_no": name})
-			hard_delete(doctype, name)
-	for name in frappe.get_all("Item", filters={"koomyo_connection": ("is", "set")}, pluck="name"):
-		for table in ("Bin", "Stock Ledger Entry", "Item Price"):
-			frappe.db.delete(table, {"item_code": name})
-		frappe.delete_doc("Item", name, force=True, ignore_permissions=True)
-	frappe.db.delete("Koomyo Event Log")
-	frappe.db.delete("Koomyo Branch Map")
-	frappe.db.delete("Koomyo Connection")
+			frappe.db.delete("Koomyo Backfill Chunk", {"parent": name})
+			frappe.db.delete("Koomyo Backfill", {"name": name})
+		frappe.db.delete("Koomyo Event Log", {"connection": ("in", connections)})
+		for table in (
+			"Koomyo Branch Map",
+			"Koomyo Payment Map",
+			"Koomyo Tax Map",
+			"Koomyo UOM Map",
+			"Koomyo Waste Map",
+		):
+			frappe.db.delete(table, {"parent": ("in", connections)})
+		frappe.db.delete("Koomyo Connection", {"name": ("in", connections)})
 	frappe.db.commit()
 
 

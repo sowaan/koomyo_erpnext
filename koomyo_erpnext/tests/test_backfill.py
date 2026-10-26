@@ -42,8 +42,6 @@ class BackfillTestCase(SalesTestCase):
 		self.fake_a.lists["/refunds"] = []
 
 	def tearDown(self):
-		frappe.db.delete("Koomyo Backfill Chunk")
-		frappe.db.delete("Koomyo Backfill")
 		for name in frappe.get_all(
 			"Accounting Period", filters={"name": ("like", "_Koomyo closed%")}, pluck="name"
 		):
@@ -304,15 +302,12 @@ class TestBackfill(BackfillTestCase):
 
 		configure_sales(self.conn_b, "_KTB")
 		result = create_for_all_connections(DAY, DAY, bring_sales=1)
-		self.assertEqual(len(result["made"]), 2)
-		self.assertEqual(
-			sorted(
-				frappe.get_all(
-					"Koomyo Backfill", filters={"name": ("in", result["made"])}, pluck="connection"
-				)
-			),
-			sorted([self.conn_a.name, self.conn_b.name]),
+		made_for = frappe.get_all(
+			"Koomyo Backfill", filters={"name": ("in", result["made"])}, pluck="connection"
 		)
+		self.assertIn(self.conn_a.name, made_for)
+		self.assertIn(self.conn_b.name, made_for)
+		self.assertEqual(len(made_for), len(set(made_for)), "one backfill per connection")
 
 	def test_user_sees_only_own_company_backfills(self):
 		from koomyo_erpnext.tests.helpers import configure_sales
