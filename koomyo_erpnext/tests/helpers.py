@@ -39,6 +39,13 @@ def use_test_handler(testcase, event_type: str, handler, scopes=(), switch=None)
 		testcase.addCleanup(patcher.stop)
 
 
+def refuse_negative_stock(testcase):
+	"""ERPNext's own default, for tests of 'not enough stock'; the site setting is restored after."""
+	old = frappe.db.get_single_value("Stock Settings", "allow_negative_stock")
+	frappe.db.set_single_value("Stock Settings", "allow_negative_stock", 0)
+	testcase.addCleanup(frappe.db.set_single_value, "Stock Settings", "allow_negative_stock", old)
+
+
 def ensure_basics():
 	"""What the ERPNext setup wizard makes on a real site: groups, UOMs, modes of payment, a fiscal year."""
 	if not frappe.db.exists("Item Group", "All Item Groups"):

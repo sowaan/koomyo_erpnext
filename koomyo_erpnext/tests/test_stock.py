@@ -11,7 +11,13 @@ import frappe
 
 from koomyo_erpnext.sync import events
 from koomyo_erpnext.tests.fake_koomyo import load_fixture
-from koomyo_erpnext.tests.helpers import CENTRAL_WAREHOUSE, TENANT_A, configure_stock, gl
+from koomyo_erpnext.tests.helpers import (
+	CENTRAL_WAREHOUSE,
+	TENANT_A,
+	configure_stock,
+	gl,
+	refuse_negative_stock,
+)
 from koomyo_erpnext.tests.test_sales import SalesTestCase
 
 KITCHEN = "10000000-0000-4000-8000-000000000001"
@@ -152,6 +158,7 @@ class TestStock(StockTestCase):
 		self.assertIn("whole menu item", log.message)
 
 	def test_not_enough_stock_in_erpnext_is_refused_clearly(self):
+		refuse_negative_stock(self)
 		log = self.book(fixture("event_stock_usage_daily", 1))
 		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
 		self.assertIn("ERPNext refused it", log.message)

@@ -7,7 +7,7 @@ import frappe
 from koomyo_erpnext.sync import events
 from koomyo_erpnext.sync.order_stock import DAILY, PER_ORDER, effective_mode, next_business_day
 from koomyo_erpnext.tests.fake_koomyo import load_fixture
-from koomyo_erpnext.tests.helpers import TENANT_A, gl
+from koomyo_erpnext.tests.helpers import TENANT_A, gl, refuse_negative_stock
 from koomyo_erpnext.tests.test_sales import order_event
 from koomyo_erpnext.tests.test_stock import KITCHEN, MOZZARELLA, STORES, StockTestCase, adjustment
 
@@ -154,6 +154,7 @@ class TestOrderStock(StockTestCase):
 		self.assertEqual((self.qty(STORES), self.qty(STORES, MOZZARELLA)), (D("20"), D("10")))
 
 	def test_stock_trouble_never_blocks_the_invoice(self):
+		refuse_negative_stock(self)
 		self.fake_a.lists["/stock-movements"] = [movement("big", KITCHEN, "-500.0000")]
 		self.assertEqual(self.book(paid()).status, "Done")
 		self.assertIsNotNone(self.invoice(ORDER))

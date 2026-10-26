@@ -343,6 +343,14 @@ def add_line(
 		row["set_basic_rate_manually"] = 1
 		if not rate:
 			row["allow_zero_valuation_rate"] = 1
+	if source and not target:
+		# Issuing an ingredient Koomyo gives no cost (and ERPNext has no stock rate for): book it
+		# at zero value rather than refusing the whole entry.
+		item = frappe.db.get_value("Item", row["item_code"], "valuation_rate")
+		if not flt(item) and not frappe.db.get_value(
+			"Bin", {"item_code": row["item_code"], "warehouse": source}, "valuation_rate"
+		):
+			row["allow_zero_valuation_rate"] = 1
 	entry.append("items", row)
 
 

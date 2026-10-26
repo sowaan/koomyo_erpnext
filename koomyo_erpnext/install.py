@@ -26,6 +26,7 @@ def before_install():
 def after_install():
 	ensure_role()
 	add_unique_indexes()
+	allow_negative_stock()
 
 
 def before_migrate():
@@ -58,3 +59,11 @@ def add_unique_indexes():
 		frappe.db.add_unique(
 			doctype, ["koomyo_connection", "koomyo_id"], constraint_name="unique_koomyo_record"
 		)
+
+
+def allow_negative_stock():
+	"""Koomyo allows negative stock (it sells before a purchase is entered); ERPNext refuses by default.
+
+	Stock Settings is site-wide, so this is switched on once at install and never switched off.
+	"""
+	frappe.db.set_single_value("Stock Settings", "allow_negative_stock", 1)
