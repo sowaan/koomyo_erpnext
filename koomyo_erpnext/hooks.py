@@ -4,6 +4,18 @@ app_publisher = "Sowaan"
 app_description = " Sync your Koomyo restaurant sales, stock and purchasing with ERPNext, automatically."
 app_email = "info@sowaan.com"
 app_license = "mit"
+app_logo_url = "/assets/koomyo_erpnext/images/koomyo-icon.png"
+
+# Tile on the /apps screen, for the people who run the integration.
+add_to_apps_screen = [
+	{
+		"name": "koomyo_erpnext",
+		"logo": "/assets/koomyo_erpnext/images/koomyo-icon.png",
+		"title": "Koomyo",
+		"route": "/app/koomyo",
+		"has_permission": "koomyo_erpnext.dashboard.has_app_permission",
+	}
+]
 
 # Apps
 # ------------------

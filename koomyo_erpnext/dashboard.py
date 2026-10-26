@@ -9,6 +9,11 @@ STATUSES = ("Pending", "Processing", "Done", "Skipped", "Failed")
 RUNNING_BACKFILL = ("Queued", "Running", "Previewing", "Stopping")
 
 
+def has_app_permission() -> bool:
+	"""Show the Koomyo tile on /apps to the people who run the integration."""
+	return bool({"System Manager", "Koomyo Manager"} & set(frappe.get_roles()))
+
+
 @frappe.whitelist()
 def get_dashboard() -> dict:
 	if not frappe.has_permission("Koomyo Connection", "read"):

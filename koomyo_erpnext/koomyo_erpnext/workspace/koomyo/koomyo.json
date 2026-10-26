@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\": \"kmyhdr0001\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Koomyo</b></span>\", \"col\": 12}}, {\"id\": \"kmysc00000\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Koomyo Dashboard\", \"col\": 3}}, {\"id\": \"kmysc00001\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Connections\", \"col\": 3}}, {\"id\": \"kmysc00002\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Event Log\", \"col\": 3}}, {\"id\": \"kmysc00003\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Backfill\", \"col\": 3}}, {\"id\": \"kmysc00004\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Settings\", \"col\": 3}}]",
+ "content": "[{\"id\": \"kmync00000\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Failed Events\", \"col\": 4}}, {\"id\": \"kmync00001\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Waiting Events\", \"col\": 4}}, {\"id\": \"kmync00002\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Connections Needing Attention\", \"col\": 4}}, {\"id\": \"kmysp00001\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"kmysc00000\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Koomyo Dashboard\", \"col\": 3}}, {\"id\": \"kmysc00001\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Connections\", \"col\": 3}}, {\"id\": \"kmysc00002\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Event Log\", \"col\": 3}}, {\"id\": \"kmysc00003\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Backfill\", \"col\": 3}}, {\"id\": \"kmysc00004\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Settings\", \"col\": 3}}]",
  "creation": "2026-10-26 12:00:00.000000",
  "custom_blocks": [],
  "docstatus": 0,
@@ -77,11 +77,24 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-26 12:00:00.000000",
+ "modified": "2026-10-26 19:20:00.000000",
  "modified_by": "Administrator",
  "module": "Koomyo Erpnext",
  "name": "Koomyo",
- "number_cards": [],
+ "number_cards": [
+  {
+   "label": "Failed Events",
+   "number_card_name": "Koomyo Failed Events"
+  },
+  {
+   "label": "Waiting Events",
+   "number_card_name": "Koomyo Waiting Events"
+  },
+  {
+   "label": "Connections Needing Attention",
+   "number_card_name": "Koomyo Connections Needing Attention"
+  }
+ ],
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
