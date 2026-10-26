@@ -31,6 +31,7 @@
   "column_break_3",
   "branch_id",
   "dry_run",
+  "backfill",
   "section_payload",
   "payload"
  ],
@@ -208,6 +209,14 @@
    "fieldtype": "Check",
    "label": "Dry Run",
    "read_only": 1
+  },
+  {
+   "fieldname": "backfill",
+   "fieldtype": "Link",
+   "label": "Backfill",
+   "options": "Koomyo Backfill",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "collapsible": 1,

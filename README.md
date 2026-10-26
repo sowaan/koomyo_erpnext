@@ -51,6 +51,14 @@ Ingredients become stock Items, with units mapped through the UOM Map. Nothing d
 
 Every write carries an `Idempotency-Key` and appears in the Event Log as received via ERPNext. With **Sync Customers** on, Koomyo customers become Customers (name, phone and email only).
 
+**Backfill (slice 6).** **Koomyo Backfill** brings in any past date range through the same handlers, mapping and duplicate guard as live sync.
+- It reads Koomyo's list endpoints, not the 30-day feed, and posts each document with its own Koomyo date.
+- **Preview** counts and checks without writing anything; **Start** runs it.
+- **Stop** and **Retry Failed** do what they say; **Re-run a Day** runs one day again.
+- A run is refused when the range touches a closed accounting period or a frozen stock date.
+- Running the same range twice changes nothing.
+- **All Connections** (list view) makes one backfill per connection.
+
 ### Install
 
 ```bash

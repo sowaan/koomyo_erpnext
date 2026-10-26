@@ -5,6 +5,7 @@ instance; `patch_koomyo(*fakes)` routes every KoomyoClient call to the fake whos
 base URL matches, so two connections can talk to two "servers" that reuse the same ids.
 """
 
+import base64
 import copy
 import json
 import os
@@ -59,6 +60,10 @@ class FakeKoomyo:
 		self.purchase_orders: dict[str, dict] = {}
 		self.refs: list[dict] = []
 		self.writes: list[dict] = []  # every write call: method, path, key, body
+		# GET list endpoints for the backfill: path -> records (opaque cursors, docs filters).
+		self.lists: dict[str, list[dict]] = {}
+		self.page_cap = 200
+		self.rate_limit: tuple[int, int] | None = None  # (limit, remaining) headers on every answer
 		self._idempotent: dict[str, tuple] = {}
 		self.down = False
 		# path -> list of FakeResponse to return first (then normal routing)
@@ -116,11 +121,50 @@ class FakeKoomyo:
 			)
 		if path == "/events":
 			return self._events(params or {})
+		if path in self.lists:
+			return self._list(path, params or {})
 		if path.startswith("/ingredients/") and path[len("/ingredients/") :] in self.ingredients:
 			return FakeResponse(200, self.ingredients[path[len("/ingredients/") :]])
 		if path.startswith("/orders/") and path[len("/orders/") :] in self.orders:
 			return FakeResponse(200, self.orders[path[len("/orders/") :]])
 		return error_response(404, "not_found")
+
+	def _list(self, path, params):
+		"""A paged list as the docs describe it: ascending, opaque next_cursor, filters."""
+		rows = list(self.lists[path])
+
+		def when(r, *fields):
+			return next((r.get(f) for f in fields if r.get(f)), "") or ""
+
+		filters = {
+			"business_date": lambda r, v: r.get("business_date") == v,
+			"payment_status": lambda r, v: (r.get("payment") or {}).get("status") == v,
+			"status": lambda r, v: r.get("status") == v,
+			"reason": lambda r, v: r.get("reason") == v,
+			"branch_id": lambda r, v: v in (r.get("branch_id"), (r.get("location") or {}).get("id")),
+			"created_after": lambda r, v: when(r, "created_at") > v,
+			"created_before": lambda r, v: when(r, "created_at") < v,
+			"opened_after": lambda r, v: when(r, "opened_at") > v,
+			"opened_before": lambda r, v: when(r, "opened_at") < v,
+			"sent_after": lambda r, v: when(r, "sent_at") > v,
+			"updated_since": lambda r, v: when(r, "updated_at") >= v,
+		}
+		for key, test in filters.items():
+			if params.get(key) is not None:
+				rows = [r for r in rows if test(r, str(params[key]))]
+		offset = 0
+		if params.get("cursor"):
+			try:
+				offset = int(base64.b64decode(params["cursor"]).decode().split(":")[1])
+			except Exception:
+				return error_response(400, "invalid_cursor")
+		limit = min(int(params.get("limit") or 50), self.page_cap)
+		page = rows[offset : offset + limit]
+		more = offset + limit < len(rows)
+		cursor = base64.b64encode(f"o:{offset + limit}:{path}".encode()).decode() if more else None
+		return FakeResponse(
+			200, {"object": "list", "data": copy.deepcopy(page), "has_more": more, "next_cursor": cursor}
+		)
 
 	def _write(self, method, path, body, key):
 		"""Writes as the docs describe them, with Idempotency-Key replay."""
@@ -250,7 +294,15 @@ class _Router:
 	def request(self, method, url, params=None, json=None, headers=None, **_kwargs):
 		for fake in self.fakes:
 			if url.startswith(fake.base_url + "/"):
-				return fake.handle(method, url, params, json, headers)
+				response = fake.handle(method, url, params, json, headers)
+				if fake.rate_limit:
+					response.headers.update(
+						{
+							"X-RateLimit-Limit": str(fake.rate_limit[0]),
+							"X-RateLimit-Remaining": str(fake.rate_limit[1]),
+						}
+					)
+				return response
 		raise requests.ConnectionError(f"no fake Koomyo at {url}")
 
 

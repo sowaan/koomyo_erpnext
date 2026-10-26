@@ -4,10 +4,12 @@ Writes go to the fake Koomyo, which keeps every call (method, path, Idempotency-
 """
 
 import copy
+from unittest.mock import patch
 
 import frappe
 from frappe.utils import flt
 
+from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.sync import events
 from koomyo_erpnext.tests.fake_koomyo import error_response, load_fixture
 from koomyo_erpnext.tests.helpers import COMPANY_A, TENANT_A
@@ -208,12 +210,8 @@ class TestPurchaseOrders(PurchasingTestCase):
 		self.fake_a.scripted["/purchase-orders"] = [error_response(500, "internal_error") for _ in range(4)]
 		po = self.make_po()
 		with self.koomyo():
-			original = events.KoomyoClient._backoff
-			events.KoomyoClient._backoff = staticmethod(lambda attempt: 0)
-			try:
+			with patch.object(KoomyoClient, "_backoff", staticmethod(lambda attempt: 0)):
 				events.process_pending(self.conn_a.name)
-			finally:
-				events.KoomyoClient._backoff = original
 		(log,) = self.outbound()
 		self.assertEqual((log.status, log.error_class), ("Failed", "Retryable"))
 		self.assertIsNone(frappe.db.get_value("Purchase Order", po.name, "koomyo_id"))

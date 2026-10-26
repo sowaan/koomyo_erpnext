@@ -4,6 +4,7 @@ from unittest.mock import patch
 import frappe
 from frappe.utils import add_to_date, now_datetime
 
+from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import NeedsMapping, Retryable, Skipped
 from koomyo_erpnext.sync import events
 from koomyo_erpnext.tests.fake_koomyo import error_response
@@ -227,12 +228,8 @@ class TestCatchUp(EventsTestCase):
 		self.add_shift(self.fake_a, 1)
 		self.fake_a.scripted["/events"] = [error_response(500, "internal_error") for _ in range(4)]
 		with self.koomyo():
-			original = events.KoomyoClient._backoff
-			events.KoomyoClient._backoff = staticmethod(lambda attempt: 0)
-			try:
+			with patch.object(KoomyoClient, "_backoff", staticmethod(lambda attempt: 0)):
 				summary = events.catch_up(self.conn_a.name)
-			finally:
-				events.KoomyoClient._backoff = original
 		self.assertIn("error", summary)
 		conn = frappe.get_doc("Koomyo Connection", self.conn_a.name)
 		self.assertEqual(conn.last_seq, 0)
@@ -294,13 +291,9 @@ class TestCatchUp(EventsTestCase):
 		self.add_shift(self.fake_b, 1)
 		self.fake_a.down = True
 		with self.koomyo():
-			original = events.KoomyoClient._backoff
-			events.KoomyoClient._backoff = staticmethod(lambda attempt: 0)
-			try:
+			with patch.object(KoomyoClient, "_backoff", staticmethod(lambda attempt: 0)):
 				summary_a = events.catch_up(self.conn_a.name)
 				summary_b = events.catch_up(self.conn_b.name)
-			finally:
-				events.KoomyoClient._backoff = original
 		self.assertIn("error", summary_a)
 		self.assertEqual(summary_b["stored"], 1)
 		events.process_pending(self.conn_b.name)
