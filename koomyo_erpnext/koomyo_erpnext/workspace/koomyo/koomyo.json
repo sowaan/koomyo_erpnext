@@ -1,0 +1,137 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"kmyhdr0001\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Koomyo</b></span>\", \"col\": 12}}, {\"id\": \"kmysc00000\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Koomyo Dashboard\", \"col\": 3}}, {\"id\": \"kmysc00001\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Connections\", \"col\": 3}}, {\"id\": \"kmysc00002\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Event Log\", \"col\": 3}}, {\"id\": \"kmysc00003\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Backfill\", \"col\": 3}}, {\"id\": \"kmysc00004\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Settings\", \"col\": 3}}]",
+ "creation": "2026-10-26 12:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "integration",
+ "idx": 0,
+ "indicator_color": "",
+ "is_hidden": 0,
+ "label": "Koomyo",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Koomyo",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Koomyo Dashboard",
+   "link_count": 0,
+   "link_to": "koomyo-dashboard",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Connections",
+   "link_count": 0,
+   "link_to": "Koomyo Connection",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Event Log",
+   "link_count": 0,
+   "link_to": "Koomyo Event Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Backfill",
+   "link_count": 0,
+   "link_to": "Koomyo Backfill",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Settings",
+   "link_count": 0,
+   "link_to": "Koomyo Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-10-26 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Koomyo Erpnext",
+ "name": "Koomyo",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Koomyo Manager"
+  }
+ ],
+ "sequence_id": 50.0,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "",
+   "label": "Koomyo Dashboard",
+   "link_to": "koomyo-dashboard",
+   "type": "Page"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Connections",
+   "link_to": "Koomyo Connection",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Event Log",
+   "link_to": "Koomyo Event Log",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Backfill",
+   "link_to": "Koomyo Backfill",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "",
+   "label": "Settings",
+   "link_to": "Koomyo Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "Koomyo"
+}

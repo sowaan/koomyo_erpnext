@@ -86,3 +86,16 @@ If either is wrong, the booked over/short is off by that amount, but the remark 
 - **Lists without a day filter.** Refunds, shifts, waste, counts and transfers are read with a wider UTC window (`created_after`, `opened_after`, `sent_after`) and picked by `business_date`. Customers (`updated_since` = From Date) and received purchase orders (no date filter, picked by `business_date`) are one part each.
 - **Closed periods.** The run is refused, naming the reason, when the range touches any of: an Accounting Period closed for a document type it would post; a submitted Period Closing Voucher ending on or after From Date; the Accounts Settings freeze date; or, for stock and purchases, the Stock Settings freeze date.
 - **Pacing.** Each call checks `X-RateLimit-Remaining`. When fewer than a tenth of the key's allowance is left, the run waits for it to refill. A 429 is waited out (`Retry-After` plus one second) and the same page is asked for again. The position (Koomyo's opaque `next_cursor` per list) is saved after every page, so Stop, a crash or a restart carries on from there.
+
+## 10. Complaints (Blocked)
+
+**What.** CLAUDE.md lists an optional complaint sync (Koomyo complaints become ERPNext Issues, scope `complaints.read`). The Koomyo public API v1 has no complaints endpoint, no `complaint.*` event and no `complaints.read` scope; the OpenAPI file and the docs do not mention complaints at all.
+
+**What the app does.** Nothing. Following CLAUDE.md rule 1 ("If a sync is not built yet, its switch does not exist"), there is no complaints switch. The Issue doctype already carries the `koomyo_connection` / `koomyo_id` fields, so the sync can be added without a migration of existing data.
+
+**Wish.** `GET /complaints` (with `branch_id`, `created_after`, `status`, cursor paging), `complaint.created` / `complaint.updated` events, and a `complaints.read` scope. Each complaint would need an `id`, `branch_id`, `order_id`, `customer` (id only without customer data), `category`, `description`, `status`, `created_at` and `business_date`.
+
+## 11. Not verified
+
+- Nothing has run against a real Koomyo or a Koomyo sandbox yet. Every Koomyo answer in the tests comes from a fake server built from the docs examples.
+- Frappe and ERPNext v16: the code avoids version-specific APIs (`koomyo_erpnext/compat.py`), but it has only run on v15 (Frappe 15.120.1, ERPNext 15.118.0). The Koomyo workspace JSON uses the v15 format.
