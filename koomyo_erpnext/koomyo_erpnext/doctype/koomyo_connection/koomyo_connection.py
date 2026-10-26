@@ -342,6 +342,30 @@ class KoomyoConnection(Document):
 		return _("{0} event(s) queued to be booked.").format(len(names))
 
 	@frappe.whitelist()
+	def load_catalog(self, preview: int = 0):
+		"""Queue the menu and ingredient load (or its preview) for this connection."""
+		self.check_permission("write")
+		if self.status == "Not Tested" or not self.tenant_id:
+			frappe.throw(_("Press Test Connection first."))
+		for fieldname in ("menu_item_group", "ingredient_item_group"):
+			if not self.get(fieldname):
+				frappe.throw(_("Set {0} first.").format(_(self.meta.get_label(fieldname))))
+		if not self.uom_map:
+			frappe.throw(_("Fill the UOM Map first: ingredients need their Koomyo unit mapped to a UOM."))
+		frappe.enqueue(
+			"koomyo_erpnext.sync.catalog.load_catalog",
+			queue="long",
+			timeout=3600,
+			job_id=f"koomyo-catalog-{frappe.local.site}-{self.name}",
+			deduplicate=True,
+			connection_name=self.name,
+			preview=bool(int(preview)),
+		)
+		return _(
+			"Reading Koomyo's menu and ingredients in the background. The result shows under Menu and Ingredients."
+		)
+
+	@frappe.whitelist()
 	def restart_feed(self):
 		"""After a gap longer than the feed keeps: start reading again from today.
 

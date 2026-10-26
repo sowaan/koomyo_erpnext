@@ -44,6 +44,22 @@ frappe.ui.form.on("Koomyo Connection", {
 			);
 		}
 		frm.add_custom_button(
+			__("Preview"),
+			() => load_catalog(frm, 1),
+			__("Load Menu and Ingredients")
+		);
+		frm.add_custom_button(
+			__("Load"),
+			() =>
+				frappe.confirm(
+					__(
+						"Make an Item for every Koomyo menu item and ingredient now? Existing ones are updated, nothing is doubled."
+					),
+					() => load_catalog(frm, 0)
+				),
+			__("Load Menu and Ingredients")
+		);
+		frm.add_custom_button(
 			__("Event Log"),
 			() => frappe.set_route("List", "Koomyo Event Log", { connection: frm.doc.name }),
 			__("View")
@@ -165,5 +181,17 @@ function test_connection(frm) {
 			},
 		});
 		d.show();
+	});
+}
+
+function load_catalog(frm, preview) {
+	if (frm.is_dirty()) {
+		frappe.msgprint(__("Save the connection first."));
+		return;
+	}
+	frm.call("load_catalog", { preview }).then((r) => {
+		r.message && frappe.show_alert(r.message);
+		// The load runs in the background: show its result when it lands.
+		setTimeout(() => frm.reload_doc(), 8000);
 	});
 }

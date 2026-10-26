@@ -346,7 +346,9 @@ def submit_entry(entry, empty_message: str):
 	return ("Stock Entry", entry.name)
 
 
-def ingredient_item(connection, line: dict, client: KoomyoClient | None = None) -> str:
+def ingredient_item(
+	connection, line: dict, client: KoomyoClient | None = None, ingredient: dict | None = None
+) -> str:
 	"""The stock Item for a Koomyo ingredient.
 
 	Matched by (koomyo_connection, koomyo_id); on first sight by the Koomyo external reference
@@ -360,7 +362,8 @@ def ingredient_item(connection, line: dict, client: KoomyoClient | None = None) 
 		return existing
 
 	client = client or KoomyoClient.for_connection(connection)
-	ingredient = client.get("/ingredients/" + quote(ingredient_id, safe=""))
+	if ingredient is None:  # the menu loader passes the ingredient it already read
+		ingredient = client.get("/ingredients/" + quote(ingredient_id, safe=""))
 	if ingredient.get("object") != "ingredient" or ingredient.get("id") != ingredient_id:
 		raise Fatal(_("Koomyo answered GET /ingredients/{0} with something else.").format(ingredient_id))
 

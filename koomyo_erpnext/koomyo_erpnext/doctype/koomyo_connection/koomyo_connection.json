@@ -76,6 +76,10 @@
   "payment_map",
   "section_tax_map",
   "tax_map",
+  "section_catalog",
+  "catalog_loaded_on",
+  "column_break_catalog",
+  "catalog_summary",
   "section_feed",
   "last_seq",
   "last_caught_up_on",
@@ -552,6 +556,30 @@
    "fieldtype": "Table",
    "label": "Tax Map",
    "options": "Koomyo Tax Map"
+  },
+  {
+   "description": "Load Menu and Ingredients makes every Koomyo menu item and ingredient an Item now, instead of on first sale or first stock movement. Loading again updates names, categories and active flags; nothing is ever doubled.",
+   "fieldname": "section_catalog",
+   "fieldtype": "Section Break",
+   "label": "Menu and Ingredients"
+  },
+  {
+   "fieldname": "catalog_loaded_on",
+   "fieldtype": "Datetime",
+   "label": "Last Loaded On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_catalog",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "catalog_summary",
+   "fieldtype": "Small Text",
+   "label": "Last Load",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "collapsible": 1,
