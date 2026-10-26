@@ -165,6 +165,15 @@ class KoomyoConnection(Document):
 			"transfer_loss_account",
 		):
 			self.check_account_company(self.get(fieldname), _(self.meta.get_label(fieldname)))
+		if (
+			self.main_warehouse
+			and frappe.db.get_value("Warehouse", self.main_warehouse, "company") != self.company
+		):
+			frappe.throw(
+				_("Main Warehouse {0} does not belong to Company {1}.").format(
+					self.main_warehouse, self.company
+				)
+			)
 		if self.price_list:
 			currency = frappe.db.get_value("Price List", self.price_list, "currency")
 			company_currency = frappe.get_cached_value("Company", self.company, "default_currency")

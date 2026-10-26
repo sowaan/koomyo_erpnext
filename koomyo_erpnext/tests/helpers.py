@@ -308,6 +308,10 @@ def clean_koomyo_data():
 				frappe.db.delete("Stock Ledger Entry", {"voucher_type": doctype, "voucher_no": name})
 				frappe.db.delete("Repost Item Valuation", {"voucher_type": doctype, "voucher_no": name})
 				hard_delete(doctype, name)
+		for name in frappe.get_all(
+			"Supplier", filters={"koomyo_connection": ("in", connections)}, pluck="name"
+		):
+			frappe.delete_doc("Supplier", name, force=True, ignore_permissions=True)
 		for name in frappe.get_all("Item", filters={"koomyo_connection": ("in", connections)}, pluck="name"):
 			for table in ("Bin", "Stock Ledger Entry", "Item Price"):
 				frappe.db.delete(table, {"item_code": name})

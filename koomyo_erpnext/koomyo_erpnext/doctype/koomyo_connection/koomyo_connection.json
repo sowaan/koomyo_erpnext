@@ -71,6 +71,9 @@
   "waste_map",
   "section_purchasing",
   "sync_purchasing",
+  "book_koomyo_purchases",
+  "main_warehouse",
+  "supplier_group",
   "sync_customers",
   "column_break_purchasing",
   "customer_group",
@@ -536,6 +539,29 @@
    "fieldname": "sync_purchasing",
    "fieldtype": "Check",
    "label": "Sync Purchasing"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_purchasing",
+   "description": "A purchase order made in the Koomyo admin and received there becomes a Supplier (if new), a Purchase Order and a Purchase Receipt in ERPNext. Orders made in ERPNext are never doubled.",
+   "fieldname": "book_koomyo_purchases",
+   "fieldtype": "Check",
+   "label": "Book Orders Made in Koomyo"
+  },
+  {
+   "description": "Where Koomyo orders without a branch are received (Koomyo's main warehouse).",
+   "fieldname": "main_warehouse",
+   "fieldtype": "Link",
+   "label": "Main Warehouse",
+   "mandatory_depends_on": "book_koomyo_purchases",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "supplier_group",
+   "fieldtype": "Link",
+   "label": "Supplier Group",
+   "mandatory_depends_on": "book_koomyo_purchases",
+   "options": "Supplier Group"
   },
   {
    "default": "0",

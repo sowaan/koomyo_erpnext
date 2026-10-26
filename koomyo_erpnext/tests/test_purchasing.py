@@ -4,6 +4,7 @@ Writes go to the fake Koomyo, which keeps every call (method, path, Idempotency-
 """
 
 import copy
+from decimal import Decimal as D
 from unittest.mock import patch
 
 import frappe
@@ -316,3 +317,74 @@ class TestReceipts(PurchasingTestCase):
 		log = self.book(self.received_event(order))
 		self.assertEqual(log.status, "Skipped")
 		self.assertIn("made in Koomyo", log.message)
+
+
+class TestKoomyoMadeOrders(PurchasingTestCase):
+	def setUp(self):
+		super().setUp()
+		self.conn_a.reload()
+		self.conn_a.update(
+			{
+				"book_koomyo_purchases": 1,
+				"main_warehouse": "Finished Goods - _KTA",
+				"supplier_group": "_Koomyo Suppliers",
+			}
+		)
+		self.conn_a.save()
+
+	def koomyo_order(self, **changes):
+		event = load_fixture("event_purchase_received")
+		data = event["data"]
+		data["external_refs"] = {}
+		data["supplier"] = {"id": "koomyo-supplier-1", "name": "Koomyo Cheese Co"}
+		data["lines"][0].update(
+			{
+				"ingredient_id": MOZZARELLA,
+				"quantity_ordered": "10",
+				"quantity_received": "9",
+				"unit_cost": "1450",
+			}
+		)
+		data.update(changes)
+		event.update({"tenant_id": TENANT_A, "seq": 95, "id": "evt-koomyo-po"})
+		return event
+
+	def test_becomes_supplier_order_and_receipt(self):
+		event = self.koomyo_order(branch_id=None)
+		log = self.book(event)
+		self.assertEqual(log.status, "Done", (log.message, log.error[-600:]))
+		pr = frappe.get_doc("Purchase Receipt", log.reference_name)
+		self.assertEqual((pr.docstatus, pr.koomyo_id, flt(pr.items[0].qty, 3)), (1, event["data"]["id"], 9))
+		po = frappe.get_doc("Purchase Order", pr.items[0].purchase_order)
+		self.assertEqual(
+			(po.docstatus, po.koomyo_id, po.set_warehouse), (1, event["data"]["id"], "Finished Goods - _KTA")
+		)
+		self.assertEqual((flt(po.items[0].qty, 3), flt(po.items[0].rate, 2)), (10, 1450))
+		supplier = frappe.get_doc("Supplier", po.supplier)
+		self.assertEqual(
+			(supplier.koomyo_connection, supplier.koomyo_id),
+			(self.conn_a.name, event["data"]["supplier"]["id"]),
+		)
+		self.assertEqual(self.qty("Finished Goods - _KTA", MOZZARELLA), D("9"))
+		frappe.db.set_value("Supplier", supplier.name, {"koomyo_connection": None, "koomyo_id": None})
+
+	def test_replay_and_no_echo_to_koomyo(self):
+		event = self.koomyo_order()
+		self.book(event)
+		self.book(dict(event, id="resent", seq=96))
+		self.run_queue()
+		self.assertEqual(
+			len(frappe.get_all("Purchase Order", filters={"koomyo_connection": self.conn_a.name})), 1
+		)
+		self.assertEqual(
+			len(frappe.get_all("Purchase Receipt", filters={"koomyo_connection": self.conn_a.name})), 1
+		)
+		self.assertEqual(self.writes("/purchase-orders"), [], "a Koomyo order is never sent back")
+
+	def test_off_by_default_skips(self):
+		self.conn_a.reload()
+		self.conn_a.book_koomyo_purchases = 0
+		self.conn_a.save()
+		log = self.book(self.koomyo_order())
+		self.assertEqual(log.status, "Skipped")
+		self.assertIn("Book Orders Made in Koomyo", log.message)

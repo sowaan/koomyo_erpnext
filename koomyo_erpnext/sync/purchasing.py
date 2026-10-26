@@ -29,6 +29,9 @@ from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping, Skipp
 from koomyo_erpnext.sync.common import find_existing, money, posting_date, stamp
 from koomyo_erpnext.sync.events import handles, idempotency_key, koomyo_write, store_outbound
 
+# Suppliers made from a Koomyo order carry this in koomyo_branch (unused on Suppliers), so they
+# are never pushed back to Koomyo, which already owns them.
+KOOMYO_ORIGIN = "origin:koomyo"
 WRITE_SCOPES = ("purchasing.read", "purchasing.write", "suppliers.write", "ingredients.write")
 QTY = Decimal("0.0001")
 
@@ -61,6 +64,8 @@ def connection_for_warehouse(company: str, warehouse: str | None):
 
 
 def on_purchase_order_submit(doc, method=None):
+	if doc.get("koomyo_connection"):
+		return  # made from a Koomyo order: Koomyo already has it
 	connection, _row = connection_for_warehouse(doc.company, po_warehouse(doc))
 	if connection:
 		store_outbound(connection, "erpnext.purchase_order", doc)
@@ -87,7 +92,7 @@ def on_purchase_receipt_submit(doc, method=None):
 
 
 def on_supplier_update(doc, method=None):
-	if doc.get("koomyo_connection"):
+	if doc.get("koomyo_connection") and doc.get("koomyo_branch") != KOOMYO_ORIGIN:
 		connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
 		if connection.enabled and connection.sync_purchasing:
 			store_outbound(connection, "erpnext.supplier", doc)
@@ -239,6 +244,8 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 @handles("erpnext.supplier", switch="sync_purchasing", scopes=WRITE_SCOPES)
 def push_supplier(event: dict, connection, client: KoomyoClient | None = None):
 	supplier = frappe.get_doc("Supplier", event["data"]["name"])
+	if supplier.koomyo_branch == KOOMYO_ORIGIN:
+		raise Skipped(_("Supplier {0} came from Koomyo; Koomyo owns it.").format(supplier.name))
 	push_supplier_doc(supplier, connection, client or KoomyoClient.for_connection(connection), force=True)
 	return ("Supplier", supplier.name)
 
@@ -273,6 +280,8 @@ def push_supplier_doc(supplier, connection, client, force: bool = False) -> str:
 				"Supplier {0} is already linked to connection {1}. Use a separate Supplier for this Company."
 			).format(supplier.name, supplier.koomyo_connection)
 		)
+	if supplier.koomyo_branch == KOOMYO_ORIGIN:
+		return supplier.koomyo_id
 	if supplier.koomyo_id and not force:
 		return supplier.koomyo_id
 	body = {
@@ -321,6 +330,86 @@ def linked_ingredient(item_code: str, connection) -> str:
 # ------------------------------------------------------------------ inbound
 
 
+def create_order_from_koomyo(connection, order: dict) -> str:
+	"""A submitted Purchase Order (and its Supplier) for an order made in the Koomyo admin.
+
+	Stamped with the Koomyo order id, so a replay finds it and the ERPNext-to-Koomyo hook
+	never sends it back.
+	"""
+	from koomyo_erpnext.sync.common import branch_row, check_company, setting
+	from koomyo_erpnext.sync.customers import write_reference
+	from koomyo_erpnext.sync.stock import ingredient_item
+
+	if order.get("branch_id"):
+		warehouse = branch_row(connection, order["branch_id"]).warehouse
+	else:
+		warehouse = setting(connection, "main_warehouse", _("Main Warehouse"))
+	if not warehouse:
+		raise NeedsMapping(_("The branch of purchase order {0} has no Warehouse.").format(order["id"]))
+	check_company(connection, "Warehouse", warehouse, _("Purchase order {0}").format(order["id"]))
+
+	client = KoomyoClient.for_connection(connection)
+	po = frappe.new_doc("Purchase Order")
+	po.update(
+		{
+			"company": connection.company,
+			"supplier": koomyo_supplier(connection, order.get("supplier") or {}),
+			"transaction_date": posting_date(order),
+			"schedule_date": posting_date(order),
+			"set_warehouse": warehouse,
+			"currency": order.get("currency") or connection.koomyo_currency,
+			"conversion_rate": 1,
+			"remarks": _("Koomyo purchase order {0}").format(order["id"]),
+		}
+	)
+	stamp(po, connection, order["id"], order.get("branch_id"))
+	for line in order.get("lines") or []:
+		ordered = money(line.get("quantity_ordered"), "quantity_ordered")
+		if ordered <= 0:
+			continue
+		po.append(
+			"items",
+			{
+				"item_code": ingredient_item(connection, line, client=client),
+				"qty": flt(str(ordered), 6),
+				"rate": flt(str(money(line.get("unit_cost"), "unit_cost")), 6),
+				"warehouse": warehouse,
+				"schedule_date": posting_date(order),
+			},
+		)
+	if not po.items:
+		raise Skipped(_("Purchase order {0} has no lines.").format(order["id"]))
+	po.insert(ignore_permissions=True)
+	po.submit()
+	write_reference(connection, client, "purchase_order", order, po)
+	return po.name
+
+
+def koomyo_supplier(connection, supplier: dict) -> str:
+	from koomyo_erpnext.sync.common import setting
+
+	if not supplier.get("id"):
+		raise Fatal(_("Koomyo sent a purchase order without a supplier."))
+	existing = find_existing("Supplier", connection, supplier["id"])
+	if existing:
+		return existing
+	name = (supplier.get("name") or supplier["id"])[:140]
+	if frappe.db.exists("Supplier", name):
+		# A Supplier of that name is already in ERPNext and is not this Koomyo supplier: never merge.
+		name = f"{name[:100]} ({connection.name})"
+	doc = frappe.new_doc("Supplier")
+	doc.update(
+		{
+			"supplier_name": name,
+			"supplier_group": setting(connection, "supplier_group", _("Supplier Group")),
+			"supplier_type": "Company",
+		}
+	)
+	stamp(doc, connection, supplier["id"], KOOMYO_ORIGIN)
+	doc.insert(ignore_permissions=True)
+	return doc.name
+
+
 @handles("purchase.received", switch="sync_purchasing", scopes=WRITE_SCOPES)
 def on_purchase_received(event: dict, connection):
 	order = event["data"]
@@ -335,11 +424,13 @@ def on_purchase_received(event: dict, connection):
 	if not po_name and ref and frappe.db.exists("Purchase Order", ref):
 		po_name = ref
 	if not po_name:
-		raise Skipped(
-			_(
-				"Purchase order {0} was made in Koomyo, not in ERPNext. Book its receipt in ERPNext by hand if needed."
-			).format(order["id"])
-		)
+		if not connection.book_koomyo_purchases:
+			raise Skipped(
+				_(
+					"Purchase order {0} was made in Koomyo, not in ERPNext. Switch on Book Orders Made in Koomyo to book such orders, or book its receipt by hand."
+				).format(order["id"])
+			)
+		po_name = create_order_from_koomyo(connection, order)
 	po = frappe.get_doc("Purchase Order", po_name)
 	if po.company != connection.company:
 		raise NeedsMapping(
