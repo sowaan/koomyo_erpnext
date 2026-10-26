@@ -39,7 +39,7 @@ from koomyo_erpnext.sync.common import (
 from koomyo_erpnext.sync.events import handles
 from koomyo_erpnext.sync.items import get_or_create_item
 
-STOCK_SCOPES = ("stock.read",)
+STOCK_SCOPES = ("stock.read", "refs.write")
 
 
 def quantity(value, what: str) -> float:
@@ -400,6 +400,10 @@ def ingredient_item(connection, line: dict, client: KoomyoClient | None = None) 
 	cost = money(ingredient.get("cost_per_unit") or "0", "cost_per_unit")
 	if cost:
 		frappe.db.set_value("Item", code, "valuation_rate", flt(str(cost), 6))
+	# Store the Item code on the Koomyo ingredient, so the next lookup by reference finds it.
+	from koomyo_erpnext.sync.customers import write_reference
+
+	write_reference(connection, client, "ingredient", ingredient, frappe.get_doc("Item", code))
 	return code
 
 

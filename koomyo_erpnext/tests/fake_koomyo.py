@@ -55,6 +55,11 @@ class FakeKoomyo:
 		self.events: list[dict] = []
 		self.orders: dict[str, dict] = {}
 		self.ingredients: dict[str, dict] = {}
+		self.suppliers: dict[str, dict] = {}
+		self.purchase_orders: dict[str, dict] = {}
+		self.refs: list[dict] = []
+		self.writes: list[dict] = []  # every write call: method, path, key, body
+		self._idempotent: dict[str, tuple] = {}
 		self.down = False
 		# path -> list of FakeResponse to return first (then normal routing)
 		self.scripted: dict[str, list[FakeResponse]] = {}
@@ -99,6 +104,10 @@ class FakeKoomyo:
 			raise requests.ConnectionError("fake koomyo is down")
 		if self.scripted.get(path):
 			return self.scripted[path].pop(0)
+		if method in ("POST", "PATCH", "PUT"):
+			return self._write(method, path, json_body, (headers or {}).get("Idempotency-Key"))
+		if path.startswith("/purchase-orders/") and path[len("/purchase-orders/") :] in self.purchase_orders:
+			return FakeResponse(200, self.purchase_orders[path[len("/purchase-orders/") :]])
 		if path == "/account":
 			return FakeResponse(200, self.account)
 		if path == "/branches":
@@ -111,6 +120,103 @@ class FakeKoomyo:
 			return FakeResponse(200, self.ingredients[path[len("/ingredients/") :]])
 		if path.startswith("/orders/") and path[len("/orders/") :] in self.orders:
 			return FakeResponse(200, self.orders[path[len("/orders/") :]])
+		return error_response(404, "not_found")
+
+	def _write(self, method, path, body, key):
+		"""Writes as the docs describe them, with Idempotency-Key replay."""
+		self.writes.append({"method": method, "path": path, "key": key, "body": copy.deepcopy(body)})
+		if key and key in self._idempotent:
+			old_body, response = self._idempotent[key]
+			if old_body != body:
+				return error_response(422, "idempotency_key_reused")
+			response.headers["Idempotent-Replayed"] = "true"
+			return response
+		response = self._do_write(method, path, body or {})
+		if key and response.status_code < 500:
+			self._idempotent[key] = (copy.deepcopy(body), response)
+		return response
+
+	def _do_write(self, method, path, body):
+		def ref_key(b):
+			ref = b.get("external_ref") or {}
+			return (ref.get("system"), ref.get("external_id")) if ref else None
+
+		if method == "POST" and path == "/suppliers":
+			for supplier in self.suppliers.values():
+				if ref_key(body) and supplier["_ref"] == ref_key(body):
+					supplier.update({k: v for k, v in body.items() if k != "external_ref"})
+					return FakeResponse(200, supplier)
+			sid = f"sup-{len(self.suppliers) + 1}"
+			supplier = {
+				"id": sid,
+				"object": "supplier",
+				"name": body.get("name"),
+				"_ref": ref_key(body),
+				"phone": body.get("phone"),
+				"email": body.get("email"),
+				"active": body.get("active", True),
+				"external_refs": {body["external_ref"]["system"]: body["external_ref"]["external_id"]}
+				if body.get("external_ref")
+				else {},
+			}
+			self.suppliers[sid] = supplier
+			return FakeResponse(201, supplier)
+		if method == "POST" and path == "/purchase-orders":
+			for order in self.purchase_orders.values():
+				if ref_key(body) and order["_ref"] == ref_key(body):
+					return FakeResponse(200, order)
+			if body.get("supplier_id") not in self.suppliers:
+				return error_response(400, "invalid_parameter", "supplier_id")
+			pid = f"po-{len(self.purchase_orders) + 1}"
+			order = {
+				"id": pid,
+				"object": "purchase_order",
+				"status": "ordered",
+				"_ref": ref_key(body),
+				"supplier": {"id": body["supplier_id"], "name": self.suppliers[body["supplier_id"]]["name"]},
+				"branch_id": body.get("branch_id"),
+				"currency": "PKR",
+				"business_date": "2026-10-12",
+				"external_refs": {body["external_ref"]["system"]: body["external_ref"]["external_id"]}
+				if body.get("external_ref")
+				else {},
+				"lines": [
+					{
+						"id": f"{pid}-line-{i}",
+						"ingredient_id": line["ingredient_id"],
+						"quantity_ordered": line["quantity_ordered"],
+						"quantity_received": "0",
+						"unit_cost": line["unit_cost"],
+					}
+					for i, line in enumerate(body.get("lines") or [])
+				],
+			}
+			self.purchase_orders[pid] = order
+			return FakeResponse(201, order)
+		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):
+			order = self.purchase_orders.get(path.split("/")[2])
+			if not order:
+				return error_response(404, "not_found")
+			if order["status"] == "received":
+				return error_response(409, "already_received")
+			wanted = {line["line_id"]: line["quantity_received"] for line in body.get("lines") or []}
+			for line in order["lines"]:
+				line["quantity_received"] = wanted.get(
+					line["id"], line["quantity_ordered"] if not wanted else "0"
+				)
+			order["status"] = "received"
+			return FakeResponse(200, order)
+		if method == "PATCH" and path.startswith("/ingredients/"):
+			ingredient = self.ingredients.get(path.split("/")[2])
+			if not ingredient:
+				return error_response(404, "not_found")
+			ingredient["cost_per_unit"] = body["cost_per_unit"]
+			return FakeResponse(200, ingredient)
+		if method == "PUT" and path.startswith("/refs/"):
+			_, _, entity_type, entity_id = path.split("/")
+			ref = {"object": "external_ref", "entity_type": entity_type, "entity_id": entity_id, **body}
+			self.refs.append(ref)
+			return FakeResponse(200, ref)
 		return error_response(404, "not_found")
 
 	def _events(self, params):

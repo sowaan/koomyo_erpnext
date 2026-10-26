@@ -272,3 +272,11 @@ scheduler_events = {
 
 # Custom fields koomyo_connection / koomyo_id / koomyo_branch on every doctype the app writes.
 fixtures = [{"dt": "Custom Field", "filters": [["module", "=", "Koomyo Erpnext"]]}]
+
+# ERPNext documents that are written to Koomyo (queued here, sent by the background processor).
+doc_events = {
+	"Purchase Order": {"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_order_submit"},
+	"Purchase Receipt": {"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_receipt_submit"},
+	"Supplier": {"on_update": "koomyo_erpnext.sync.purchasing.on_supplier_update"},
+	"Item": {"on_update": "koomyo_erpnext.sync.purchasing.on_item_update"},
+}

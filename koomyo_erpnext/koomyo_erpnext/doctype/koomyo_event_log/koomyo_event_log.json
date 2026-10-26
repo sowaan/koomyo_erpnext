@@ -93,11 +93,12 @@
    "read_only": 1
   },
   {
+   "description": "ERPNext: work that started in ERPNext and is written to Koomyo.",
    "fieldname": "received_via",
    "fieldtype": "Select",
    "in_standard_filter": 1,
    "label": "Received Via",
-   "options": "Webhook\nFeed",
+   "options": "Webhook\nFeed\nBackfill\nERPNext",
    "read_only": 1
   },
   {

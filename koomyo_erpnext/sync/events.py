@@ -72,19 +72,30 @@ def handles(*event_types: str, switch: str | None = None, scopes: tuple[str, ...
 	return decorator
 
 
+# Work that starts in ERPNext (a submitted Purchase Order, ...) goes through the same Event
+# Log and processor under these types; Koomyo never sends them.
+OUTBOUND_PREFIX = "erpnext."
+
+
 def handled_types() -> list[str]:
-	return sorted(DISPATCH)
+	"""Koomyo event types the app handles (what the feed is asked for)."""
+	return sorted(t for t in DISPATCH if not t.startswith(OUTBOUND_PREFIX))
 
 
-def switched_on_types(connection) -> list[str]:
+def switched_on_types(connection, include_outbound: bool = False) -> list[str]:
 	"""Event types this connection books: their sync switch is on."""
-	return sorted(t for t in DISPATCH if not HANDLER_SWITCH.get(t) or connection.get(HANDLER_SWITCH[t]))
+	return sorted(
+		t
+		for t in DISPATCH
+		if (include_outbound or not t.startswith(OUTBOUND_PREFIX))
+		and (not HANDLER_SWITCH.get(t) or connection.get(HANDLER_SWITCH[t]))
+	)
 
 
 def required_scopes(connection=None) -> list[str]:
 	"""Scopes for what is switched on (all handled types when no connection is given)."""
 	scopes = set(BASE_SCOPES)
-	types = switched_on_types(connection) if connection is not None else handled_types()
+	types = switched_on_types(connection, include_outbound=True) if connection is not None else list(DISPATCH)
 	for event_type in types:
 		scopes.update(HANDLER_SCOPES.get(event_type, ()))
 	return sorted(scopes)
@@ -251,6 +262,10 @@ def process_event(log_name: str):
 		result = handler(event, connection)
 		if dry_run:
 			raise DryRunDone(result)
+	except DryRunWrite as e:
+		frappe.db.rollback(save_point="koomyo_event")
+		log.dry_run = 1
+		_finish(log, "Skipped", message=_("Dry run: {0}. Nothing was sent to Koomyo.").format(e))
 	except DryRunDone as e:
 		what = e.describe()  # read before the rollback removes it
 		frappe.db.rollback(save_point="koomyo_event")
@@ -299,6 +314,57 @@ def process_event(log_name: str):
 	finally:
 		# Messages ERPNext printed while building documents mean nothing to a background job.
 		frappe.local.message_log = []
+
+
+class DryRunWrite(Exception):
+	"""An outbound handler in dry-run mode stops before its first write to Koomyo."""
+
+
+def koomyo_write(connection, client, method: str, path: str, body: dict | None, idempotency_key: str) -> dict:
+	"""Every write to Koomyo goes through here: dry run stops it, and it always carries an Idempotency-Key."""
+	if connection.dry_run:
+		raise DryRunWrite(_("would send {0} {1}").format(method, path))
+	return client.request(method, path, json=body, idempotency_key=idempotency_key[:200])
+
+
+def idempotency_key(doctype: str, name: str, modified, action: str = "") -> str:
+	"""Stable per document version: a retry of the same version replays, a new version is a new write."""
+	stamp_ = get_datetime(modified).strftime("%Y%m%d%H%M%S%f")
+	return "-".join(p for p in ("erpnext", action or frappe.scrub(doctype), name, stamp_) if p)[:200]
+
+
+def store_outbound(
+	connection, event_type: str, doc, action: str = "", extra: dict | None = None
+) -> str | None:
+	"""Queue work that starts in ERPNext. One row per document version (the idempotency key)."""
+	key = idempotency_key(doc.doctype, doc.name, doc.modified, action)
+	if frappe.db.exists(EVENT_LOG, {"connection": connection.name, "event_id": key}):
+		return None
+	log = frappe.new_doc(EVENT_LOG)
+	log.update(
+		{
+			"connection": connection.name,
+			"company": connection.company,
+			"event_id": key,
+			"event_type": event_type,
+			"seq": 0,
+			"received_via": "ERPNext",
+			"event_created": now_datetime(),
+			"business_date": getdate(),
+			"entity_type": doc.doctype,
+			"entity_id": doc.name,
+			"payload": json.dumps(
+				{
+					"type": event_type,
+					"data": {"doctype": doc.doctype, "name": doc.name, "key": key, **(extra or {})},
+				}
+			),
+			"status": "Pending",
+		}
+	)
+	log.insert(ignore_permissions=True)
+	enqueue_processing(connection.name)
+	return log.name
 
 
 class DryRunDone(Exception):
@@ -557,4 +623,4 @@ def _short_text(value, length: int = 140):
 
 
 # Register the handlers of every sync (each module calls @handles at import time).
-from koomyo_erpnext.sync import refunds, sales, shifts, stock, transfers
+from koomyo_erpnext.sync import customers, purchasing, refunds, sales, shifts, stock, transfers

@@ -66,6 +66,12 @@
   "uom_map",
   "column_break_stock_maps",
   "waste_map",
+  "section_purchasing",
+  "sync_purchasing",
+  "sync_customers",
+  "column_break_purchasing",
+  "customer_group",
+  "territory",
   "section_payment_map",
   "payment_map",
   "section_tax_map",
@@ -486,6 +492,43 @@
    "fieldtype": "Table",
    "label": "Waste Map",
    "options": "Koomyo Waste Map"
+  },
+  {
+   "fieldname": "section_purchasing",
+   "fieldtype": "Section Break",
+   "label": "Purchasing and Customers"
+  },
+  {
+   "default": "0",
+   "description": "Submitted Purchase Orders and Purchase Receipts for a mapped Warehouse are written to Koomyo (with their Supplier), changed ingredient valuation rates update Koomyo's ingredient cost, and a Koomyo receipt of an ERPNext order becomes a Purchase Receipt.",
+   "fieldname": "sync_purchasing",
+   "fieldtype": "Check",
+   "label": "Sync Purchasing"
+  },
+  {
+   "default": "0",
+   "description": "Koomyo customers become Customers (name, phone and email only). Needs the webhook's customer data switch on in Koomyo.",
+   "fieldname": "sync_customers",
+   "fieldtype": "Check",
+   "label": "Sync Customers"
+  },
+  {
+   "fieldname": "column_break_purchasing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer_group",
+   "fieldtype": "Link",
+   "label": "Customer Group",
+   "mandatory_depends_on": "sync_customers",
+   "options": "Customer Group"
+  },
+  {
+   "fieldname": "territory",
+   "fieldtype": "Link",
+   "label": "Territory",
+   "mandatory_depends_on": "sync_customers",
+   "options": "Territory"
   },
   {
    "fieldname": "section_payment_map",

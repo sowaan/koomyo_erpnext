@@ -25,6 +25,8 @@ frappe.ui.form.on("Koomyo Connection", {
 			frm.set_query(field, company_filter);
 		}
 		frm.set_query("price_list", () => ({ filters: { selling: 1, enabled: 1 } }));
+		frm.set_query("customer_group", () => ({ filters: { is_group: 0 } }));
+		frm.set_query("territory", () => ({ filters: { is_group: 0 } }));
 		frm.set_query("account", "payment_map", company_filter);
 		frm.set_query("fee_account", "payment_map", company_filter);
 		frm.set_query("account_head", "tax_map", company_filter);

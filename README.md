@@ -43,6 +43,14 @@ One branch serves both versions; `koomyo_erpnext/compat.py` holds the few differ
 
 Ingredients become stock Items, with units mapped through the UOM Map. Nothing dated before the **Opening Stock Date** is booked, so opening stock is never counted twice.
 
+**Purchasing and customers (slice 5).** With **Sync Purchasing** on:
+- a submitted Purchase Order for a mapped Warehouse is written to Koomyo, with its Supplier;
+- its Purchase Receipt is sent as Koomyo's receipt (one per order);
+- a changed ingredient Valuation Rate updates Koomyo's ingredient cost;
+- an order received in the Koomyo admin becomes a Purchase Receipt.
+
+Every write carries an `Idempotency-Key` and appears in the Event Log as received via ERPNext. With **Sync Customers** on, Koomyo customers become Customers (name, phone and email only).
+
 ### Install
 
 ```bash
