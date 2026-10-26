@@ -99,3 +99,13 @@ If either is wrong, the booked over/short is off by that amount, but the remark 
 
 - Nothing has run against a real Koomyo or a Koomyo sandbox yet. Every Koomyo answer in the tests comes from a fake server built from the docs examples.
 - Frappe and ERPNext v16: the code avoids version-specific APIs (`koomyo_erpnext/compat.py`), but it has only run on v15 (Frappe 15.120.1, ERPNext 15.118.0). The Koomyo workspace JSON uses the v15 format.
+
+## 12. Per-order stock deduction (Decision / Open)
+
+**What the app does.** With Stock Deduction set to Per Order, each `order.paid` queues a stock step. The step reads `GET /stock-movements?reason=order_deduction` for the order's branch, in a window from 5 minutes before the order was created to 6 hours after it was paid, and keeps the rows whose `reference_id` is the order. They become one Material Issue (key `order:<id>`). `order.cancelled` does the same with `order_cancel_restore` and makes a Material Receipt (key `order-restore:<id>`). Daily usage is skipped on per-order days. A change of setting applies from the next day, so a day is never booked both ways.
+
+**Assumptions to confirm with Koomyo.**
+- `reference_id` on an `order_deduction` or `order_cancel_restore` movement is the order id; the schema says "the order ... behind the movement".
+- An order's deductions are recorded within that window. They are made when lines go to the kitchen, before payment.
+
+**Wish.** A `reference_id` filter on `GET /stock-movements`, so one call returns exactly one order's movements; or the deducted ingredient lines on `order.paid` itself.

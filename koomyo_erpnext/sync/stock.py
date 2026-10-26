@@ -60,6 +60,14 @@ def on_usage_daily(event: dict, connection):
 	existing = find_existing("Stock Entry", connection, koomyo_id)
 	if existing:
 		return ("Stock Entry", existing)
+	from koomyo_erpnext.sync.order_stock import PER_ORDER, effective_mode
+
+	if effective_mode(connection, usage["business_date"]) == PER_ORDER:
+		raise Skipped(
+			_("Stock Deduction is Per Order on {0}: each order already took its ingredients out.").format(
+				usage["business_date"]
+			)
+		)
 	check_opening_date(connection, usage)
 	branch = branch_row(connection, usage["branch_id"])
 	cogs = account_setting(connection, "cogs_account", _("Cost of Goods Sold Account"))

@@ -30,6 +30,7 @@ class KoomyoConnection(Document):
 			scopes = {s.strip() for s in self.key_scopes.split(",")}
 			self.missing_scopes = ", ".join(s for s in required_scopes(self) if s not in scopes)
 
+		self.set_stock_deduction_start()
 		self.reset_test_when_credentials_change()
 		self.validate_company_change()
 		self.validate_branch_map()
@@ -37,6 +38,18 @@ class KoomyoConnection(Document):
 		self.validate_defaults()
 		self.validate_unique_restaurant_and_company()
 		self.validate_enable()
+
+	def set_stock_deduction_start(self):
+		"""A new Stock Deduction setting applies from the next day, so no day is booked both ways."""
+		from koomyo_erpnext.sync.order_stock import DAILY, next_business_day
+
+		self.stock_deduction = self.stock_deduction or DAILY
+		if self.is_new() or not self.stock_deduction_since:
+			self.stock_deduction_since = self.stock_start_date or today()
+		elif self.has_value_changed("stock_deduction"):
+			# Days up to the change keep the setting that applied to them.
+			self.stock_deduction_before = self.get_doc_before_save().stock_deduction or DAILY
+			self.stock_deduction_since = next_business_day(self)
 
 	def reset_test_when_credentials_change(self):
 		"""A new key or address may point at another restaurant: test again before use."""

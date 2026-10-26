@@ -75,11 +75,13 @@ def handles(*event_types: str, switch: str | None = None, scopes: tuple[str, ...
 # Work that starts in ERPNext (a submitted Purchase Order, ...) goes through the same Event
 # Log and processor under these types; Koomyo never sends them.
 OUTBOUND_PREFIX = "erpnext."
+# Follow-up steps the app queues itself (Koomyo never sends these types either).
+INTERNAL_PREFIXES = (OUTBOUND_PREFIX, "koomyo.")
 
 
 def handled_types() -> list[str]:
 	"""Koomyo event types the app handles (what the feed is asked for)."""
-	return sorted(t for t in DISPATCH if not t.startswith(OUTBOUND_PREFIX))
+	return sorted(t for t in DISPATCH if not t.startswith(INTERNAL_PREFIXES))
 
 
 def switched_on_types(connection, include_outbound: bool = False) -> list[str]:
@@ -87,7 +89,7 @@ def switched_on_types(connection, include_outbound: bool = False) -> list[str]:
 	return sorted(
 		t
 		for t in DISPATCH
-		if (include_outbound or not t.startswith(OUTBOUND_PREFIX))
+		if (include_outbound or not t.startswith(INTERNAL_PREFIXES))
 		and (not HANDLER_SWITCH.get(t) or connection.get(HANDLER_SWITCH[t]))
 	)
 
@@ -159,7 +161,51 @@ def store_event(connection, event: dict, via: str) -> tuple[str, bool]:
 		# Another worker stored the same event between our check and insert.
 		frappe.db.rollback(save_point="koomyo_store")
 		return frappe.db.get_value(EVENT_LOG, {"connection": connection.name, "event_id": event["id"]}), False
+	store_derived(connection, event, via)
 	return log.name, True
+
+
+# event type -> functions that may return a follow-up step type for the same event
+# (for example the per-order stock deduction that follows order.paid).
+DERIVED: dict[str, list[Callable]] = {}
+
+
+def derives(event_type: str):
+	def decorator(fn):
+		DERIVED.setdefault(event_type, []).append(fn)
+		return fn
+
+	return decorator
+
+
+def store_derived(connection, event: dict, via: str):
+	"""Queue follow-up steps as their own Event Log rows, so each fails and retries on its own."""
+	for fn in DERIVED.get(event["type"], []):
+		step = fn(connection, event)
+		if not step:
+			continue
+		derived = dict(event, id=f"{event['id']}:{step.split('.')[-1]}", type=step)
+		if frappe.db.exists(EVENT_LOG, {"connection": connection.name, "event_id": derived["id"]}):
+			continue
+		log = frappe.new_doc(EVENT_LOG)
+		log.update(
+			{
+				"connection": connection.name,
+				"company": connection.company,
+				"event_id": derived["id"],
+				"event_type": step,
+				"seq": event["seq"],
+				"received_via": via,
+				"event_created": _utc_naive(event.get("created")),
+				"business_date": _date_or_none(event.get("business_date")),
+				"branch_id": _short_text(event.get("branch_id")),
+				"entity_type": _short_text((event.get("entity") or {}).get("type")),
+				"entity_id": _short_text((event.get("entity") or {}).get("id")),
+				"payload": json.dumps(redact(derived), indent=1, sort_keys=True),
+				"status": "Pending",
+			}
+		)
+		log.insert(ignore_permissions=True)
 
 
 # ------------------------------------------------------------- processing
@@ -623,4 +669,4 @@ def _short_text(value, length: int = 140):
 
 
 # Register the handlers of every sync (each module calls @handles at import time).
-from koomyo_erpnext.sync import customers, purchasing, refunds, sales, shifts, stock, transfers
+from koomyo_erpnext.sync import customers, order_stock, purchasing, refunds, sales, shifts, stock, transfers

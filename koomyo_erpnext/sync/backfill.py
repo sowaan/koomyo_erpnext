@@ -378,7 +378,15 @@ def run_chunk(backfill, connection, reader, chunk, dry_run: bool, sample: list):
 		if kind in ("customer", "purchase_order"):
 			read_unpaged_kind(backfill, reader, kind, state, handle, chunk, counts, dry_run)
 		elif kind == "usage":
-			if usage_day_is_settled(connection, chunk.day):
+			from koomyo_erpnext.sync.order_stock import PER_ORDER, effective_mode
+
+			if effective_mode(connection, chunk.day) == PER_ORDER:
+				messages.append(
+					_(
+						"{0}: Stock Deduction is Per Order, so ingredients come with each order (tick Sales and Refunds)."
+					).format(chunk.day)
+				)
+			elif usage_day_is_settled(connection, chunk.day):
 				movements = []
 				for path, params, keep in reader.lists_for("usage", chunk.day, backfill.koomyo_branch_id):
 					movements += [m for m in read_all(reader, path, params) if keep(m)]

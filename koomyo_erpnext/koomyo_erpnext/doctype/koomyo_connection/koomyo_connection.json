@@ -58,6 +58,9 @@
   "sync_stock",
   "stock_start_date",
   "ingredient_item_group",
+  "stock_deduction",
+  "stock_deduction_since",
+  "stock_deduction_before",
   "column_break_stock",
   "cogs_account",
   "stock_adjustment_account",
@@ -448,6 +451,31 @@
    "label": "Ingredient Item Group",
    "mandatory_depends_on": "sync_stock",
    "options": "Item Group"
+  },
+  {
+   "default": "Daily (from Koomyo usage)",
+   "description": "Daily: what sales used comes once a day after the day ends, as one Material Issue per branch. Per Order: each paid order takes out exactly what Koomyo deducted for it, and a cancelled order puts it back.",
+   "fieldname": "stock_deduction",
+   "fieldtype": "Select",
+   "label": "Stock Deduction",
+   "options": "Daily (from Koomyo usage)\nPer Order (from Koomyo movements)"
+  },
+  {
+   "description": "A change takes effect the next day, so no day is counted both ways. Days before keep the old setting.",
+   "fieldname": "stock_deduction_since",
+   "fieldtype": "Date",
+   "label": "Stock Deduction Applies From",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "depends_on": "stock_deduction_before",
+   "fieldname": "stock_deduction_before",
+   "fieldtype": "Select",
+   "label": "Stock Deduction Before That",
+   "no_copy": 1,
+   "options": "\nDaily (from Koomyo usage)\nPer Order (from Koomyo movements)",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_stock",

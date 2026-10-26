@@ -90,6 +90,12 @@ Then tick **Enabled**.
 
 **Partial refunds.** Koomyo sends a refund amount without lines. The default, **Leave for Manual Booking**, fails such a refund with a clear message, so an accountant decides. **Proportional Credit Note** reverses revenue and each tax and charge row in the same share, exact to the cent.
 
+**Stock Deduction.** This setting picks how sales take ingredients out of stock:
+- **Daily (from Koomyo usage)**, the default: one Material Issue per branch per day, after the day ends.
+- **Per Order (from Koomyo movements)**: each paid order takes out exactly what Koomyo deducted for it, and a cancelled order puts it back.
+
+The stock step is its own Event Log row, so a stock problem never holds up the invoice. A change of setting applies from the next day, so no day is counted twice.
+
 **Opening Stock Date.** Stock events dated before this day are skipped, because the Warehouses' opening stock already contains them. Set it to the day after you entered opening stock.
 
 **Dry Run.** With Dry Run ticked, every event is checked against the maps and ERPNext's rules, but nothing is saved and nothing is written to Koomyo. The Event Log says what would have been made. Untick it and press **Feed > Book Dry-Run Events** to book them for real.
