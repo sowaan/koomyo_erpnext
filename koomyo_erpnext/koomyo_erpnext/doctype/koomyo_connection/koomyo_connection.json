@@ -1,0 +1,314 @@
+{
+ "actions": [],
+ "autoname": "field:connection_name",
+ "creation": "2026-10-26 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_name",
+  "company",
+  "enabled",
+  "column_break_status",
+  "status",
+  "status_message",
+  "section_api",
+  "base_url",
+  "api_key",
+  "webhook_secret",
+  "column_break_api",
+  "start_from_date",
+  "section_restaurant",
+  "restaurant_name",
+  "tenant_id",
+  "koomyo_currency",
+  "koomyo_timezone",
+  "column_break_restaurant",
+  "key_name",
+  "key_scopes",
+  "missing_scopes",
+  "last_tested_on",
+  "section_webhook",
+  "webhook_url",
+  "events_to_register",
+  "column_break_webhook",
+  "webhook_token",
+  "section_branches",
+  "branch_map",
+  "section_feed",
+  "last_seq",
+  "last_caught_up_on",
+  "column_break_feed",
+  "last_alert_on"
+ ],
+ "fields": [
+  {
+   "description": "A name for you, such as the restaurant brand.",
+   "fieldname": "connection_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Connection Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "Every document made from this connection is booked in this Company.",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Test the connection first. While off, webhooks are refused and the feed is not read.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Tested",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Not Tested\nConnected\nNeeds Attention\nNeeds Re-sync",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_message",
+   "fieldtype": "Small Text",
+   "label": "Status Message",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_api",
+   "fieldtype": "Section Break",
+   "label": "Koomyo API"
+  },
+  {
+   "default": "https://api.koomyo.com/api/public/v1",
+   "description": "Ends with /api/public/v1. Change it only for a self-hosted or regional Koomyo.",
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "label": "API Address",
+   "reqd": 1
+  },
+  {
+   "description": "From Koomyo Settings > Integrations > API keys (starts with kyo_live_).",
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key",
+   "length": 200,
+   "no_copy": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The whsec_ secret shown once when the webhook endpoint is created in Koomyo.",
+   "fieldname": "webhook_secret",
+   "fieldtype": "Password",
+   "label": "Webhook Secret",
+   "length": 200,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_api",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Events before this date are not read from the feed. Bring older data in with a backfill.",
+   "fieldname": "start_from_date",
+   "fieldtype": "Date",
+   "label": "Start From Date",
+   "reqd": 1
+  },
+  {
+   "collapsible": 0,
+   "fieldname": "section_restaurant",
+   "fieldtype": "Section Break",
+   "label": "Restaurant (from Test Connection)"
+  },
+  {
+   "fieldname": "restaurant_name",
+   "fieldtype": "Data",
+   "label": "Restaurant",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "tenant_id",
+   "fieldtype": "Data",
+   "label": "Koomyo Restaurant ID",
+   "no_copy": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "koomyo_currency",
+   "fieldtype": "Data",
+   "label": "Koomyo Currency",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "koomyo_timezone",
+   "fieldtype": "Data",
+   "label": "Koomyo Time Zone",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_restaurant",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "key_name",
+   "fieldtype": "Data",
+   "label": "API Key Name",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "key_scopes",
+   "fieldtype": "Small Text",
+   "label": "Key Scopes",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "missing_scopes",
+   "fieldtype": "Small Text",
+   "label": "Missing Scopes",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_tested_on",
+   "fieldtype": "Datetime",
+   "label": "Last Tested On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_webhook",
+   "fieldtype": "Section Break",
+   "label": "Webhook"
+  },
+  {
+   "description": "Give this address to Koomyo when you add the webhook endpoint. Keep it private.",
+   "fieldname": "webhook_url",
+   "fieldtype": "Data",
+   "label": "Webhook Address",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "events_to_register",
+   "fieldtype": "Small Text",
+   "label": "Events to Register",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_webhook",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "webhook_token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Webhook Token",
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "description": "Each Koomyo branch maps to a Cost Center and Warehouse of this connection's Company.",
+   "fieldname": "section_branches",
+   "fieldtype": "Section Break",
+   "label": "Branches"
+  },
+  {
+   "fieldname": "branch_map",
+   "fieldtype": "Table",
+   "label": "Branch Map",
+   "options": "Koomyo Branch Map"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_feed",
+   "fieldtype": "Section Break",
+   "label": "Events Feed"
+  },
+  {
+   "default": "0",
+   "fieldname": "last_seq",
+   "fieldtype": "Int",
+   "label": "Last Event Number Read",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_caught_up_on",
+   "fieldtype": "Datetime",
+   "label": "Last Full Catch-up",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_feed",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_alert_on",
+   "fieldtype": "Date",
+   "label": "Last Alert Sent On",
+   "no_copy": 1,
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-26 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Koomyo Erpnext",
+ "name": "Koomyo Connection",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Koomyo Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 0,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "connection_name",
+ "track_changes": 1
+}

@@ -1,0 +1,29 @@
+{
+ "api_version": "v1",
+ "branch_id": null,
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T16:54:47Z",
+ "currency": "PKR",
+ "data": {
+  "active": true,
+  "address": null,
+  "contact_name": null,
+  "created_at": "2026-10-12T16:54:47Z",
+  "email": null,
+  "external_refs": {},
+  "id": "5bb41bd1-ec94-409b-ae63-08b6b4a97ed2",
+  "name": "Second supplier",
+  "object": "supplier",
+  "phone": null
+ },
+ "entity": {
+  "id": "5bb41bd1-ec94-409b-ae63-08b6b4a97ed2",
+  "type": "supplier"
+ },
+ "id": "f5ec2fcf-bf1c-45a3-a1d4-c454474a8c38",
+ "object": "event",
+ "seq": 10,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "supplier.created"
+}

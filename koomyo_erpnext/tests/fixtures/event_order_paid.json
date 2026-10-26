@@ -1,0 +1,99 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T16:53:19Z",
+ "currency": "PKR",
+ "data": {
+  "amounts": {
+   "amount_due": "724.50",
+   "amount_paid": "724.50",
+   "amount_refunded": "0.00",
+   "channel_markup": "0.00",
+   "delivery_fee": "0.00",
+   "discount": "0.00",
+   "items_subtotal": "630.00",
+   "payment_discount": "0.00",
+   "payment_discount_pre_tax": true,
+   "prices_include_tax": false,
+   "tax": "94.50",
+   "tax_rate": "15.00",
+   "total": "724.50",
+   "voucher_discount": "0.00"
+  },
+  "branch_id": "90000000-0000-4000-8000-000000000001",
+  "business_date": "2026-10-12",
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "channel": "counter",
+  "confirmed_at": "2026-10-12T16:53:19Z",
+  "created_at": "2026-10-12T16:53:19Z",
+  "created_by": "e3f4cd91-f745-4a67-9d5b-480ed538b3e0",
+  "currency": "PKR",
+  "customer": null,
+  "delivery": null,
+  "discount": null,
+  "external_refs": {},
+  "id": "a8955e7a-335a-4ad0-a872-56b6d2479f80",
+  "items": [
+   {
+    "category": "Pizza",
+    "combo_id": null,
+    "combo_selections": [],
+    "id": "701fed66-6a09-4dd3-a103-ffae1bfaf3e1",
+    "item_id": "a0000000-0000-4000-8000-000000000001",
+    "line_total": "630.00",
+    "modifiers": [],
+    "name": "Chicken Tikka Supreme",
+    "notes": null,
+    "original_unit_price": "900.00",
+    "promo_discount": "270.00",
+    "promotion": "Weekend Pizza Fest",
+    "quantity": 1,
+    "round": 1,
+    "sent_to_kitchen_at": "2026-10-12T16:53:19Z",
+    "size": "S",
+    "size_id": "a70ce29a-f567-46c0-8e56-0760e2508b61",
+    "unit_price": "630.00",
+    "void_reason": null,
+    "voided": false,
+    "voided_at": null
+   }
+  ],
+  "notes": null,
+  "number": "ORD-PFB-20261012-0002",
+  "object": "order",
+  "paid_at": "2026-10-12T16:53:19Z",
+  "payment": {
+   "change": "1275.50",
+   "method": "cash",
+   "payments": [
+    {
+     "amount": "724.50",
+     "created_at": "2026-10-12T16:53:19Z",
+     "id": "41a8f2dc-3156-4d01-909c-b0d6244b537c",
+     "method": "cash",
+     "reference": null,
+     "shift_id": "525f08ca-00c2-408e-a6b2-8815be64ad98"
+    }
+   ],
+   "status": "paid",
+   "tendered": "2000.00"
+  },
+  "shift_id": "525f08ca-00c2-408e-a6b2-8815be64ad98",
+  "status": "kitchen",
+  "table": null,
+  "type": "counter",
+  "updated_at": "2026-10-12T16:53:19Z"
+ },
+ "entity": {
+  "id": "a8955e7a-335a-4ad0-a872-56b6d2479f80",
+  "type": "order"
+ },
+ "id": "518d34af-0e10-4137-aa3f-3a634e3c13c6",
+ "object": "event",
+ "seq": 4,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "order.paid"
+}

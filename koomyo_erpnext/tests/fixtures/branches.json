@@ -1,0 +1,24 @@
+{
+ "data": [
+  {
+   "active": true,
+   "address": "Shop 4, Bahadurabad Chowrangi, Karachi",
+   "code": "PFB",
+   "created_at": "2026-10-10T23:01:51Z",
+   "external_refs": {
+    "erpnext": "CC-PFB"
+   },
+   "id": "90000000-0000-4000-8000-000000000001",
+   "lat": 24.878,
+   "lng": 67.064,
+   "name": "Pizza Flex Bahadurabad",
+   "object": "branch",
+   "phone": "+92 21 3456 7890",
+   "tax_rate": "0",
+   "tax_rate_card": "0"
+  }
+ ],
+ "has_more": false,
+ "next_cursor": null,
+ "object": "list"
+}

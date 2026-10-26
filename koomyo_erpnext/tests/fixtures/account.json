@@ -1,0 +1,28 @@
+{
+ "api_version": "v1",
+ "currency": "PKR",
+ "key": {
+  "id": "fcefa493-bd2c-475a-8665-9560c1d1e228",
+  "name": "docs-full",
+  "scopes": [
+   "orders.read",
+   "shifts.read",
+   "catalog.read",
+   "stock.read",
+   "purchasing.read",
+   "customers.read",
+   "events.read",
+   "refs.read",
+   "suppliers.write",
+   "purchasing.write",
+   "ingredients.write",
+   "customers.write",
+   "refs.write"
+  ]
+ },
+ "name": "Slice of Heaven Test Cafe",
+ "object": "account",
+ "server_time": "2026-10-12T17:15:08Z",
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi"
+}

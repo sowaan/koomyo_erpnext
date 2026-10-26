@@ -1,0 +1,147 @@
+{
+ "data": [
+  {
+   "api_version": "v1",
+   "branch_id": "90000000-0000-4000-8000-000000000001",
+   "business_date": "2026-10-12",
+   "created": "2026-10-12T16:52:51Z",
+   "currency": "PKR",
+   "data": {
+    "branch_id": "90000000-0000-4000-8000-000000000001",
+    "business_date": "2026-10-12",
+    "cash_variance": null,
+    "closed_at": null,
+    "closed_by": null,
+    "counted_cash": null,
+    "currency": "PKR",
+    "expected_cash": null,
+    "external_refs": {},
+    "id": "525f08ca-00c2-408e-a6b2-8815be64ad98",
+    "notes": null,
+    "object": "shift",
+    "opened_at": "2026-10-12T16:52:51Z",
+    "opened_by": "e3f4cd91-f745-4a67-9d5b-480ed538b3e0",
+    "opening_cash": "1000.00",
+    "payments_by_method": [],
+    "refunds": {
+     "amount": "0.00",
+     "count": 0
+    },
+    "rider_cash_handed_in": "0.00",
+    "status": "open"
+   },
+   "entity": {
+    "id": "525f08ca-00c2-408e-a6b2-8815be64ad98",
+    "type": "shift"
+   },
+   "id": "8d289c5b-d866-4d49-91c5-f8b100dc7e3b",
+   "object": "event",
+   "seq": 2,
+   "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+   "timezone": "Asia/Karachi",
+   "type": "shift.opened"
+  },
+  {
+   "api_version": "v1",
+   "branch_id": "90000000-0000-4000-8000-000000000001",
+   "business_date": "2026-10-12",
+   "created": "2026-10-12T16:52:58Z",
+   "currency": "PKR",
+   "data": {
+    "amounts": {
+     "amount_due": "1449.00",
+     "amount_paid": "1449.00",
+     "amount_refunded": "0",
+     "channel_markup": "0.00",
+     "delivery_fee": "0.00",
+     "discount": "0.00",
+     "items_subtotal": "1260.00",
+     "payment_discount": "0.00",
+     "payment_discount_pre_tax": true,
+     "prices_include_tax": false,
+     "tax": "189.00",
+     "tax_rate": "15.00",
+     "total": "1449.00",
+     "voucher_discount": "0.00"
+    },
+    "branch_id": "90000000-0000-4000-8000-000000000001",
+    "business_date": "2026-10-12",
+    "cancel_reason": null,
+    "cancelled_at": null,
+    "channel": "counter",
+    "confirmed_at": "2026-10-12T16:52:58Z",
+    "created_at": "2026-10-12T16:52:51Z",
+    "created_by": "e3f4cd91-f745-4a67-9d5b-480ed538b3e0",
+    "currency": "PKR",
+    "customer": null,
+    "delivery": null,
+    "discount": null,
+    "external_refs": {},
+    "id": "9bbcf0ba-e90f-4cec-aa52-855c40ccc5e3",
+    "items": [
+     {
+      "category": "Pizza",
+      "combo_id": null,
+      "combo_selections": [],
+      "id": "840eb774-26b9-4748-9940-3fb9e48fa141",
+      "item_id": "a0000000-0000-4000-8000-000000000001",
+      "line_total": "1260.00",
+      "modifiers": [],
+      "name": "Chicken Tikka Supreme",
+      "notes": null,
+      "original_unit_price": "900.00",
+      "promo_discount": "540.00",
+      "promotion": "Weekend Pizza Fest",
+      "quantity": 2,
+      "round": 1,
+      "sent_to_kitchen_at": "2026-10-12T16:52:58Z",
+      "size": "S",
+      "size_id": "a70ce29a-f567-46c0-8e56-0760e2508b61",
+      "unit_price": "630.00",
+      "void_reason": null,
+      "voided": false,
+      "voided_at": null
+     }
+    ],
+    "notes": null,
+    "number": "ORD-PFB-20261012-0001",
+    "object": "order",
+    "paid_at": "2026-10-12T16:52:58Z",
+    "payment": {
+     "change": "3551.00",
+     "method": "cash",
+     "payments": [
+      {
+       "amount": "1449.00",
+       "created_at": "2026-10-12T16:52:58Z",
+       "id": "0f2b5a0c-f85d-4393-893f-7f9f1a45c0c4",
+       "method": "cash",
+       "reference": null,
+       "shift_id": "525f08ca-00c2-408e-a6b2-8815be64ad98"
+      }
+     ],
+     "status": "paid",
+     "tendered": "5000.00"
+    },
+    "shift_id": "525f08ca-00c2-408e-a6b2-8815be64ad98",
+    "status": "kitchen",
+    "table": null,
+    "type": "counter",
+    "updated_at": "2026-10-12T16:52:58Z"
+   },
+   "entity": {
+    "id": "9bbcf0ba-e90f-4cec-aa52-855c40ccc5e3",
+    "type": "order"
+   },
+   "id": "7824c23e-6ced-434b-b134-008a28435f48",
+   "object": "event",
+   "seq": 3,
+   "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+   "timezone": "Asia/Karachi",
+   "type": "order.paid"
+  }
+ ],
+ "has_more": true,
+ "next_after": 3,
+ "object": "list"
+}

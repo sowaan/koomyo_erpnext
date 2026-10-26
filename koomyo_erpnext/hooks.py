@@ -1,5 +1,5 @@
 app_name = "koomyo_erpnext"
-app_title = "Koomyo Erpnext"
+app_title = "Koomyo ERPNext"
 app_publisher = "Sowaan"
 app_description = " Sync your Koomyo restaurant sales, stock and purchasing with ERPNext, automatically."
 app_email = "info@sowaan.com"
@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["erpnext"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -82,8 +82,9 @@ app_license = "mit"
 # Installation
 # ------------
 
-# before_install = "koomyo_erpnext.install.before_install"
-# after_install = "koomyo_erpnext.install.after_install"
+before_install = "koomyo_erpnext.install.before_install"
+after_install = "koomyo_erpnext.install.after_install"
+before_migrate = "koomyo_erpnext.install.before_migrate"
 
 # Uninstallation
 # ------------
@@ -253,3 +254,17 @@ app_license = "mit"
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
 
+
+# Koomyo
+# ------
+
+scheduler_events = {
+	"cron": {
+		# Read each connection's events feed and process what is due (one job per connection).
+		"*/5 * * * *": ["koomyo_erpnext.sync.events.schedule_catch_up"],
+	},
+	"daily": [
+		"koomyo_erpnext.sync.events.cleanup_event_log",
+		"koomyo_erpnext.sync.events.daily_alerts",
+	],
+}
