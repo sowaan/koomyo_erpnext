@@ -1,0 +1,23 @@
+{
+ "content": null,
+ "creation": "2026-10-26 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "icon": "",
+ "idx": 0,
+ "modified": "2026-10-26 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Koomyo Erpnext",
+ "name": "koomyo-setup",
+ "owner": "Administrator",
+ "page_name": "koomyo-setup",
+ "roles": [
+  {"role": "System Manager"},
+  {"role": "Koomyo Manager"}
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Koomyo Setup"
+}

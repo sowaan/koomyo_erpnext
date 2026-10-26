@@ -292,3 +292,6 @@ doc_events = {
 	"Supplier": {"on_update": "koomyo_erpnext.sync.purchasing.on_supplier_update"},
 	"Item": {"on_update": "koomyo_erpnext.sync.purchasing.on_item_update"},
 }
+
+# A nudge to the setup wizard while the site has no Koomyo connection.
+app_include_js = "/assets/koomyo_erpnext/js/koomyo_setup_banner.js"

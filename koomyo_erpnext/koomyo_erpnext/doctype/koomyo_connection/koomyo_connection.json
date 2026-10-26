@@ -5,95 +5,126 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "tab_connection",
+  "setup_checklist",
+  "section_main",
   "connection_name",
   "company",
   "enabled",
+  "cb_main",
   "access_mode",
-  "column_break_status",
+  "dry_run",
   "status",
   "status_message",
   "section_api",
   "base_url",
   "api_key",
-  "webhook_secret",
-  "column_break_api",
-  "ref_system",
+  "cb_api",
   "start_from_date",
-  "dry_run",
-  "section_restaurant",
-  "restaurant_name",
-  "tenant_id",
-  "koomyo_currency",
-  "koomyo_timezone",
-  "column_break_restaurant",
-  "key_name",
-  "key_scopes",
-  "missing_scopes",
-  "last_tested_on",
-  "section_webhook",
-  "webhook_url",
-  "events_to_register",
-  "column_break_webhook",
-  "webhook_token",
+  "ref_system",
+  "tab_setup",
   "section_branches",
   "branch_map",
+  "section_payment_map",
+  "payment_map",
+  "section_tax_map",
+  "tax_map",
+  "tab_syncs",
   "section_syncs",
   "sync_sales",
   "sync_refunds",
   "partial_refunds",
-  "column_break_sales",
+  "section_sales_settings",
   "walk_in_customer",
   "menu_item_group",
   "income_account",
   "price_list",
+  "cb_sales",
   "default_cost_center",
   "delivery_fee_account",
   "channel_markup_account",
   "payment_adjustment_account",
   "section_shifts",
   "sync_shifts",
-  "column_break_shifts",
+  "section_shift_settings",
   "cash_over_short_account",
+  "cb_shifts",
   "drawer_account",
   "section_stock",
   "sync_stock",
+  "section_stock_settings",
   "stock_start_date",
   "ingredient_item_group",
   "stock_deduction",
   "stock_deduction_since",
   "stock_deduction_before",
-  "column_break_stock",
+  "cb_stock",
   "cogs_account",
   "stock_adjustment_account",
   "transfer_loss_account",
   "section_stock_maps",
   "uom_map",
-  "column_break_stock_maps",
+  "cb_stock_maps",
   "waste_map",
   "section_purchasing",
   "sync_purchasing",
   "book_koomyo_purchases",
+  "section_purchasing_settings",
   "main_warehouse",
+  "cb_purchasing",
   "supplier_group",
+  "section_customers",
   "sync_customers",
-  "column_break_purchasing",
+  "section_customer_settings",
   "customer_group",
+  "cb_customers",
   "territory",
-  "section_payment_map",
-  "payment_map",
-  "section_tax_map",
-  "tax_map",
+  "tab_webhook",
+  "section_webhook",
+  "webhook_url",
+  "events_to_register",
+  "cb_webhook",
+  "webhook_secret",
+  "webhook_token",
+  "tab_catalog",
   "section_catalog",
   "catalog_loaded_on",
-  "column_break_catalog",
+  "cb_catalog",
   "catalog_summary",
+  "tab_status",
+  "section_restaurant",
+  "restaurant_name",
+  "tenant_id",
+  "koomyo_currency",
+  "koomyo_timezone",
+  "cb_restaurant",
+  "key_name",
+  "key_scopes",
+  "missing_scopes",
+  "last_tested_on",
   "section_feed",
   "last_seq",
   "last_caught_up_on",
-  "column_break_feed",
-  "last_alert_on"
+  "cb_feed",
+  "last_alert_on",
+  "section_setup_log",
+  "setup_log"
  ],
  "fields": [
+  {
+   "fieldname": "tab_connection",
+   "fieldtype": "Tab Break",
+   "label": "Connection"
+  },
+  {
+   "fieldname": "setup_checklist",
+   "fieldtype": "HTML",
+   "label": "Checklist"
+  },
+  {
+   "fieldname": "section_main",
+   "fieldtype": "Section Break"
+  },
   {
    "description": "A name for you, such as the restaurant brand.",
    "fieldname": "connection_name",
@@ -122,6 +153,10 @@
    "label": "Enabled"
   },
   {
+   "fieldname": "cb_main",
+   "fieldtype": "Column Break"
+  },
+  {
    "default": "Read and Write",
    "description": "Read Only: the app only reads from Koomyo and never writes to it (no suppliers, Purchase Orders, receipts, ingredient costs or ERPNext ids). Read and Write also sends what is made in ERPNext.",
    "fieldname": "access_mode",
@@ -130,8 +165,11 @@
    "options": "Read and Write\nRead Only"
   },
   {
-   "fieldname": "column_break_status",
-   "fieldtype": "Column Break"
+   "default": "0",
+   "description": "Check every event against the maps and ERPNext rules, but save nothing. The Event Log says what would have been made.",
+   "fieldname": "dry_run",
+   "fieldtype": "Check",
+   "label": "Dry Run"
   },
   {
    "default": "Not Tested",
@@ -174,23 +212,8 @@
    "reqd": 1
   },
   {
-   "description": "The whsec_ secret shown once when the webhook endpoint is created in Koomyo.",
-   "fieldname": "webhook_secret",
-   "fieldtype": "Password",
-   "label": "Webhook Secret",
-   "length": 200,
-   "no_copy": 1
-  },
-  {
-   "fieldname": "column_break_api",
+   "fieldname": "cb_api",
    "fieldtype": "Column Break"
-  },
-  {
-   "default": "erpnext",
-   "description": "The system name under which this ERPNext's ids are stored in Koomyo's external references. Give each connection to the same Koomyo restaurant its own name.",
-   "fieldname": "ref_system",
-   "fieldtype": "Data",
-   "label": "External Reference Name"
   },
   {
    "description": "Events before this date are not read from the feed. Bring older data in with a backfill.",
@@ -200,111 +223,16 @@
    "reqd": 1
   },
   {
-   "default": "0",
-   "description": "Check every event against the maps and ERPNext rules, but save nothing. The Event Log says what would have been made.",
-   "fieldname": "dry_run",
-   "fieldtype": "Check",
-   "label": "Dry Run"
-  },
-  {
-   "collapsible": 0,
-   "fieldname": "section_restaurant",
-   "fieldtype": "Section Break",
-   "label": "Restaurant (from Test Connection)"
-  },
-  {
-   "fieldname": "restaurant_name",
+   "default": "erpnext",
+   "description": "The system name under which this ERPNext's ids are stored in Koomyo's external references. Give each connection to the same Koomyo restaurant its own name.",
+   "fieldname": "ref_system",
    "fieldtype": "Data",
-   "label": "Restaurant",
-   "no_copy": 1,
-   "read_only": 1
+   "label": "External Reference Name"
   },
   {
-   "fieldname": "tenant_id",
-   "fieldtype": "Data",
-   "label": "Koomyo Restaurant ID",
-   "no_copy": 1,
-   "read_only": 1,
-   "search_index": 1
-  },
-  {
-   "fieldname": "koomyo_currency",
-   "fieldtype": "Data",
-   "label": "Koomyo Currency",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "koomyo_timezone",
-   "fieldtype": "Data",
-   "label": "Koomyo Time Zone",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_restaurant",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "key_name",
-   "fieldtype": "Data",
-   "label": "API Key Name",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "key_scopes",
-   "fieldtype": "Small Text",
-   "label": "Key Scopes",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "missing_scopes",
-   "fieldtype": "Small Text",
-   "label": "Missing Scopes",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "last_tested_on",
-   "fieldtype": "Datetime",
-   "label": "Last Tested On",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "section_webhook",
-   "fieldtype": "Section Break",
-   "label": "Webhook"
-  },
-  {
-   "description": "Give this address to Koomyo when you add the webhook endpoint. Keep it private.",
-   "fieldname": "webhook_url",
-   "fieldtype": "Data",
-   "label": "Webhook Address",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "events_to_register",
-   "fieldtype": "Small Text",
-   "label": "Events to Register",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_webhook",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "webhook_token",
-   "fieldtype": "Data",
-   "hidden": 1,
-   "label": "Webhook Token",
-   "no_copy": 1,
-   "read_only": 1,
-   "unique": 1
+   "fieldname": "tab_setup",
+   "fieldtype": "Tab Break",
+   "label": "Setup"
   },
   {
    "description": "Each Koomyo branch maps to a Cost Center and Warehouse of this connection's Company; each Koomyo central warehouse to a Warehouse.",
@@ -317,6 +245,34 @@
    "fieldtype": "Table",
    "label": "Branch Map",
    "options": "Koomyo Branch Map"
+  },
+  {
+   "fieldname": "section_payment_map",
+   "fieldtype": "Section Break",
+   "label": "Payment Methods"
+  },
+  {
+   "fieldname": "payment_map",
+   "fieldtype": "Table",
+   "label": "Payment Map",
+   "options": "Koomyo Payment Map"
+  },
+  {
+   "description": "Koomyo sends one tax amount and rate per order, and whether prices include tax. Map each rate to a tax account. The most exact row wins: branch and rate, then rate, then branch, then an empty row.",
+   "fieldname": "section_tax_map",
+   "fieldtype": "Section Break",
+   "label": "Taxes"
+  },
+  {
+   "fieldname": "tax_map",
+   "fieldtype": "Table",
+   "label": "Tax Map",
+   "options": "Koomyo Tax Map"
+  },
+  {
+   "fieldname": "tab_syncs",
+   "fieldtype": "Tab Break",
+   "label": "Syncs"
   },
   {
    "fieldname": "section_syncs",
@@ -347,8 +303,10 @@
    "options": "Leave for Manual Booking\nProportional Credit Note"
   },
   {
-   "fieldname": "column_break_sales",
-   "fieldtype": "Column Break"
+   "depends_on": "eval:doc.sync_sales || doc.sync_refunds",
+   "fieldname": "section_sales_settings",
+   "fieldtype": "Section Break",
+   "label": "Sales Settings"
   },
   {
    "fieldname": "walk_in_customer",
@@ -379,6 +337,10 @@
    "label": "Selling Price List",
    "mandatory_depends_on": "sync_sales",
    "options": "Price List"
+  },
+  {
+   "fieldname": "cb_sales",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "default_cost_center",
@@ -420,8 +382,10 @@
    "label": "Sync Shifts"
   },
   {
-   "fieldname": "column_break_shifts",
-   "fieldtype": "Column Break"
+   "depends_on": "sync_shifts",
+   "fieldname": "section_shift_settings",
+   "fieldtype": "Section Break",
+   "label": "Shift Settings"
   },
   {
    "fieldname": "cash_over_short_account",
@@ -429,6 +393,10 @@
    "label": "Cash Over/Short Account",
    "mandatory_depends_on": "sync_shifts",
    "options": "Account"
+  },
+  {
+   "fieldname": "cb_shifts",
+   "fieldtype": "Column Break"
   },
   {
    "description": "Only needed when the cash methods of a shift map to more than one account, or to none.",
@@ -448,6 +416,12 @@
    "fieldname": "sync_stock",
    "fieldtype": "Check",
    "label": "Sync Stock"
+  },
+  {
+   "depends_on": "sync_stock",
+   "fieldname": "section_stock_settings",
+   "fieldtype": "Section Break",
+   "label": "Stock Settings"
   },
   {
    "description": "Stock events dated before this day are skipped: they are already in the Warehouses' opening stock. Set it to the day after your opening stock was entered, so stock is never counted twice.",
@@ -490,7 +464,7 @@
    "read_only": 1
   },
   {
-   "fieldname": "column_break_stock",
+   "fieldname": "cb_stock",
    "fieldtype": "Column Break"
   },
   {
@@ -528,7 +502,7 @@
    "options": "Koomyo UOM Map"
   },
   {
-   "fieldname": "column_break_stock_maps",
+   "fieldname": "cb_stock_maps",
    "fieldtype": "Column Break"
   },
   {
@@ -540,7 +514,7 @@
   {
    "fieldname": "section_purchasing",
    "fieldtype": "Section Break",
-   "label": "Purchasing and Customers"
+   "label": "Purchasing"
   },
   {
    "default": "0",
@@ -558,12 +532,22 @@
    "label": "Book Orders Made in Koomyo"
   },
   {
+   "depends_on": "eval:doc.sync_purchasing && doc.book_koomyo_purchases",
+   "fieldname": "section_purchasing_settings",
+   "fieldtype": "Section Break",
+   "label": "Orders Made in Koomyo"
+  },
+  {
    "description": "Where Koomyo orders without a branch are received (Koomyo's main warehouse).",
    "fieldname": "main_warehouse",
    "fieldtype": "Link",
    "label": "Main Warehouse",
    "mandatory_depends_on": "book_koomyo_purchases",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "cb_purchasing",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "supplier_group",
@@ -573,6 +557,11 @@
    "options": "Supplier Group"
   },
   {
+   "fieldname": "section_customers",
+   "fieldtype": "Section Break",
+   "label": "Customers"
+  },
+  {
    "default": "0",
    "description": "Koomyo customers become Customers (name, phone and email only). Needs the webhook's customer data switch on in Koomyo.",
    "fieldname": "sync_customers",
@@ -580,8 +569,10 @@
    "label": "Sync Customers"
   },
   {
-   "fieldname": "column_break_purchasing",
-   "fieldtype": "Column Break"
+   "depends_on": "sync_customers",
+   "fieldname": "section_customer_settings",
+   "fieldtype": "Section Break",
+   "label": "Customer Settings"
   },
   {
    "fieldname": "customer_group",
@@ -591,6 +582,10 @@
    "options": "Customer Group"
   },
   {
+   "fieldname": "cb_customers",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "territory",
    "fieldtype": "Link",
    "label": "Territory",
@@ -598,30 +593,59 @@
    "options": "Territory"
   },
   {
-   "fieldname": "section_payment_map",
+   "fieldname": "tab_webhook",
+   "fieldtype": "Tab Break",
+   "label": "Webhook"
+  },
+  {
+   "description": "Give the address to Koomyo when you add the webhook endpoint, and keep it private. Paste the secret Koomyo shows once.",
+   "fieldname": "section_webhook",
    "fieldtype": "Section Break",
-   "label": "Payment Methods"
+   "label": "Webhook"
   },
   {
-   "fieldname": "payment_map",
-   "fieldtype": "Table",
-   "label": "Payment Map",
-   "options": "Koomyo Payment Map"
+   "description": "Give this address to Koomyo when you add the webhook endpoint. Keep it private.",
+   "fieldname": "webhook_url",
+   "fieldtype": "Data",
+   "label": "Webhook Address",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
-   "description": "Koomyo sends one tax amount and rate per order, and whether prices include tax. Map each rate to a tax account. The most exact row wins: branch and rate, then rate, then branch, then an empty row.",
-   "fieldname": "section_tax_map",
-   "fieldtype": "Section Break",
-   "label": "Taxes"
+   "fieldname": "events_to_register",
+   "fieldtype": "Small Text",
+   "label": "Events to Register",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
-   "fieldname": "tax_map",
-   "fieldtype": "Table",
-   "label": "Tax Map",
-   "options": "Koomyo Tax Map"
+   "fieldname": "cb_webhook",
+   "fieldtype": "Column Break"
   },
   {
-   "description": "Load Menu and Ingredients makes every Koomyo menu item and ingredient an Item now, instead of on first sale or first stock movement. Loading again updates names, categories and active flags; nothing is ever doubled.",
+   "description": "The whsec_ secret shown once when the webhook endpoint is created in Koomyo.",
+   "fieldname": "webhook_secret",
+   "fieldtype": "Password",
+   "label": "Webhook Secret",
+   "length": 200,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "webhook_token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Webhook Token",
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "tab_catalog",
+   "fieldtype": "Tab Break",
+   "label": "Menu and Ingredients"
+  },
+  {
+   "description": "Use the Load Menu and Ingredients button to make every Koomyo menu item and ingredient an Item now, instead of on first sale or first stock movement. Loading again updates names, categories and active flags; nothing is ever doubled.",
    "fieldname": "section_catalog",
    "fieldtype": "Section Break",
    "label": "Menu and Ingredients"
@@ -634,7 +658,7 @@
    "read_only": 1
   },
   {
-   "fieldname": "column_break_catalog",
+   "fieldname": "cb_catalog",
    "fieldtype": "Column Break"
   },
   {
@@ -645,7 +669,77 @@
    "read_only": 1
   },
   {
-   "collapsible": 1,
+   "fieldname": "tab_status",
+   "fieldtype": "Tab Break",
+   "label": "Status"
+  },
+  {
+   "fieldname": "section_restaurant",
+   "fieldtype": "Section Break",
+   "label": "Restaurant (from Test Connection)"
+  },
+  {
+   "fieldname": "restaurant_name",
+   "fieldtype": "Data",
+   "label": "Restaurant",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "tenant_id",
+   "fieldtype": "Data",
+   "label": "Koomyo Restaurant ID",
+   "no_copy": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "koomyo_currency",
+   "fieldtype": "Data",
+   "label": "Koomyo Currency",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "koomyo_timezone",
+   "fieldtype": "Data",
+   "label": "Koomyo Time Zone",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_restaurant",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "key_name",
+   "fieldtype": "Data",
+   "label": "API Key Name",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "key_scopes",
+   "fieldtype": "Small Text",
+   "label": "Key Scopes",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "missing_scopes",
+   "fieldtype": "Small Text",
+   "label": "Missing Scopes",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_tested_on",
+   "fieldtype": "Datetime",
+   "label": "Last Tested On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "section_feed",
    "fieldtype": "Section Break",
    "label": "Events Feed"
@@ -666,7 +760,7 @@
    "read_only": 1
   },
   {
-   "fieldname": "column_break_feed",
+   "fieldname": "cb_feed",
    "fieldtype": "Column Break"
   },
   {
@@ -674,6 +768,20 @@
    "fieldtype": "Date",
    "label": "Last Alert Sent On",
    "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_setup_log",
+   "fieldtype": "Section Break",
+   "label": "Created by Set Up From Koomyo"
+  },
+  {
+   "fieldname": "setup_log",
+   "fieldtype": "Table",
+   "label": "Created by Set Up From Koomyo",
+   "no_copy": 1,
+   "options": "Koomyo Setup Log",
    "read_only": 1
   }
  ],

@@ -16,6 +16,9 @@ CLOCK_DRIFT_WARN_SECONDS = 60
 
 class KoomyoConnection(Document):
 	def onload(self):
+		from koomyo_erpnext.auto_setup import checklist
+
+		self.set_onload("checklist", checklist(self))
 		if self.webhook_token:
 			self.webhook_url = webhook_url(self.webhook_token)
 		self.events_to_register = events_to_register(self)
@@ -362,6 +365,45 @@ class KoomyoConnection(Document):
 		if names:
 			enqueue_processing(self.name)
 		return _("{0} event(s) queued to be booked.").format(len(names))
+
+	@frappe.whitelist()
+	def auto_setup_plan(self):
+		"""Read Koomyo and propose the maps and defaults. Writes nothing."""
+		self.check_permission("write")
+		from koomyo_erpnext.auto_setup import build_plan, safe_read
+
+		koomyo, error = safe_read(self)
+		if error:
+			frappe.throw(error)
+		return {
+			"restaurant": koomyo["account"]["name"],
+			"notes": koomyo["notes"],
+			"rows": build_plan(self, koomyo),
+		}
+
+	@frappe.whitelist()
+	def auto_setup_apply(self, choices, load_menu: int = 0):
+		"""Create and fill what the user chose. Fills empty settings only; never overwrites or deletes."""
+		self.check_permission("write")
+		from koomyo_erpnext.auto_setup import apply_plan, safe_read
+
+		koomyo, error = safe_read(self)
+		if error:
+			frappe.throw(error)
+		result = apply_plan(self, koomyo, frappe.parse_json(choices))
+		if int(load_menu):
+			self.reload()
+			self.load_catalog(preview=0)
+			result["menu"] = _("The menu and ingredients are loading in the background.")
+		return result
+
+	@frappe.whitelist()
+	def undo_auto_setup(self):
+		"""Remove the records Set Up From Koomyo made that nothing uses; keep the rest."""
+		self.check_permission("write")
+		from koomyo_erpnext.auto_setup import undo_plan
+
+		return undo_plan(self)
 
 	@frappe.whitelist()
 	def load_catalog(self, preview: int = 0):

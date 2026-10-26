@@ -334,6 +334,7 @@ def clean_koomyo_data():
 			"Koomyo Tax Map",
 			"Koomyo UOM Map",
 			"Koomyo Waste Map",
+			"Koomyo Setup Log",
 		):
 			frappe.db.delete(table, {"parent": ("in", connections)})
 		frappe.db.delete("Koomyo Connection", {"name": ("in", connections)})

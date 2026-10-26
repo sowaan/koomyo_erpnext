@@ -32,7 +32,21 @@ bench --site your.site migrate
 
 The app needs ERPNext. Background workers and the scheduler must run (`bench start` in development, supervisor in production), because all syncing happens in background jobs.
 
-## Setup guide
+## Quick start: the Setup Wizard
+
+Open the **Koomyo** workspace and press **Setup Wizard** (or the button on any connection). A guided, full-screen setup walks through seven steps:
+
+1. **Welcome**: pick the Company and name the connection.
+2. **Connect**: paste the API key and test it. It shows the restaurant, currency, time zone and the key's scopes.
+3. **Set Up**: the branches, payment methods, units, tax and waste accounts and defaults are read from Koomyo and matched to your ERPNext records. You review every line (use an existing record, create one, or skip) and apply. Nothing is saved before you press Apply, filled settings are never changed, and **Undo Set Up** on the connection removes what was created if nothing uses it.
+4. **What to Sync**: switch on sales, refunds, shifts, stock, purchasing and customers.
+5. **Menu**: optionally load the menu and ingredients as Items.
+6. **Webhook**: copy the address and events for Koomyo and paste the secret.
+7. **Finish**: start in Dry Run (recommended) or live.
+
+The connection form has the same settings in six tabs (Connection, Setup, Syncs, Webhook, Menu and Ingredients, Status), with a "Still to do" checklist on top. A banner on the desk offers the wizard while the site has no connection.
+
+## Setup guide (by hand)
 
 ### 1. In Koomyo: an API key
 
