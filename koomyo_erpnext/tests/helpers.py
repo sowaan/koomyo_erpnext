@@ -43,7 +43,13 @@ def refuse_negative_stock(testcase):
 	"""ERPNext's own default, for tests of 'not enough stock'; the site setting is restored after."""
 	old = frappe.db.get_single_value("Stock Settings", "allow_negative_stock")
 	frappe.db.set_single_value("Stock Settings", "allow_negative_stock", 0)
-	testcase.addCleanup(frappe.db.set_single_value, "Stock Settings", "allow_negative_stock", old)
+	frappe.db.commit()
+
+	def restore():
+		frappe.db.set_single_value("Stock Settings", "allow_negative_stock", old)
+		frappe.db.commit()  # a rollback after the test must not undo the site's setting
+
+	testcase.addCleanup(restore)
 
 
 def ensure_basics():
@@ -417,10 +423,18 @@ class KoomyoIntegrationTestCase(KoomyoTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
+		cls._negative_stock_before = frappe.db.get_single_value("Stock Settings", "allow_negative_stock")
 		ensure_basics()
 		ensure_company(COMPANY_A, "_KTA")
 		ensure_company(COMPANY_B, "_KTB")
 		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		# Stock Settings is site-wide: whatever a test class did to it, leave the site as it was.
+		frappe.db.set_single_value("Stock Settings", "allow_negative_stock", cls._negative_stock_before)
+		frappe.db.commit()
+		super().tearDownClass()
 
 	def setUp(self):
 		clean_koomyo_data()

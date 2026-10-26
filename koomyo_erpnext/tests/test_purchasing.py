@@ -366,11 +366,11 @@ class TestKoomyoMadeOrders(PurchasingTestCase):
 			(self.conn_a.name, event["data"]["supplier"]["id"]),
 		)
 		self.assertEqual(self.qty("Finished Goods - _KTA", MOZZARELLA), D("9"))
-		frappe.db.set_value("Supplier", supplier.name, {"koomyo_connection": None, "koomyo_id": None})
 
 	def test_replay_and_no_echo_to_koomyo(self):
 		event = self.koomyo_order()
-		self.book(event)
+		first = self.book(event)
+		self.assertEqual(first.status, "Done", (first.message, first.error[-500:]))
 		self.book(dict(event, id="resent", seq=96))
 		self.run_queue()
 		self.assertEqual(

@@ -84,6 +84,7 @@ Every map row must belong to the connection's Company; this is checked when you 
 | **Sync Shifts** | `shift.closed` becomes a Journal Entry for the cash over or short. | Cash Over/Short Account (Cash Drawer Account only when ambiguous) |
 | **Sync Stock** | Daily usage, waste, adjustments, counts and transfers become stock documents. | Opening Stock Date, Ingredient Item Group, Cost of Goods Sold and Stock Adjustment accounts, UOM Map and Waste Map. Transfer Loss Account once a transfer arrives short. |
 | **Sync Purchasing** | Purchase Orders and Purchase Receipts for a mapped Warehouse go to Koomyo, with their Supplier; ingredient cost changes go to Koomyo; an order received in Koomyo becomes a Purchase Receipt. | Ingredients must be Items linked to Koomyo, which the stock sync creates. |
+| **Book Orders Made in Koomyo** (under Sync Purchasing) | An order made in the Koomyo admin and received there becomes a Supplier (if new), a Purchase Order and a Purchase Receipt. | Main Warehouse, Supplier Group |
 | **Sync Customers** | Koomyo customers become Customers. | Customer Group, Territory, and the webhook's customer data switch on in Koomyo. |
 
 Then tick **Enabled**.
