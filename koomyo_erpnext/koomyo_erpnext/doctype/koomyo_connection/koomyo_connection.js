@@ -16,6 +16,8 @@ frappe.ui.form.on("Koomyo Connection", {
 			"channel_markup_account",
 			"payment_adjustment_account",
 			"default_cost_center",
+			"cash_over_short_account",
+			"drawer_account",
 		]) {
 			frm.set_query(field, company_filter);
 		}

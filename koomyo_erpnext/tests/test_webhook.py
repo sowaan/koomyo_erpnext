@@ -13,6 +13,7 @@ from koomyo_erpnext.tests.helpers import (
 	event_body,
 	post_webhook,
 	sign,
+	use_test_handler,
 )
 
 
@@ -45,8 +46,7 @@ class TestWebhook(KoomyoIntegrationTestCase):
 	def test_handled_type_is_pending_and_enqueued(self):
 		from koomyo_erpnext.sync import events
 
-		events.DISPATCH["order.paid"] = lambda e, c: None
-		self.addCleanup(events.DISPATCH.pop, "order.paid", None)
+		use_test_handler(self, "order.paid", lambda e, c: None)
 		event = self.order_paid()
 		body = event_body(event)
 		self.assertEqual(post_webhook(self.conn_a.webhook_token, body, sign(SECRET_A, body))[0], 200)

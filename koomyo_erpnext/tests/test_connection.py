@@ -13,6 +13,7 @@ from koomyo_erpnext.tests.helpers import (
 	ensure_company,
 	leaf,
 	make_connection,
+	use_test_handler,
 )
 
 BRANCH_ID = "90000000-0000-4000-8000-000000000001"
@@ -58,10 +59,7 @@ class TestConnection(KoomyoIntegrationTestCase):
 		self.assertIn("events.read", conn.missing_scopes)
 
 	def test_handler_scopes_are_required(self):
-		events.DISPATCH["shift.opened"] = lambda e, c: None
-		events.HANDLER_SCOPES["shift.opened"] = ("shifts.read",)
-		self.addCleanup(events.DISPATCH.pop, "shift.opened", None)
-		self.addCleanup(events.HANDLER_SCOPES.pop, "shift.opened", None)
+		use_test_handler(self, "test.event", lambda e, c: None, scopes=("shifts.read",))
 		self.fake_a.account["key"]["scopes"] = ["events.read", "catalog.read"]
 		conn = self.fresh()
 		with self.koomyo():

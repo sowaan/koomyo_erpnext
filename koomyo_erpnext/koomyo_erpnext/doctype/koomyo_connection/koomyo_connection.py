@@ -133,6 +133,8 @@ class KoomyoConnection(Document):
 			"delivery_fee_account",
 			"channel_markup_account",
 			"payment_adjustment_account",
+			"cash_over_short_account",
+			"drawer_account",
 		):
 			self.check_account_company(self.get(fieldname), _(self.meta.get_label(fieldname)))
 		if self.price_list:

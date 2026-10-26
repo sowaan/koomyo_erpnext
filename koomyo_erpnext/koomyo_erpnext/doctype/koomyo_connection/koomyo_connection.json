@@ -48,6 +48,11 @@
   "delivery_fee_account",
   "channel_markup_account",
   "payment_adjustment_account",
+  "section_shifts",
+  "sync_shifts",
+  "column_break_shifts",
+  "cash_over_short_account",
+  "drawer_account",
   "section_payment_map",
   "payment_map",
   "section_tax_map",
@@ -355,6 +360,36 @@
    "fieldname": "payment_adjustment_account",
    "fieldtype": "Link",
    "label": "Payment Method Discount Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "section_shifts",
+   "fieldtype": "Section Break",
+   "label": "Shifts and Cash"
+  },
+  {
+   "default": "0",
+   "description": "shift.closed books the cash over or short as one Journal Entry. The takings and refunds are already in the invoices and credit notes.",
+   "fieldname": "sync_shifts",
+   "fieldtype": "Check",
+   "label": "Sync Shifts"
+  },
+  {
+   "fieldname": "column_break_shifts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cash_over_short_account",
+   "fieldtype": "Link",
+   "label": "Cash Over/Short Account",
+   "mandatory_depends_on": "sync_shifts",
+   "options": "Account"
+  },
+  {
+   "description": "Only needed when the cash methods of a shift map to more than one account, or to none.",
+   "fieldname": "drawer_account",
+   "fieldtype": "Link",
+   "label": "Cash Drawer Account",
    "options": "Account"
   },
   {

@@ -25,6 +25,20 @@ TENANT_A = "bd0c698a-158d-47a0-9a8c-f4e899f2569e"
 TENANT_B = "11111111-2222-4333-8444-555555555555"
 
 
+def use_test_handler(testcase, event_type: str, handler, scopes=(), switch=None):
+	"""Swap in a handler for one test; the real dispatch table is restored afterwards."""
+	from koomyo_erpnext.sync import events
+
+	for table, value in (
+		(events.DISPATCH, handler),
+		(events.HANDLER_SCOPES, tuple(scopes)),
+		(events.HANDLER_SWITCH, switch),
+	):
+		patcher = patch.dict(table, {event_type: value})
+		patcher.start()
+		testcase.addCleanup(patcher.stop)
+
+
 def ensure_basics():
 	"""What the ERPNext setup wizard makes on a real site: groups, UOMs, modes of payment, a fiscal year."""
 	if not frappe.db.exists("Item Group", "All Item Groups"):
@@ -196,7 +210,7 @@ def leaf(doctype: str, company: str) -> str:
 	return frappe.get_all(doctype, filters={"company": company, "is_group": 0}, pluck="name", limit=1)[0]
 
 
-KOOMYO_DOCTYPES_TO_CLEAN = ("Payment Entry", "Sales Invoice")
+KOOMYO_DOCTYPES_TO_CLEAN = ("Payment Entry", "Sales Invoice", "Journal Entry")
 
 
 def hard_delete(doctype: str, name: str):

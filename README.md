@@ -32,6 +32,8 @@ One branch serves both versions; `koomyo_erpnext/compat.py` holds the few differ
 
 **Sales and refunds (slice 2).** With **Sync Sales** on, each paid Koomyo order becomes a submitted Sales Invoice plus one Payment Entry per payment, matching Koomyo's `amount_due` to the cent. With **Sync Refunds** on, each refund becomes a Credit Note and the payment out. Partial refunds follow the **Partial Refunds** setting (see `docs/API_GAPS.md`). **Dry Run** checks everything and saves nothing.
 
+**Shifts and cash (slice 3).** With **Sync Shifts** on, each closed till shift books its cash over or short as one Journal Entry, between the drawer's cash account and the Cash Over/Short account. The amount is the counted cash against Koomyo's expected cash less the refunds paid from the drawer, which are already booked with the refunds.
+
 ### Install
 
 ```bash

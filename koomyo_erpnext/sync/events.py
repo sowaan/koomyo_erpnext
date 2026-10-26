@@ -557,4 +557,4 @@ def _short_text(value, length: int = 140):
 
 
 # Register the handlers of every sync (each module calls @handles at import time).
-from koomyo_erpnext.sync import refunds, sales
+from koomyo_erpnext.sync import refunds, sales, shifts

@@ -14,6 +14,7 @@ from koomyo_erpnext.tests.helpers import (
 	event_body,
 	post_webhook,
 	sign,
+	use_test_handler,
 )
 
 
@@ -22,10 +23,7 @@ class EventsTestCase(KoomyoIntegrationTestCase):
 		super().setUp()
 		self.handled = []
 		self.behaviour = {}
-		events.DISPATCH["shift.opened"] = self.handler
-		events.HANDLER_SCOPES["shift.opened"] = ("shifts.read",)
-		self.addCleanup(events.DISPATCH.pop, "shift.opened", None)
-		self.addCleanup(events.HANDLER_SCOPES.pop, "shift.opened", None)
+		use_test_handler(self, "shift.opened", self.handler, scopes=("shifts.read",))
 
 	def handler(self, event, connection):
 		"""A test handler: makes a ToDo so we can see documents roll back on failure."""
