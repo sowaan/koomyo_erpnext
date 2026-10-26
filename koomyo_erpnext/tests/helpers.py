@@ -320,6 +320,17 @@ def clean_koomyo_data():
 		):
 			frappe.db.delete(table, {"parent": ("in", connections)})
 		frappe.db.delete("Koomyo Connection", {"name": ("in", connections)})
+	# Size values the tests added and no Item uses any more.
+	used = set(
+		frappe.get_all(
+			"Item Variant Attribute", filters={"attribute": "Koomyo Size"}, pluck="attribute_value"
+		)
+	)
+	for value in frappe.get_all(
+		"Item Attribute Value", filters={"parent": "Koomyo Size"}, fields=["name", "attribute_value"]
+	):
+		if value.attribute_value not in used:
+			frappe.db.delete("Item Attribute Value", {"name": value.name})
 	frappe.db.commit()
 
 

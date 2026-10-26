@@ -96,6 +96,8 @@ Then tick **Enabled**.
 
 The stock step is its own Event Log row, so a stock problem never holds up the invoice. A change of setting applies from the next day, so no day is counted twice.
 
+**Menu, sizes, modifiers.** **Load Menu and Ingredients** makes every Koomyo menu item an Item, in an Item Group per Koomyo category. A menu item with sizes becomes a template, with one variant per size, each with its own price. Ingredients become stock Items. Sales book on the size's variant. Modifiers (extra cheese, no onion) are written on the invoice line, and paid extras are an extra line on the same Item.
+
 **Opening Stock Date.** Stock events dated before this day are skipped, because the Warehouses' opening stock already contains them. Set it to the day after you entered opening stock.
 
 **Dry Run.** With Dry Run ticked, every event is checked against the maps and ERPNext's rules, but nothing is saved and nothing is written to Koomyo. The Event Log says what would have been made. Untick it and press **Feed > Book Dry-Run Events** to book them for real.

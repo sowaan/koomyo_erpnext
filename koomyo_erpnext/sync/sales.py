@@ -21,6 +21,7 @@ from decimal import Decimal
 
 import frappe
 from frappe import _
+from frappe.utils import escape_html
 
 from koomyo_erpnext.exceptions import Fatal, Retryable, Skipped
 from koomyo_erpnext.sync.common import (
@@ -238,13 +239,19 @@ def add_order_line(invoice, connection, line: dict, income_account: str, cost_ce
 	label = line.get("name") or item_code
 	if line.get("size"):
 		label = f"{label} ({line['size']})"
+	# Every modifier and combo choice is noted on the line, free ones too ("No onion").
+	chosen = [m.get("name") for m in line.get("modifiers") or []] + [
+		c.get("name") for c in line.get("combo_selections") or []
+	]
+	chosen = [escape_html(n) for n in chosen if n]
+	description = escape_html(label) + (" — " + ", ".join(chosen) if chosen else "")
 
 	invoice.append(
 		"items",
 		{
 			"item_code": item_code,
 			"item_name": label[:140],
-			"description": label,
+			"description": description,
 			"qty": quantity,
 			"rate": to_field(unit_price),
 			"income_account": income_account,
@@ -262,7 +269,9 @@ def add_order_line(invoice, connection, line: dict, income_account: str, cost_ce
 		names = [m.get("name") for m in line.get("modifiers") or []] + [
 			c.get("name") for c in line.get("combo_selections") or []
 		]
-		description = _("Extras for {0}: {1}").format(label, ", ".join(n for n in names if n) or "-")
+		description = _("Extras for {0}: {1}").format(
+			escape_html(label), escape_html(", ".join(n for n in names if n) or "-")
+		)
 		invoice.append(
 			"items",
 			{

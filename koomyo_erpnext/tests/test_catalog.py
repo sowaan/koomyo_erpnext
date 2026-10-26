@@ -89,8 +89,8 @@ class TestCatalog(StockTestCase):
 
 		pizza = self.item(PIZZA)
 		self.assertEqual(
-			(pizza.item_name, pizza.is_stock_item, pizza.item_group),
-			("Chicken Tikka Supreme", 0, f"Pizza ({self.conn_a.name})"),
+			(pizza.item_name, pizza.is_stock_item, pizza.has_variants, pizza.item_group),
+			("Chicken Tikka Supreme", 0, 1, f"Pizza ({self.conn_a.name})"),
 		)
 		self.assertEqual(
 			frappe.db.get_value("Item Group", pizza.item_group, "parent_item_group"),
@@ -99,15 +99,26 @@ class TestCatalog(StockTestCase):
 		self.assertIn("Small 630.00", pizza.description)
 		self.assertIn("Station: Oven", pizza.description)
 		self.assertNotIn("<b>Hot</b>", pizza.description, "Koomyo text is escaped, never markup")
-		self.assertEqual(
-			self.item(COLA).item_group, "_Koomyo Menu", "no category: the connection's Menu Item Group"
+		self.assertFalse(
+			frappe.db.exists("Item Price", {"item_code": pizza.name}),
+			"ERPNext prices variants, not templates",
 		)
+		small, large = self.item("s1"), self.item("s2")
+		self.assertEqual((small.variant_of, large.variant_of), (pizza.name, pizza.name))
 		self.assertEqual(
-			frappe.db.get_value(
-				"Item Price", {"item_code": pizza.name, "price_list": "_Koomyo Selling"}, "price_list_rate"
-			),
-			900,
+			(small.item_name, small.attributes[0].attribute_value), ("Chicken Tikka Supreme (Small)", "Small")
 		)
+
+		def price(code):
+			return frappe.db.get_value(
+				"Item Price", {"item_code": code, "price_list": "_Koomyo Selling"}, "price_list_rate"
+			)
+
+		self.assertEqual((price(small.name), price(large.name)), (630, 1200))
+		self.assertEqual(summary["variants"]["created"], 2)
+		cola = self.item(COLA)
+		self.assertEqual(cola.item_group, "_Koomyo Menu", "no category: the connection's Menu Item Group")
+		self.assertEqual(price(cola.name), 150)
 
 		cheese = self.item(MOZZARELLA)
 		self.assertEqual((cheese.item_name, cheese.is_stock_item, cheese.stock_uom), ("Mozzarella", 1, "Kg"))
@@ -176,6 +187,7 @@ class TestCatalog(StockTestCase):
 					"item_id": PIZZA,
 					"name": "Chicken Tikka Supreme",
 					"size": "Small",
+					"size_id": "s1",
 					"quantity": 1,
 					"unit_price": "630.00",
 					"line_total": "630.00",
@@ -189,9 +201,51 @@ class TestCatalog(StockTestCase):
 			amount_paid="724.50",
 		)
 		self.assertEqual(self.book(event).status, "Done")
-		self.assertEqual(self.invoice().items[0].item_code, pizza.name)
 		self.assertEqual(
-			frappe.db.count("Item", {"koomyo_connection": self.conn_a.name, "koomyo_id": PIZZA}), 1
+			self.invoice().items[0].item_code, self.item("s1").name, "booked on the Small variant"
+		)
+		self.assertEqual(frappe.db.get_value("Item", self.item("s1").name, "variant_of"), pizza.name)
+		self.assertEqual(
+			frappe.db.count("Item", {"koomyo_connection": self.conn_a.name, "variant_of": pizza.name}), 2
+		)
+
+	def test_a_size_removed_in_koomyo_is_disabled(self):
+		self.load()
+		self.fake_a.lists["/menu-items"][0]["sizes"] = self.fake_a.lists["/menu-items"][0]["sizes"][:1]
+		self.load()
+		self.assertEqual(self.item("s2").disabled, 1)
+		self.assertEqual(self.item("s1").disabled, 0)
+
+	def test_a_plain_item_with_history_keeps_booking_sizes_on_itself(self):
+		from koomyo_erpnext.sync.items import get_or_create_item
+
+		get_or_create_item(
+			self.conn_a, PIZZA, "Chicken Tikka Supreme", is_stock_item=0, item_group="_Koomyo Menu"
+		)
+		event = order_event(
+			lines=[
+				{
+					"item_id": PIZZA,
+					"name": "Chicken Tikka Supreme",
+					"size": None,
+					"size_id": None,
+					"quantity": 1,
+					"unit_price": "630.00",
+					"line_total": "630.00",
+				}
+			],
+			payments=[("cash", "724.50")],
+			items_subtotal="630.00",
+			tax="94.50",
+			total="724.50",
+			amount_due="724.50",
+			amount_paid="724.50",
+		)
+		self.assertEqual(self.book(event).status, "Done")
+		summary = self.load()
+		self.assertEqual(summary["problems"], [])
+		self.assertEqual(
+			self.item(PIZZA).has_variants, 0, "ERPNext cannot turn an Item with invoices into a template"
 		)
 
 	def test_button_checks_and_queues(self):

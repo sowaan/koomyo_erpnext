@@ -298,6 +298,7 @@ class TestSalesInvoice(SalesTestCase):
 					"item_id": "menu-1",
 					"name": "Pizza",
 					"size": "L",
+					"size_id": "size-L",
 					"quantity": 2,
 					"unit_price": "630.00",
 					"line_total": "1360.00",
@@ -307,6 +308,7 @@ class TestSalesInvoice(SalesTestCase):
 					"item_id": "menu-2",
 					"name": "Cola",
 					"size": None,
+					"size_id": None,
 					"quantity": 1,
 					"unit_price": "100.00",
 					"line_total": "100.00",
@@ -316,6 +318,7 @@ class TestSalesInvoice(SalesTestCase):
 					"item_id": "menu-1",
 					"name": "Pizza",
 					"size": "S",
+					"size_id": "size-S",
 					"quantity": 1,
 					"unit_price": "400.00",
 					"line_total": "400.00",
@@ -336,11 +339,18 @@ class TestSalesInvoice(SalesTestCase):
 			[(2, D("630.00")), (1, D("100.00")), (1, D("400.00"))],
 		)
 		self.assertIn("Extra cheese", inv.items[1].description)
-		self.assertEqual(len({i.item_code for i in inv.items}), 1, "one Item per Koomyo menu item")
-		item = frappe.get_doc("Item", inv.items[0].item_code)
+		self.assertIn("Extra cheese", inv.items[0].description, "the line itself names its modifiers")
+		large, extras, small = inv.items
+		self.assertEqual(large.item_code, extras.item_code, "extras book on the line's own Item")
+		self.assertNotEqual(large.item_code, small.item_code, "each size is its own variant")
+		template = frappe.db.get_value("Item", large.item_code, "variant_of")
+		self.assertEqual(frappe.db.get_value("Item", small.item_code, "variant_of"), template)
+		item = frappe.get_doc("Item", template)
 		self.assertEqual(
-			(item.koomyo_connection, item.koomyo_id, item.is_stock_item), (self.conn_a.name, "menu-1", 0)
+			(item.koomyo_connection, item.koomyo_id, item.is_stock_item, item.has_variants),
+			(self.conn_a.name, "menu-1", 0, 1),
 		)
+		self.assertEqual(frappe.db.get_value("Item", large.item_code, "koomyo_id"), "size-L")
 		self.assertMoney(inv.grand_total, "2139.00")
 
 	def test_totals_that_do_not_add_up_book_nothing(self):
@@ -679,7 +689,9 @@ class TestUniqueIndex(SalesTestCase):
 			frappe.delete_doc("Item", name, force=True)
 
 	def test_database_refuses_a_second_copy(self):
-		self.assertEqual(self.book(load_fixture("event_order_paid") | {"tenant_id": TENANT_A}).status, "Done")
+		event = load_fixture("event_order_paid") | {"tenant_id": TENANT_A}
+		event["data"]["items"][0].update({"size": None, "size_id": None})
+		self.assertEqual(self.book(event).status, "Done")
 		item = frappe.get_doc("Item", self.invoice("a8955e7a-335a-4ad0-a872-56b6d2479f80").items[0].item_code)
 		copy_ = frappe.copy_doc(item)
 		copy_.item_code = "_KTEST-COPY"

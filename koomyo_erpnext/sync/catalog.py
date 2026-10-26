@@ -26,7 +26,7 @@ from koomyo_erpnext.client import KoomyoClient, check_list_page
 from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping
 from koomyo_erpnext.sync.common import find_existing, money, setting
 from koomyo_erpnext.sync.customers import write_reference
-from koomyo_erpnext.sync.items import get_or_create_item
+from koomyo_erpnext.sync.items import category_group, get_or_create_item, menu_template, size_variant
 from koomyo_erpnext.sync.stock import ingredient_item
 
 SLEEP = time.sleep
@@ -56,7 +56,12 @@ def load_catalog(connection_name: str, preview: bool = False) -> dict:
 
 	frappe.db.savepoint("koomyo_catalog")
 	for record in menu:
-		guarded(summary, "menu", record, lambda r=record: load_menu_item(connection, client, r, categories))
+		guarded(
+			summary,
+			"menu",
+			record,
+			lambda r=record: load_menu_item(connection, client, r, categories, summary),
+		)
 	for record in ingredients:
 		guarded(summary, "ingredients", record, lambda r=record: load_ingredient(connection, client, r))
 	if preview:
@@ -105,60 +110,80 @@ def read_list(client, path, params) -> list[dict]:
 # ------------------------------------------------------------------ menu items
 
 
-def load_menu_item(connection, client, record: dict, categories: dict) -> str:
+def load_menu_item(connection, client, record: dict, categories: dict, summary: dict | None = None) -> str:
 	if record.get("object") != "menu_item" or not record.get("id"):
 		raise Fatal(_("Koomyo sent something that is not a menu item."))
 	name = (record.get("name") or record["id"])[:140]
-	group = category_group(connection, record, categories)
+	category = categories.get(record.get("category_id") or "") or {}
+	group = category_group(connection, category.get("name") or record.get("category"))
 	description = menu_description(record)
-	disabled = 0 if record.get("active", True) else 1
+	active = bool(record.get("active", True))
+	sizes = record.get("sizes") or []
 
-	existing = find_existing("Item", connection, record["id"])
-	if existing:
-		item = frappe.get_doc("Item", existing)
-		changes = {"item_name": name, "item_group": group, "description": description, "disabled": disabled}
-		if all((item.get(k) or "") == (v or "") for k, v in changes.items()):
-			outcome = "unchanged"
-		else:
-			item.update(changes)
-			item.save(ignore_permissions=True)
-			outcome = "updated"
-	else:
-		code = get_or_create_item(
+	existed = find_existing("Item", connection, record["id"])
+	code = None
+	if record.get("has_sizes") and sizes:
+		code = menu_template(connection, record["id"], name, group=group, description=description)
+	if not code:
+		code = existed or get_or_create_item(
 			connection, record["id"], name, is_stock_item=0, item_group=group, description=description
 		)
-		item = frappe.get_doc("Item", code)
-		if disabled:
-			item.db_set("disabled", 1)
+	outcome = update_item(
+		code,
+		{"item_name": name, "item_group": group, "description": description, "disabled": 0 if active else 1},
+	)
+	if not existed:
 		outcome = "created"
-
-	set_price(connection, item.name, record.get("base_price"))
-	write_reference(connection, client, "menu_item", record, item)
+	write_reference(connection, client, "menu_item", record, frappe.get_doc("Item", code))
+	if frappe.db.get_value("Item", code, "has_variants"):
+		# ERPNext prices the variants, never the template: each size carries its own price.
+		load_sizes(connection, record, code, name, group, active, summary)
+	else:
+		set_price(connection, code, record.get("base_price"))
 	return outcome
 
 
-def category_group(connection, record: dict, categories: dict) -> str:
-	"""A leaf Item Group per Koomyo category, under one '<connection> Menu' group."""
-	category = categories.get(record.get("category_id") or "") or {}
-	category_name = category.get("name") or record.get("category")
-	if not category_name:
-		return setting(connection, "menu_item_group", _("Menu Item Group"))
-	parent = f"{connection.name} Menu"[:140]
-	if not frappe.db.exists("Item Group", parent):
-		frappe.get_doc(
+def load_sizes(
+	connection, record: dict, template: str, name: str, group: str, active: bool, summary: dict | None
+):
+	"""One variant per Koomyo size, with its own price; sizes gone from Koomyo are disabled, never deleted."""
+	counts = (summary if summary is not None else {}).setdefault(
+		"variants", {"created": 0, "updated": 0, "unchanged": 0}
+	)
+	seen = set()
+	for size in record.get("sizes") or []:
+		if not size.get("id") or not size.get("name"):
+			continue
+		seen.add(size["id"])
+		existed = find_existing("Item", connection, size["id"])
+		code = size_variant(connection, record["id"], name, size["id"], size["name"], group=group)
+		outcome = update_item(
+			code,
 			{
-				"doctype": "Item Group",
-				"item_group_name": parent,
-				"parent_item_group": "All Item Groups",
-				"is_group": 1,
-			}
-		).insert(ignore_permissions=True)
-	group = f"{category_name} ({connection.name})"[:140]
-	if not frappe.db.exists("Item Group", group):
-		frappe.get_doc(
-			{"doctype": "Item Group", "item_group_name": group, "parent_item_group": parent, "is_group": 0}
-		).insert(ignore_permissions=True)
-	return group
+				"item_name": f"{name} ({size['name']})"[:140],
+				"item_group": group,
+				"disabled": 0 if (active and size.get("active", True)) else 1,
+			},
+		)
+		counts["created" if not existed else outcome] += 1
+		set_price(connection, code, size.get("price") or record.get("base_price"))
+	for variant in frappe.get_all(
+		"Item",
+		filters={"variant_of": template, "koomyo_connection": connection.name, "disabled": 0},
+		fields=["name", "koomyo_id"],
+	):
+		if variant.koomyo_id not in seen:
+			frappe.db.set_value("Item", variant.name, "disabled", 1)
+			counts["updated"] += 1
+
+
+def update_item(code: str, changes: dict) -> str:
+	item = frappe.get_doc("Item", code)
+	if all((item.get(k) or "") == (v or "") for k, v in changes.items()):
+		return "unchanged"
+	item.update(changes)
+	item.save(ignore_permissions=True)
+	return "updated"
 
 
 def menu_description(record: dict) -> str:
@@ -235,10 +260,22 @@ def load_ingredient(connection, client, record: dict) -> str:
 
 def finish(connection, summary: dict, preview: bool, error: str | None = None) -> dict:
 	m, i = summary["menu"], summary["ingredients"]
+	v = summary.get("variants") or {"created": 0, "updated": 0, "unchanged": 0}
 	verb = _("Preview: would load") if preview else _("Loaded")
 	text = _(
-		"{0} menu items ({1} new, {2} changed, {3} as they were) and ingredients ({4} new, {5} changed, {6} as they were)."
-	).format(verb, m["created"], m["updated"], m["unchanged"], i["created"], i["updated"], i["unchanged"])
+		"{0} menu items ({1} new, {2} changed, {3} as they were), sizes as variants ({4} new, {5} changed, {6} as they were) and ingredients ({7} new, {8} changed, {9} as they were)."
+	).format(
+		verb,
+		m["created"],
+		m["updated"],
+		m["unchanged"],
+		v["created"],
+		v["updated"],
+		v["unchanged"],
+		i["created"],
+		i["updated"],
+		i["unchanged"],
+	)
 	if summary["problems"]:
 		text += (
 			" "

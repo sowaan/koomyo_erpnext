@@ -109,3 +109,9 @@ If either is wrong, the booked over/short is off by that amount, but the remark 
 - An order's deductions are recorded within that window. They are made when lines go to the kitchen, before payment.
 
 **Wish.** A `reference_id` filter on `GET /stock-movements`, so one call returns exactly one order's movements; or the deducted ingredient lines on `order.paid` itself.
+
+## 13. Sizes, modifiers and categories (Decision / Open)
+
+- **Sizes are Item Variants.** A menu item with sizes is a template Item, keyed by the Koomyo menu item id. Each size is a variant on the "Koomyo Size" attribute, keyed by the Koomyo `size_id`, with its own price on the selling price list (ERPNext does not price templates). An order line with a `size_id` books on that variant. A size dropped in Koomyo is disabled, never deleted. An Item that already has invoices or stock as a plain Item cannot become a template in ERPNext, so it keeps taking all its sizes.
+- **Modifiers and combo choices are not separate Items (Open).** Koomyo's API has no modifier list (no `GET /modifiers`). An order line names its modifiers with a price, but the docs do not say whether that price is per unit or per line ("line_total: unit_price times quantity plus modifiers"). So the app books the difference `line_total - unit_price x quantity` as one extra line on the same Item: exact whichever way the price applies. Every modifier, free ones included, is written in the line's description. Their ingredients reach stock through Koomyo's own deductions. **Wish:** `GET /modifiers` with ids, and a clear per-unit price on order line modifiers, so a modifier could be its own Item.
+- **Categories are Item Groups.** One leaf group per Koomyo category, named "<category> (<connection>)", under "<connection> Menu". Items without a category go to the connection's Menu Item Group. A category renamed in Koomyo gets a new group on the next load, its items move there, and the old group is left for you to remove.
