@@ -1,0 +1,46 @@
+{
+ "api_version": "v1",
+ "branch_id": null,
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T17:11:38Z",
+ "currency": "PKR",
+ "data": {
+  "consent": {
+   "email": "no",
+   "push": "yes",
+   "sms": "unknown",
+   "whatsapp": "unknown"
+  },
+  "created_at": "2026-10-12T17:11:27Z",
+  "date_of_birth": null,
+  "do_not_contact": false,
+  "email": "ayesha@example.com",
+  "email_verified": false,
+  "external_refs": {
+   "erpnext": "CUST-DOCS-1"
+  },
+  "id": "7f13642a-c07d-4f33-a046-4aadc16e4e30",
+  "language": "en",
+  "loyalty_opt_in": true,
+  "name": "Ayesha K. Khan",
+  "notes": null,
+  "object": "customer",
+  "phone": "+923009876501",
+  "phone_verified": false,
+  "source": "counter",
+  "tags": [
+   "vip"
+  ],
+  "updated_at": "2026-10-12T17:11:27Z"
+ },
+ "entity": {
+  "id": "7f13642a-c07d-4f33-a046-4aadc16e4e30",
+  "type": "customer"
+ },
+ "id": "604a2c25-72d8-4e1e-ab4f-b3e89b573184",
+ "object": "event",
+ "seq": 19,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "customer.created"
+}

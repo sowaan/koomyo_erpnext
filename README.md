@@ -34,6 +34,15 @@ One branch serves both versions; `koomyo_erpnext/compat.py` holds the few differ
 
 **Shifts and cash (slice 3).** With **Sync Shifts** on, each closed till shift books its cash over or short as one Journal Entry, between the drawer's cash account and the Cash Over/Short account. The amount is the counted cash against Koomyo's expected cash less the refunds paid from the drawer, which are already booked with the refunds.
 
+**Stock and transfers (slice 4).** With **Sync Stock** on, each event becomes a stock document in the mapped Warehouses:
+- the daily ingredient usage becomes a Material Issue to Cost of Goods Sold;
+- waste becomes a Material Issue to the expense account of its reason (Waste Map);
+- manual adjustments become a Material Receipt or Issue;
+- stock counts become a Stock Reconciliation;
+- transfers become a Material Transfer, with any shortfall booked as a loss.
+
+Ingredients become stock Items, with units mapped through the UOM Map. Nothing dated before the **Opening Stock Date** is booked, so opening stock is never counted twice.
+
 ### Install
 
 ```bash

@@ -18,6 +18,9 @@ frappe.ui.form.on("Koomyo Connection", {
 			"default_cost_center",
 			"cash_over_short_account",
 			"drawer_account",
+			"cogs_account",
+			"stock_adjustment_account",
+			"transfer_loss_account",
 		]) {
 			frm.set_query(field, company_filter);
 		}
@@ -25,6 +28,7 @@ frappe.ui.form.on("Koomyo Connection", {
 		frm.set_query("account", "payment_map", company_filter);
 		frm.set_query("fee_account", "payment_map", company_filter);
 		frm.set_query("account_head", "tax_map", company_filter);
+		frm.set_query("expense_account", "waste_map", company_filter);
 
 		show_status(frm);
 		if (frm.is_new()) return;

@@ -1,0 +1,31 @@
+{
+ "api_version": "v1",
+ "branch_id": null,
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T17:11:40Z",
+ "currency": "PKR",
+ "data": {
+  "active": true,
+  "cost_per_unit": "1450.0000",
+  "created_at": "2026-10-12T17:11:40Z",
+  "currency": "PKR",
+  "external_refs": {},
+  "id": "2bf072f8-6896-44ab-8724-e48946ccc134",
+  "low_stock_threshold": "0.000",
+  "made_in_house": false,
+  "name": "Mozzarella",
+  "object": "ingredient",
+  "unit": "kg",
+  "updated_at": "2026-10-12T17:11:40Z"
+ },
+ "entity": {
+  "id": "2bf072f8-6896-44ab-8724-e48946ccc134",
+  "type": "ingredient"
+ },
+ "id": "9ee29d93-2233-425b-9b35-5bfc8a6de10b",
+ "object": "event",
+ "seq": 20,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "ingredient.created"
+}

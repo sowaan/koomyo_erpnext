@@ -1,0 +1,51 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T16:54:48Z",
+ "currency": "PKR",
+ "data": {
+  "branch_id": "90000000-0000-4000-8000-000000000001",
+  "business_date": "2026-10-12",
+  "created_at": "2026-10-12T16:54:47Z",
+  "currency": "PKR",
+  "external_refs": {
+   "erpnext": "PO-0001"
+  },
+  "id": "e5053cfe-3c0f-426c-9d45-a390d0b132fd",
+  "lines": [
+   {
+    "id": "07eda60d-252f-448a-8c56-b2916b2c6512",
+    "ingredient": "Kitchen stock",
+    "ingredient_id": "10000000-0000-4000-8000-000000000001",
+    "ordered_value": "125.0000000",
+    "quantity_ordered": "10.000",
+    "quantity_received": "10.000",
+    "received_value": "125.0000000",
+    "unit": "pcs",
+    "unit_cost": "12.5000"
+   }
+  ],
+  "notes": "from ERP",
+  "object": "purchase_order",
+  "ordered_at": null,
+  "received_at": "2026-10-12T16:54:48Z",
+  "status": "received",
+  "supplier": {
+   "id": "a0d50d39-b20d-4e85-9811-cf8010885691",
+   "name": "ERP Supplier Renamed"
+  },
+  "total_ordered": "125.00",
+  "total_received": "125.0000000"
+ },
+ "entity": {
+  "id": "e5053cfe-3c0f-426c-9d45-a390d0b132fd",
+  "type": "purchase_order"
+ },
+ "id": "04291ff7-0de8-462d-b959-113598ea1329",
+ "object": "event",
+ "seq": 11,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "purchase.received"
+}

@@ -171,6 +171,53 @@ def configure_sales(conn, abbr: str, branch_id: str = "90000000-0000-4000-8000-0
 	return acc
 
 
+CENTRAL_WAREHOUSE = "6ed65fb7-3cdb-490f-b0a6-6a4d7096dcc4"
+
+
+def configure_stock(conn, abbr: str, **extra):
+	"""Sales maps plus everything the stock sync needs (docs example ids)."""
+	if not frappe.db.exists("Item Group", "_Koomyo Ingredients"):
+		frappe.get_doc(
+			{
+				"doctype": "Item Group",
+				"item_group_name": "_Koomyo Ingredients",
+				"parent_item_group": "All Item Groups",
+			}
+		).insert(ignore_permissions=True)
+	acc = configure_sales(conn, abbr)
+	conn.reload()
+	conn.update(
+		{
+			"sync_stock": 1,
+			"stock_start_date": "2026-10-01",
+			"ingredient_item_group": "_Koomyo Ingredients",
+			"cogs_account": f"Cost of Goods Sold - {abbr}",
+			"stock_adjustment_account": f"Stock Adjustment - {abbr}",
+			"transfer_loss_account": f"Miscellaneous Expenses - {abbr}",
+		}
+	)
+	conn.append(
+		"branch_map",
+		{
+			"location_type": "Warehouse",
+			"koomyo_branch_id": CENTRAL_WAREHOUSE,
+			"warehouse": f"Finished Goods - {abbr}",
+		},
+	)
+	conn.set("uom_map", [{"koomyo_unit": "pcs", "uom": "Nos"}, {"koomyo_unit": "kg", "uom": "Kg"}])
+	conn.set(
+		"waste_map",
+		[
+			{"reason": "spoilage", "expense_account": f"Miscellaneous Expenses - {abbr}"},
+			{"reason": "staff_meal", "expense_account": f"Entertainment Expenses - {abbr}"},
+		],
+	)
+	conn.update(extra)
+	conn.save(ignore_permissions=True)
+	frappe.db.commit()
+	return acc
+
+
 def gl(voucher_type: str, voucher_no: str) -> dict:
 	"""{account: debit - credit} as exact Decimals, for checking postings to the cent."""
 	from decimal import Decimal
@@ -210,7 +257,13 @@ def leaf(doctype: str, company: str) -> str:
 	return frappe.get_all(doctype, filters={"company": company, "is_group": 0}, pluck="name", limit=1)[0]
 
 
-KOOMYO_DOCTYPES_TO_CLEAN = ("Payment Entry", "Sales Invoice", "Journal Entry")
+KOOMYO_DOCTYPES_TO_CLEAN = (
+	"Payment Entry",
+	"Sales Invoice",
+	"Journal Entry",
+	"Stock Entry",
+	"Stock Reconciliation",
+)
 
 
 def hard_delete(doctype: str, name: str):
@@ -230,8 +283,12 @@ def clean_koomyo_data():
 			frappe.db.delete("Payment Ledger Entry", {"voucher_type": doctype, "voucher_no": name})
 			frappe.db.delete("Payment Ledger Entry", {"against_voucher_no": name})
 			frappe.db.delete("Comment", {"reference_doctype": doctype, "reference_name": name})
+			frappe.db.delete("Stock Ledger Entry", {"voucher_type": doctype, "voucher_no": name})
+			frappe.db.delete("Repost Item Valuation", {"voucher_type": doctype, "voucher_no": name})
 			hard_delete(doctype, name)
 	for name in frappe.get_all("Item", filters={"koomyo_connection": ("is", "set")}, pluck="name"):
+		for table in ("Bin", "Stock Ledger Entry", "Item Price"):
+			frappe.db.delete(table, {"item_code": name})
 		frappe.delete_doc("Item", name, force=True, ignore_permissions=True)
 	frappe.db.delete("Koomyo Event Log")
 	frappe.db.delete("Koomyo Branch Map")

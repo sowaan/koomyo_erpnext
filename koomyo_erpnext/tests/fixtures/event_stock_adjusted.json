@@ -1,0 +1,37 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T16:57:57Z",
+ "currency": "PKR",
+ "data": {
+  "business_date": "2026-10-12",
+  "created_at": "2026-10-12T16:57:57Z",
+  "created_by": "e3f4cd91-f745-4a67-9d5b-480ed538b3e0",
+  "currency": "PKR",
+  "id": "8e237cb6-2290-423a-a861-1f883c42c880",
+  "ingredient": "Kitchen stock",
+  "ingredient_id": "10000000-0000-4000-8000-000000000001",
+  "location": {
+   "id": "90000000-0000-4000-8000-000000000001",
+   "type": "branch"
+  },
+  "object": "stock_movement",
+  "quantity_change": "-1.0000",
+  "reason": "spilled",
+  "reference_id": null,
+  "unit": "pcs",
+  "unit_cost": "12.5000",
+  "value": "-12.50"
+ },
+ "entity": {
+  "id": "8e237cb6-2290-423a-a861-1f883c42c880",
+  "type": "stock_movement"
+ },
+ "id": "a38dba08-8806-48b0-aa48-3797750fb38b",
+ "object": "event",
+ "seq": 14,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "stock.adjusted"
+}

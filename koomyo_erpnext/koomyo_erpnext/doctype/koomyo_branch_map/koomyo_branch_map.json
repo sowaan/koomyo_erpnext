@@ -5,6 +5,7 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "location_type",
   "koomyo_branch_id",
   "koomyo_branch_name",
   "cost_center",
@@ -12,11 +13,21 @@
  ],
  "fields": [
   {
+   "columns": 1,
+   "default": "Branch",
+   "description": "Warehouse is a Koomyo central warehouse that sends stock to branches.",
+   "fieldname": "location_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Location Type",
+   "options": "Branch\nWarehouse"
+  },
+  {
    "columns": 3,
    "fieldname": "koomyo_branch_id",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Koomyo Branch ID",
+   "label": "Koomyo ID",
    "reqd": 1
   },
   {
@@ -24,7 +35,7 @@
    "fieldname": "koomyo_branch_name",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Koomyo Branch Name"
+   "label": "Koomyo Name"
   },
   {
    "columns": 2,
@@ -32,8 +43,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Cost Center",
-   "options": "Cost Center",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.location_type != 'Warehouse'",
+   "options": "Cost Center"
   },
   {
    "columns": 2,

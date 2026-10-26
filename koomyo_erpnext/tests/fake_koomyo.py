@@ -54,6 +54,7 @@ class FakeKoomyo:
 		self.branches = load_fixture("branches")["data"]
 		self.events: list[dict] = []
 		self.orders: dict[str, dict] = {}
+		self.ingredients: dict[str, dict] = {}
 		self.down = False
 		# path -> list of FakeResponse to return first (then normal routing)
 		self.scripted: dict[str, list[FakeResponse]] = {}
@@ -69,6 +70,25 @@ class FakeKoomyo:
 		event.update(overrides)
 		self.events.append(event)
 		return event
+
+	def add_ingredient(
+		self, ingredient_id: str, name: str, unit: str, cost: str = "12.5000", refs=None
+	) -> dict:
+		self.ingredients[ingredient_id] = {
+			"id": ingredient_id,
+			"object": "ingredient",
+			"name": name,
+			"unit": unit,
+			"cost_per_unit": cost,
+			"currency": "PKR",
+			"low_stock_threshold": "0",
+			"active": True,
+			"made_in_house": False,
+			"created_at": "2026-10-01T00:00:00Z",
+			"updated_at": "2026-10-01T00:00:00Z",
+			"external_refs": refs or {},
+		}
+		return self.ingredients[ingredient_id]
 
 	def handle(self, method, url, params=None, json_body=None, headers=None):
 		path = urlsplit(url).path[len(urlsplit(self.base_url).path) :]
@@ -87,6 +107,8 @@ class FakeKoomyo:
 			)
 		if path == "/events":
 			return self._events(params or {})
+		if path.startswith("/ingredients/") and path[len("/ingredients/") :] in self.ingredients:
+			return FakeResponse(200, self.ingredients[path[len("/ingredients/") :]])
 		if path.startswith("/orders/") and path[len("/orders/") :] in self.orders:
 			return FakeResponse(200, self.orders[path[len("/orders/") :]])
 		return error_response(404, "not_found")

@@ -1,0 +1,47 @@
+{
+ "api_version": "v1",
+ "branch_id": null,
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T17:11:40Z",
+ "currency": "PKR",
+ "data": {
+  "business_date": "2026-10-12",
+  "cancel_reason": null,
+  "currency": "PKR",
+  "external_refs": {},
+  "from": {
+   "id": "6ed65fb7-3cdb-490f-b0a6-6a4d7096dcc4",
+   "type": "warehouse"
+  },
+  "id": "bfd20268-eda2-4549-95ea-ea7b7158e132",
+  "lines": [
+   {
+    "ingredient": "Mozzarella",
+    "ingredient_id": "2bf072f8-6896-44ab-8724-e48946ccc134",
+    "quantity_received": "0",
+    "quantity_sent": "5.000",
+    "unit": "kg",
+    "unit_cost": "1450.0000"
+   }
+  ],
+  "notes": "Weekly top-up",
+  "object": "stock_transfer",
+  "received_at": "2026-10-12T17:11:40Z",
+  "sent_at": "2026-10-12T17:11:40Z",
+  "status": "received",
+  "to": {
+   "id": "90000000-0000-4000-8000-000000000001",
+   "type": "branch"
+  }
+ },
+ "entity": {
+  "id": "bfd20268-eda2-4549-95ea-ea7b7158e132",
+  "type": "stock_transfer"
+ },
+ "id": "e9e4040c-e69f-41a9-91b8-f617a8179e7a",
+ "object": "event",
+ "seq": 21,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "stock_transfer.completed"
+}

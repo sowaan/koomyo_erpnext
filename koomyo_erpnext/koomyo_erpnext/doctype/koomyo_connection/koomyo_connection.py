@@ -115,6 +115,18 @@ class KoomyoConnection(Document):
 			self.check_account_company(row.account, _("Payment Map row {0}").format(row.idx))
 			if row.fee_percent:
 				self.check_account_company(row.fee_account, _("Payment Map row {0}").format(row.idx))
+		reasons = set()
+		for row in self.waste_map:
+			if row.reason in reasons:
+				frappe.throw(_("Waste Map row {0}: reason {1} is mapped twice.").format(row.idx, row.reason))
+			reasons.add(row.reason)
+			self.check_account_company(row.expense_account, _("Waste Map row {0}").format(row.idx))
+		units = set()
+		for row in self.uom_map:
+			unit = (row.koomyo_unit or "").strip().lower()
+			if unit in units:
+				frappe.throw(_("UOM Map row {0}: unit {1} is mapped twice.").format(row.idx, row.koomyo_unit))
+			units.add(unit)
 		for row in self.tax_map:
 			if (row.tax_rate or "").strip():
 				try:
@@ -135,6 +147,9 @@ class KoomyoConnection(Document):
 			"payment_adjustment_account",
 			"cash_over_short_account",
 			"drawer_account",
+			"cogs_account",
+			"stock_adjustment_account",
+			"transfer_loss_account",
 		):
 			self.check_account_company(self.get(fieldname), _(self.meta.get_label(fieldname)))
 		if self.price_list:

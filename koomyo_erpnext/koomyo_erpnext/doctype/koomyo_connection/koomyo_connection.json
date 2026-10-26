@@ -16,6 +16,7 @@
   "api_key",
   "webhook_secret",
   "column_break_api",
+  "ref_system",
   "start_from_date",
   "dry_run",
   "section_restaurant",
@@ -53,6 +54,18 @@
   "column_break_shifts",
   "cash_over_short_account",
   "drawer_account",
+  "section_stock",
+  "sync_stock",
+  "stock_start_date",
+  "ingredient_item_group",
+  "column_break_stock",
+  "cogs_account",
+  "stock_adjustment_account",
+  "transfer_loss_account",
+  "section_stock_maps",
+  "uom_map",
+  "column_break_stock_maps",
+  "waste_map",
   "section_payment_map",
   "payment_map",
   "section_tax_map",
@@ -146,6 +159,13 @@
   {
    "fieldname": "column_break_api",
    "fieldtype": "Column Break"
+  },
+  {
+   "default": "erpnext",
+   "description": "The system name under which this ERPNext's ids are stored in Koomyo's external references. Give each connection to the same Koomyo restaurant its own name.",
+   "fieldname": "ref_system",
+   "fieldtype": "Data",
+   "label": "External Reference Name"
   },
   {
    "description": "Events before this date are not read from the feed. Bring older data in with a backfill.",
@@ -262,7 +282,7 @@
    "unique": 1
   },
   {
-   "description": "Each Koomyo branch maps to a Cost Center and Warehouse of this connection's Company.",
+   "description": "Each Koomyo branch maps to a Cost Center and Warehouse of this connection's Company; each Koomyo central warehouse to a Warehouse.",
    "fieldname": "section_branches",
    "fieldtype": "Section Break",
    "label": "Branches"
@@ -391,6 +411,81 @@
    "fieldtype": "Link",
    "label": "Cash Drawer Account",
    "options": "Account"
+  },
+  {
+   "fieldname": "section_stock",
+   "fieldtype": "Section Break",
+   "label": "Stock and Transfers"
+  },
+  {
+   "default": "0",
+   "description": "Daily ingredient usage, waste, manual adjustments, stock counts and transfers become Stock Entries and Stock Reconciliations in the mapped Warehouses.",
+   "fieldname": "sync_stock",
+   "fieldtype": "Check",
+   "label": "Sync Stock"
+  },
+  {
+   "description": "Stock events dated before this day are skipped: they are already in the Warehouses' opening stock. Set it to the day after your opening stock was entered, so stock is never counted twice.",
+   "fieldname": "stock_start_date",
+   "fieldtype": "Date",
+   "label": "Opening Stock Date",
+   "mandatory_depends_on": "sync_stock"
+  },
+  {
+   "description": "Koomyo ingredients not yet linked to an Item are created here as stock Items.",
+   "fieldname": "ingredient_item_group",
+   "fieldtype": "Link",
+   "label": "Ingredient Item Group",
+   "mandatory_depends_on": "sync_stock",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "column_break_stock",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cogs_account",
+   "fieldtype": "Link",
+   "label": "Cost of Goods Sold Account",
+   "mandatory_depends_on": "sync_stock",
+   "options": "Account"
+  },
+  {
+   "description": "For manual adjustments and stock count differences.",
+   "fieldname": "stock_adjustment_account",
+   "fieldtype": "Link",
+   "label": "Stock Adjustment Account",
+   "mandatory_depends_on": "sync_stock",
+   "options": "Account"
+  },
+  {
+   "description": "Needed once a transfer arrives with less than was sent.",
+   "fieldname": "transfer_loss_account",
+   "fieldtype": "Link",
+   "label": "Transfer Loss Account",
+   "options": "Account"
+  },
+  {
+   "depends_on": "sync_stock",
+   "fieldname": "section_stock_maps",
+   "fieldtype": "Section Break",
+   "label": "Units and Waste Reasons"
+  },
+  {
+   "fieldname": "uom_map",
+   "fieldtype": "Table",
+   "label": "UOM Map",
+   "options": "Koomyo UOM Map"
+  },
+  {
+   "fieldname": "column_break_stock_maps",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "waste_map",
+   "fieldtype": "Table",
+   "label": "Waste Map",
+   "options": "Koomyo Waste Map"
   },
   {
    "fieldname": "section_payment_map",
