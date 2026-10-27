@@ -210,17 +210,30 @@ def read_koomyo(connection) -> dict:
 				units.add(ingredient["unit"])
 	else:
 		notes.append(_("The key has no stock.read scope, so ingredient units could not be read."))
-	warehouses = {}
+	warehouses = {}  # id -> {"name", "main"}
 	if "stock.read" in scopes:
-		# Koomyo has no list of its central warehouses (API_GAPS item 7): they show up as the ends of
-		# stock transfers, so the ones that have been used are found there.
 		try:
-			for transfer in client.iter_list("/stock-transfers", {"limit": 200}, max_pages=10):
-				for end in (transfer.get("from"), transfer.get("to")):
-					if isinstance(end, dict) and end.get("type") == "warehouse" and end.get("id"):
-						warehouses[end["id"]] = end.get("name") or end["id"]
-		except KoomyoAPIError:
-			notes.append(_("Stock transfers could not be read, so central warehouses were not looked for."))
+			for warehouse in client.list_warehouses(active=True):
+				warehouses[warehouse["id"]] = {
+					"name": warehouse.get("name") or warehouse["id"],
+					"main": bool(warehouse.get("is_main")),
+				}
+		except KoomyoAPIError as e:
+			if e.status not in (403, 404):
+				notes.append(_("Warehouses could not be read: {0}").format(e))
+			# A Koomyo without GET /warehouses (or without the Inventory app): the older way, the
+			# warehouses that appear as an end of a stock transfer.
+			try:
+				for transfer in client.iter_list("/stock-transfers", {"limit": 200}, max_pages=10):
+					for end in (transfer.get("from"), transfer.get("to")):
+						if isinstance(end, dict) and end.get("type") == "warehouse" and end.get("id"):
+							warehouses.setdefault(
+								end["id"], {"name": end.get("name") or end["id"], "main": False}
+							)
+			except KoomyoAPIError:
+				notes.append(
+					_("Stock transfers could not be read, so central warehouses were not looked for.")
+				)
 	return {
 		"account": account,
 		"branches": branches,
@@ -374,10 +387,10 @@ def build_plan(connection, koomyo: dict) -> list[dict]:
 			new_name,
 		)
 
-	for warehouse_id, warehouse_name in koomyo.get("warehouses", {}).items():
+	for warehouse_id, warehouse in koomyo.get("warehouses", {}).items():
 		if warehouse_id in mapped_branches:
 			continue
-		name = warehouse_name[:100]
+		name = warehouse["name"][:100]
 		wh = frappe.db.exists("Warehouse", {"company": co, "warehouse_name": name, "is_group": 0})
 		add(
 			f"central:{warehouse_id}",
@@ -431,14 +444,23 @@ def build_plan(connection, koomyo: dict) -> list[dict]:
 			_("Company default"),
 		)
 	if not connection.main_warehouse:
-		wh = frappe.db.exists("Warehouse", {"company": co, "warehouse_name": "Main Warehouse", "is_group": 0})
+		# Koomyo's main warehouse is where a purchase order without a branch is received.
+		main_id, main = next(
+			((i, w) for i, w in koomyo.get("warehouses", {}).items() if w.get("main")), (None, None)
+		)
+		mapped = next((r.warehouse for r in connection.branch_map if r.koomyo_branch_id == main_id), None)
+		main_name = (main["name"] if main else "Main Warehouse")[:100]
+		wh = mapped or frappe.db.exists(
+			"Warehouse", {"company": co, "warehouse_name": main_name, "is_group": 0}
+		)
 		add(
 			"field:main_warehouse",
 			_("Defaults"),
 			label_of("main_warehouse"),
 			"Warehouse",
 			USE if wh else CREATE,
-			wh or "Main Warehouse",
+			wh or main_name,
+			_("Koomyo's main warehouse") if main else "",
 		)
 	if not connection.transit_warehouse:
 		wh = frappe.db.exists("Warehouse", {"company": co, "warehouse_name": "Koomyo Transit", "is_group": 0})
@@ -779,14 +801,14 @@ def apply_plan(connection, koomyo: dict, choices: list[dict]) -> dict:
 					"warehouse": wh,
 				},
 			)
-	for warehouse_id, warehouse_name in koomyo.get("warehouses", {}).items():
+	for warehouse_id, warehouse in koomyo.get("warehouses", {}).items():
 		if resolved.get(f"central:{warehouse_id}"):
 			connection.append(
 				"branch_map",
 				{
 					"location_type": "Warehouse",
 					"koomyo_branch_id": warehouse_id,
-					"koomyo_branch_name": warehouse_name,
+					"koomyo_branch_name": warehouse["name"],
 					"warehouse": resolved[f"central:{warehouse_id}"],
 				},
 			)

@@ -166,6 +166,22 @@ class TestPurchaseOrderEvents(PurchaseOrderCase):
 		self.assertEqual(flt(self.po().items[0].qty, 3), 10)
 		self.assertEqual(self.po().name, po.name)
 
+	def test_an_order_for_a_central_warehouse_goes_to_its_mapped_warehouse(self):
+		central = "61111d66-8b23-4992-a9e7-e1508eb02751"
+		self.conn_a.reload()
+		self.conn_a.append(
+			"branch_map",
+			{"location_type": "Warehouse", "koomyo_branch_id": central, "warehouse": "Finished Goods - _KTA"},
+		)
+		self.conn_a.save()
+		log = self.send(make_order("ordered", branch_id=None, warehouse_id=central))
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		self.assertEqual(self.po().set_warehouse, "Finished Goods - _KTA")
+		unmapped = make_order("ordered", branch_id=None, warehouse_id="nowhere", id="po-2")
+		bad = self.send(unmapped, eid="evt-bad")
+		self.assertEqual(bad.error_class, "NeedsMapping")
+		self.assertIn("nowhere", bad.message)
+
 	def test_edit_before_any_delivery_rebuilds_the_order(self):
 		self.send(make_order("ordered", "2026-10-12T17:40:02Z"))
 		old = self.po()

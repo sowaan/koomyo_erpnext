@@ -114,7 +114,60 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 			d: frappe.db.count(d, {"company": COMPANY_D}) for d in ("Account", "Cost Center", "Warehouse")
 		} | {"Mode of Payment": frappe.db.count("Mode of Payment"), "Customer": frappe.db.count("Customer")}
 
-	def test_central_warehouses_found_from_transfers_are_mapped(self):
+	def test_central_warehouses_come_from_the_warehouse_list(self):
+		central, second = "61111d66-8b23-4992-a9e7-e1508eb02751", "72222e77-9c34-4aa3-b2f8-f2619fc13862"
+		self.fake_a.lists["/warehouses"] = [
+			{
+				"id": central,
+				"object": "warehouse",
+				"name": "Koomyo Central",
+				"address": None,
+				"active": True,
+				"is_main": True,
+				"created_at": "2026-10-01T00:00:00Z",
+			},
+			{
+				"id": second,
+				"object": "warehouse",
+				"name": "Cold Store",
+				"address": "Lahore",
+				"active": True,
+				"is_main": False,
+				"created_at": "2026-10-02T00:00:00Z",
+			},
+			{
+				"id": "off",
+				"object": "warehouse",
+				"name": "Closed One",
+				"address": None,
+				"active": False,
+				"is_main": False,
+				"created_at": "2026-10-03T00:00:00Z",
+			},
+		]
+		_koomyo, plan = self.plan()
+		self.assertEqual(
+			sorted(k for k in plan if k.startswith("central:")),
+			sorted([f"central:{central}", f"central:{second}"]),
+		)
+		self.assertEqual(plan[f"central:{central}"]["section"], "Central warehouses")
+		self.assertEqual(
+			plan["field:main_warehouse"]["value"], "Koomyo Central", "Koomyo's main warehouse is the default"
+		)
+		self.apply()
+		mapped = {r.koomyo_branch_id: r for r in self.conn.branch_map}
+		self.assertEqual(
+			(mapped[central].location_type, mapped[central].koomyo_branch_name),
+			("Warehouse", "Koomyo Central"),
+		)
+		self.assertEqual(mapped[second].koomyo_branch_name, "Cold Store")
+		self.assertNotIn("off", mapped, "an inactive warehouse is not mapped")
+		self.assertEqual(self.conn.main_warehouse, mapped[central].warehouse)
+		self.assertEqual(frappe.db.get_value("Warehouse", mapped[central].warehouse, "company"), COMPANY_D)
+		calls = [c for c in self.fake_a.calls if c["path"] == "/warehouses"]
+		self.assertEqual(calls[0]["params"]["active"], "true")
+
+	def test_without_the_warehouse_list_transfers_are_the_fallback(self):
 		central = "61111d66-8b23-4992-a9e7-e1508eb02751"
 		self.fake_a.lists["/stock-transfers"] = [
 			{
@@ -135,11 +188,9 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 		self.apply()
 		mapped = {r.koomyo_branch_id: r for r in self.conn.branch_map}
 		self.assertEqual(mapped[central].location_type, "Warehouse")
-		self.assertEqual(mapped[central].koomyo_branch_name, "Main Warehouse")
-		self.assertEqual(frappe.db.get_value("Warehouse", mapped[central].warehouse, "company"), COMPANY_D)
 		self.assertEqual(mapped[BRANCH].location_type, "Branch")
 
-	def test_no_transfers_means_no_central_warehouse_rows(self):
+	def test_no_list_and_no_transfers_means_no_central_warehouse_rows(self):
 		_koomyo, plan = self.plan()
 		self.assertEqual([k for k in plan if k.startswith("central:")], [])
 

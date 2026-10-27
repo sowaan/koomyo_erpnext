@@ -178,6 +178,7 @@ class FakeKoomyo:
 			"status": lambda r, v: r.get("status") == v,
 			"reason": lambda r, v: r.get("reason") == v,
 			"reference_id": lambda r, v: r.get("reference_id") == v,
+			"active": lambda r, v: str(r.get("active", True)).lower() == v,
 			"kind": lambda r, v: (r.get("reason") in MANUAL_REASONS or r.get("reason") not in SYSTEM_REASONS)
 			== (v == "manual"),
 			"branch_id": lambda r, v: v in (r.get("branch_id"), (r.get("location") or {}).get("id")),

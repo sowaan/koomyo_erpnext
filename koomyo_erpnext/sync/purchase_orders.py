@@ -193,8 +193,13 @@ def fingerprint(order: dict) -> str:
 
 
 def order_warehouse(connection, order: dict) -> str:
+	"""Where the goods go: the branch, else the Koomyo warehouse the order names, else the main warehouse."""
 	if order.get("branch_id"):
 		warehouse = branch_row(connection, order["branch_id"]).warehouse
+	elif order.get("warehouse_id"):
+		from koomyo_erpnext.sync.stock import location_row
+
+		warehouse = location_row(connection, "warehouse", order["warehouse_id"]).warehouse
 	else:
 		warehouse = setting(connection, "main_warehouse", _("Main Warehouse"))
 	if not warehouse:

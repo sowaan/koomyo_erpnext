@@ -193,6 +193,13 @@ class KoomyoClient:
 	def list_branches(self) -> list[dict]:
 		return list(self.iter_list("/branches"))
 
+	def list_warehouses(self, active: bool | None = None) -> list[dict]:
+		"""GET /warehouses: the places that keep stock besides a branch (scope stock.read, Inventory app)."""
+		params: dict = {"limit": 500}
+		if active is not None:
+			params["active"] = "true" if active else "false"
+		return list(self.iter_list("/warehouses", params))
+
 	def list_option_groups(self, item_id: str | None = None, active: bool | None = None) -> list[dict]:
 		"""GET /option-groups: the choices (modifiers) and what each takes from stock (scope catalog.read)."""
 		params: dict = {"limit": 200}
