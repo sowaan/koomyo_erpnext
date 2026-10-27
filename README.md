@@ -28,7 +28,7 @@ Koomyo is a restaurant POS. This app is the ERPNext side of its public integrati
 
 ```bash
 cd $PATH_TO_YOUR_BENCH
-bench get-app $URL_OF_THIS_REPO --branch develop
+bench get-app https://github.com/sowaan/koomyo_erpnext --branch develop
 bench --site your.site install-app koomyo_erpnext
 bench --site your.site migrate
 ```
