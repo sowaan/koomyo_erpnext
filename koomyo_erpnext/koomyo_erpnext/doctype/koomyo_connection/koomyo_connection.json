@@ -90,6 +90,8 @@
   "customer_group",
   "cb_customers",
   "territory",
+  "section_complaints",
+  "sync_complaints",
   "tab_webhook",
   "section_webhook",
   "webhook_url",
@@ -868,6 +870,18 @@
    "fieldtype": "Link",
    "label": "Transit Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "section_complaints",
+   "fieldtype": "Section Break",
+   "label": "Complaints"
+  },
+  {
+   "default": "0",
+   "description": "Koomyo complaints (complaint.created and complaint.updated) become Issues: ticket number and summary, status, priority, category, the order it is about, resolution and its cost. The customer's name and phone are never copied. Needs the complaints.read scope and a restaurant with the Complaints app.",
+   "fieldname": "sync_complaints",
+   "fieldtype": "Check",
+   "label": "Sync Complaints"
   }
  ],
  "links": [],

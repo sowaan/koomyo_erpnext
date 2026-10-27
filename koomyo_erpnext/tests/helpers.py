@@ -293,6 +293,7 @@ KOOMYO_DOCTYPES_TO_CLEAN = (
 	"Stock Reconciliation",
 	"Address",
 	"Contact",
+	"Issue",
 )
 
 

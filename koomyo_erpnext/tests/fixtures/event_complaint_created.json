@@ -1,0 +1,64 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T17:35:00Z",
+ "currency": "PKR",
+ "data": {
+  "attachment_count": 1,
+  "branch_id": "90000000-0000-4000-8000-000000000001",
+  "business_date": "2026-10-12",
+  "category": {
+   "code": "wrong_item",
+   "id": "9bb866ec-9484-4a73-89fa-b3ce9a9510e3",
+   "name": "Wrong item"
+  },
+  "channel": "phone",
+  "closed_at": null,
+  "created_at": "2026-10-12T17:35:53Z",
+  "customer": {
+   "id": null,
+   "name": "Ayesha Khan",
+   "phone": "+923009876501"
+  },
+  "description": "Delivered 45 minutes late and the pizza was cold.",
+  "external_refs": {
+   "helpdesk": "TKT-5521"
+  },
+  "id": "00747ec0-e1e0-4790-8c5e-a4f09653fc3d",
+  "object": "complaint",
+  "order": {
+   "id": "89e86b9b-e1b2-4591-876a-54ce30af30aa",
+   "number": "ORD-PFB-20261012-0001"
+  },
+  "order_item_ids": [],
+  "priority": "high",
+  "raised_by_customer": false,
+  "reopen_count": 0,
+  "reopened_at": null,
+  "resolution_cost": "0.00",
+  "resolution_summary": null,
+  "resolved_at": null,
+  "sla": {
+   "acknowledge_due_at": "2026-10-12T18:05:53Z",
+   "acknowledge_overdue": false,
+   "acknowledged_at": null,
+   "overdue": false,
+   "resolve_due_at": "2026-10-12T21:35:53Z"
+  },
+  "status": "new",
+  "summary": "Pizza arrived cold",
+  "ticket_number": "CMP-000001",
+  "updated_at": "2026-10-12T17:35:53Z"
+ },
+ "entity": {
+  "id": "00747ec0-e1e0-4790-8c5e-a4f09653fc3d",
+  "type": "complaint"
+ },
+ "id": "efa2878d-da6d-4b92-8a6e-2f043c841c3e",
+ "object": "event",
+ "seq": 21,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "complaint.created"
+}

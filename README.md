@@ -107,6 +107,7 @@ Every map row must belong to the connection's Company; this is checked when you 
 | **Sync Purchasing** | Purchase Orders and Purchase Receipts for a mapped Warehouse go to Koomyo, with their Supplier; ingredient cost changes go to Koomyo; an order received in Koomyo becomes a Purchase Receipt. | Ingredients must be Items linked to Koomyo, which the stock sync creates. |
 | **Book Orders Made in Koomyo** (under Sync Purchasing) | An order made in the Koomyo admin becomes a Supplier (if new) and a submitted Purchase Order once it is **ordered** (a draft creates nothing); each delivery becomes its own Purchase Receipt; an edit before any delivery rebuilds the order; a cancel cancels it (or, if goods were already received, fails with a message for a person). The safety net `GET /purchase-orders?updated_since=` runs every 5 minutes through the same code. | Main Warehouse, Supplier Group; for orders with tax or charges also the Purchase Taxes and Charges accounts below |
 | **Sync Customers** | Koomyo customers become Customers. | Customer Group, Territory, and the webhook's customer data switch on in Koomyo. |
+| **Sync Complaints** | Koomyo complaints (`complaint.created`, `complaint.updated`) become Issues: ticket number and summary, status, priority, category, order number, resolution and its cost. The customer's name and phone are never copied. | The key's `complaints.read` scope and a restaurant with the Complaints app. |
 
 Then tick **Enabled**.
 
