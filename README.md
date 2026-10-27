@@ -1,25 +1,28 @@
 ## Koomyo ERPNext
 
-Sync a Koomyo restaurant with ERPNext, automatically: sales, refunds, till cash, stock and purchasing.
+Sync a Koomyo restaurant with ERPNext, automatically: sales and discounts, refunds, till cash, stock, purchasing, suppliers and complaints.
 
 Koomyo is a restaurant POS. This app is the ERPNext side of its public integration API ([docs.koomyo.com](https://docs.koomyo.com)). One ERPNext site can hold several Companies, and each Company can be linked to its own Koomyo restaurant through its own **Koomyo Connection**.
 
 | Koomyo | ERPNext |
 |---|---|
-| Paid order | Submitted Sales Invoice, plus one Payment Entry per payment |
-| Refund | Credit Note against the invoice, plus the payment out |
+| Paid order | Submitted Sales Invoice (each line at its list price with its discount shown, per discount source), plus one Payment Entry per payment |
+| Refund | Credit Note against the invoice (the discount it gives back reversed per source), plus the payment out |
 | Shift closed | Journal Entry for the cash over or short |
 | Daily ingredient usage, waste, adjustments, stock counts | Stock Entries and Stock Reconciliations |
 | Stock transfer | Material Transfers between Warehouses, in steps through a Transit Warehouse |
 | Customer | Customer (name, phone and email only) |
-| ← Purchase Order, Purchase Receipt, Supplier, ingredient cost | Written to Koomyo from ERPNext |
+| Purchase order (created, updated, cancelled, received) | Purchase Order and one Purchase Receipt per delivery, with tax and landed cost |
+| Supplier card | Supplier, Address, Contact and Payment Terms Template |
+| Complaint | Issue (no customer name or phone) |
+| ← Purchase Order, Purchase Receipt (one delivery each), Supplier, ingredient cost | Written to Koomyo from ERPNext |
 
 ### Versions
 
 | Frappe / ERPNext | Status |
 |---|---|
 | v15 | Supported and tested (Frappe 15.120, ERPNext 15.118). |
-| v16 | Supported on the same branch, not yet run on a v16 bench. |
+| v16 | Supported on the same branch and tested (Frappe and ERPNext `version-16`, Python 3.14, Node 24): the whole suite passes on a v16 site. A new v16 site needs its language set (System Settings) before sales can book, (completing the Frappe setup wizard, or setting it in System Settings). |
 
 ### Install
 
@@ -38,8 +41,8 @@ Open the **Koomyo** workspace and press **Setup Wizard** (or the button on any c
 
 1. **Welcome**: pick the Company and name the connection.
 2. **Connect**: paste the API key and test it. It shows the restaurant, currency, time zone and the key's scopes.
-3. **Set Up**: the branches, payment methods, units, tax and waste accounts and defaults are read from Koomyo and matched to your ERPNext records. You review every line (use an existing record, create one, or skip) and apply. Nothing is saved before you press Apply, filled settings are never changed, and **Undo Set Up** on the connection removes what was created if nothing uses it.
-4. **What to Sync**: switch on sales, refunds, shifts, stock, purchasing and customers.
+3. **Set Up**: the branches, central warehouses, payment methods, units, tax, discount and waste accounts and defaults are read from Koomyo and matched to your ERPNext records. You review every line (use an existing record, create one, or skip) and apply. Nothing is saved before you press Apply, filled settings are never changed, and **Undo Set Up** on the connection removes what was created if nothing uses it.
+4. **What to Sync**: switch on sales, refunds, shifts, stock, purchasing, customers and complaints.
 5. **Menu**: optionally load the menu and ingredients as Items.
 6. **Webhook**: copy the address and events for Koomyo and paste the secret.
 7. **Finish**: start in Dry Run (recommended) or live.
@@ -57,9 +60,10 @@ In **Settings > Integrations > API keys**, create one key for this ERPNext conne
 | Always | `events.read`, `catalog.read` |
 | Sales, Refunds | `orders.read` |
 | Shifts | `shifts.read` |
-| Stock | `stock.read`, `refs.write` |
+| Stock | `stock.read` (also warehouses and daily usage), `refs.write` |
 | Purchasing | `purchasing.read`, `purchasing.write`, `suppliers.write`, `ingredients.write` |
 | Customers | `customers.read`, `refs.write` |
+| Complaints | `complaints.read` |
 
 The key starts with `kyo_live_` and is shown once. If ERPNext has a fixed public address, you can add it to the key's IP allowlist.
 
@@ -103,23 +107,25 @@ Every map row must belong to the connection's Company; this is checked when you 
 | **Sync Sales** | `order.paid` becomes a Sales Invoice (no stock movement) plus Payment Entries. `order.cancelled` adds a note to the invoice. | Walk-in Customer, Menu Item Group, Income Account, Selling Price List. Delivery Fee, Channel Markup and Payment Method Discount accounts once orders use them. |
 | **Sync Refunds** | `refund.created` becomes a Credit Note plus the payment out. A full refund mirrors the invoice. A partial refund follows **Partial Refunds**. | Partial Refunds |
 | **Sync Shifts** | `shift.closed` becomes a Journal Entry for the cash over or short. | Cash Over/Short Account (Cash Drawer Account only when ambiguous) |
-| **Sync Stock** | Daily usage, waste, adjustments, counts and transfers become stock documents. | Opening Stock Date, Ingredient Item Group, Cost of Goods Sold and Stock Adjustment accounts, UOM Map and Waste Map. Transfer Loss Account once stock is lost in transit. Transit Warehouse to post transfers in steps (see below). |
-| **Sync Purchasing** | Purchase Orders and Purchase Receipts for a mapped Warehouse go to Koomyo, with their Supplier (each Purchase Receipt is one delivery, so an order can arrive in several; a Purchase Order closed in ERPNext after part arrived is finished short in Koomyo); ingredient cost changes go to Koomyo; an order received in Koomyo becomes a Purchase Receipt. | Ingredients must be Items linked to Koomyo, which the stock sync creates. |
+| **Sync Stock** | Daily usage, waste (from its ingredient lines), adjustments, counts and transfers become stock documents. | Opening Stock Date, Ingredient Item Group, Cost of Goods Sold and Stock Adjustment accounts, UOM Map and Waste Map. Transfer Loss Account once stock is lost in transit. Transit Warehouse to post transfers in steps (see below). |
+| **Sync Purchasing** | Purchase Orders and Purchase Receipts for a mapped Warehouse go to Koomyo, with their Supplier. Each Purchase Receipt is one delivery sent with the line totals so far, with its delivery note, so an order can arrive in several; a Purchase Order closed in ERPNext after part arrived is finished short in Koomyo; ingredient cost changes go to Koomyo; an order received in Koomyo becomes a Purchase Receipt. | Ingredients must be Items linked to Koomyo, which the stock sync creates. |
 | **Book Orders Made in Koomyo** (under Sync Purchasing) | An order made in the Koomyo admin becomes a Supplier (if new) and a submitted Purchase Order once it is **ordered** (a draft creates nothing); each delivery becomes its own Purchase Receipt; an edit before any delivery rebuilds the order; a cancel cancels it (or, if goods were already received, fails with a message for a person). The safety net `GET /purchase-orders?updated_since=` runs every 5 minutes through the same code. | Main Warehouse, Supplier Group; for orders with tax or charges also the Purchase Taxes and Charges accounts below |
 | **Sync Customers** | Koomyo customers become Customers. | Customer Group, Territory, and the webhook's customer data switch on in Koomyo. |
 | **Sync Complaints** | Koomyo complaints (`complaint.created`, `complaint.updated`) become Issues: ticket number and summary, status, priority, category, order number, resolution and its cost. The customer's name and phone are never copied. | The key's `complaints.read` scope and a restaurant with the Complaints app. |
 
 Then tick **Enabled**.
 
-**Partial refunds.** Koomyo sends a refund amount without lines. The default, **Leave for Manual Booking**, fails such a refund with a clear message, so an accountant decides. **Proportional Credit Note** reverses revenue and each tax and charge row in the same share, exact to the cent.
+**Refunds.** A refund of everything collected (the order's only refund) mirrors the invoice, and Koomyo's `lines` for it are checked against the invoice's lines. Any other refund is an amount without lines, and the app never guesses which lines. The default, **Leave for Manual Booking**, fails such a partial refund with a clear message, so an accountant decides. **Proportional Credit Note** reverses revenue and each tax and charge row in the same share, exact to the cent. When the refund carries `discount_given_back` (its share of the order's discount, by source), the credit note is built at the price before the discount and a small Journal Entry puts each source's part on its own account, so the discount accounts end up exactly right after any number of partial refunds.
+
+**Till cash.** The shift's over or short is `counted cash - (expected cash - refunds paid back in cash from the drawer)`. Koomyo's expected cash is opening cash plus the shift's cash payments plus rider cash handed in at that till, and it does not subtract refunds; only the cash part (`refunds.cash_amount`) leaves the drawer, card refunds do not.
 
 **Stock Deduction.** This setting picks how sales take ingredients out of stock:
 - **Daily (from Koomyo usage)**, the default: one Material Issue per branch per day, after the day ends.
-- **Per Order (from Koomyo movements)**: each paid order takes out exactly what Koomyo deducted for it, and a cancelled order puts it back.
+- **Per Order (from Koomyo movements)**: each paid order takes out exactly what Koomyo deducted for it (read by order id), and a cancelled order puts it back.
 
 The stock step is its own Event Log row, so a stock problem never holds up the invoice. A change of setting applies from the next day, so no day is counted twice.
 
-**Menu, sizes, modifiers.** **Load Menu and Ingredients** makes every Koomyo menu item an Item, in an Item Group per Koomyo category. A menu item with sizes becomes a template, with one variant per size, each with its own price. Ingredients become stock Items. Sales book on the size's variant. Modifiers (extra cheese, no onion) are written on the invoice line, and paid extras are an extra line on the same Item.
+**Menu, sizes, modifiers.** **Load Menu and Ingredients** makes every Koomyo menu item an Item, in an Item Group per Koomyo category. A menu item with sizes becomes a template, with one variant per size, each with its own price. Ingredients become stock Items. Sales book on the size's variant. Modifiers (extra cheese, no onion) are written on the invoice line and their price is already inside the line's list price. Koomyo's option groups (what each option takes from stock) are read for costing only: the app works out the stock a line takes (item recipe for the size plus each chosen option, a swap giving the replaced ingredient back), but Koomyo deducts the stock itself and nothing is moved from it.
 
 **Opening Stock Date.** Stock events dated before this day are skipped, because the Warehouses' opening stock already contains them. Set it to the day after you entered opening stock.
 
@@ -162,7 +168,7 @@ Use **Retry** on a row, or **Retry All Failed** on the list. Done rows are delet
 3. **Stop** pauses; **Start** carries on from where it was.
 4. **Retry Failed** tries the failed records again; **Re-run a Day** runs one day again.
 
-A run is refused if the range touches a closed accounting period, a Period Closing Voucher, frozen accounts or frozen stock, or (for stock) days before the Opening Stock Date. Calls are paced to the key's rate limit. **All Connections** on the list makes one backfill per connection.
+Stock backfill reads Koomyo's daily usage (`GET /stock-usage`; a day Koomyo has not settled yet is skipped with a message and can be run again later), waste, counts, transfers and hand adjustments, all under the same keys as live events. A run is refused if the range touches a closed accounting period, a Period Closing Voucher, frozen accounts or frozen stock, or (for stock) days before the Opening Stock Date. Calls are paced to the key's rate limit. **All Connections** on the list makes one backfill per connection.
 
 ### Dashboard
 
@@ -192,6 +198,9 @@ Set **Alert Email** in **Koomyo Settings**. A connection with a revoked key, an 
 | Failed: NeedsMapping | Add the row the message names, then Retry. |
 | "ERPNext refused it: ... insufficient stock" | Koomyo allows negative stock, ERPNext does not by default. Enter opening stock (and the Opening Stock Date), or allow negative stock, then Retry. |
 | Needs Re-sync | Koomyo reported a feed gap. The re-sync backfill is running or needs you (see Feed gap above). |
+| Failed: "Discount Map" or "Discount Accounting" | Add the Discount Map row for that source, or switch on Selling Settings > Enable Discount Accounting for Selling, then Retry. |
+| A transfer or purchase order fails naming a Koomyo warehouse id | Run Set Up From Koomyo again (it reads the warehouse list), or add a Branch Map row of Location Type Warehouse. |
+| Failed: "purchase order ... already fully received or closed short" | Koomyo has nothing more to receive for that order; adjust the stock in Koomyo. |
 
 What the Koomyo API does not provide yet, and the choices made where the docs leave room, are in [docs/API_GAPS.md](docs/API_GAPS.md).
 
@@ -216,7 +225,7 @@ bench --site test_site set-config allow_tests true
 bench --site test_site run-tests --app koomyo_erpnext
 ```
 
-The tests use a fake Koomyo built from the docs examples in `koomyo_erpnext/tests/fixtures/`; they never call a real Koomyo or send email. Linting uses `pre-commit` (ruff, prettier, eslint):
+The tests use a fake Koomyo built from the docs examples in `koomyo_erpnext/tests/fixtures/`; they never call a real Koomyo or send email. The suite (332 tests) passes on v15 and on v16 (`bench init --frappe-branch version-16 --python python3.14`, Node 24, then `bench get-app erpnext --branch version-16`). Linting uses `pre-commit` (ruff, prettier, eslint):
 
 ```bash
 cd apps/koomyo_erpnext && pre-commit install
