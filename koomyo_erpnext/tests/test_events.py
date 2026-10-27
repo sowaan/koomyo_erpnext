@@ -269,23 +269,6 @@ class TestCatchUp(EventsTestCase):
 			events.catch_up(self.conn_a.name)
 		self.assertEqual(frappe.db.get_value("Koomyo Connection", self.conn_a.name, "status"), "Connected")
 
-	def test_gap_longer_than_feed_keeps_stops(self):
-		self.add_shift(self.fake_a, 1)
-		self.conn_a.db_set({"last_seq": 0, "last_caught_up_on": now_datetime() - timedelta(days=31)})
-		with self.koomyo():
-			summary = events.catch_up(self.conn_a.name)
-		self.assertEqual(summary["pages"], 0)
-		self.assertEqual([c for c in self.fake_a.calls if c["path"] == "/events"], [])
-		conn = frappe.get_doc("Koomyo Connection", self.conn_a.name)
-		self.assertEqual(conn.status, "Needs Re-sync")
-		self.assertIn("backfill", conn.status_message)
-
-		conn.restart_feed()
-		conn.reload()
-		self.assertEqual((conn.status, conn.last_seq), ("Connected", 0))
-		with self.koomyo():
-			self.assertTrue(events.catch_up(self.conn_a.name)["done"])
-
 	def test_a_down_does_not_delay_b(self):
 		self.add_shift(self.fake_a, 1)
 		self.add_shift(self.fake_b, 1)

@@ -370,6 +370,10 @@ def run(backfill_name: str, dry_run: bool = False, only_chunk: str | None = None
 	else:
 		backfill.db_set({"status": "Completed", "finished_on": now_datetime()})
 	frappe.db.commit()
+	if not dry_run:
+		from koomyo_erpnext.sync.resync import finish_resync
+
+		finish_resync(backfill)
 
 
 def run_chunk(backfill, connection, reader, chunk, dry_run: bool, sample: list):

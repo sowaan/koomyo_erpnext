@@ -16,6 +16,7 @@
   "mode",
   "progress",
   "started_by",
+  "resync_seq",
   "started_on",
   "finished_on",
   "section_what",
@@ -257,6 +258,15 @@
    "label": "Days",
    "no_copy": 1,
    "options": "Koomyo Backfill Chunk",
+   "read_only": 1
+  },
+  {
+   "description": "Set when the events feed lost events: when this backfill completes, the feed carries on from this event number.",
+   "fieldname": "resync_seq",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Feed Re-sync Up To",
+   "no_copy": 1,
    "read_only": 1
   }
  ],

@@ -31,7 +31,6 @@ TEST_EVENT_TYPE = "webhook.test"
 
 # Koomyo keeps events for 30 days (docs: events/feed). If our last full read of the
 # feed is older than this, events may have been dropped before we read them.
-FEED_SAFE_DAYS = 29
 FEED_PAGE_SIZE = 500
 FEED_MAX_PAGES_PER_RUN = 20
 PROCESS_BATCH = 200
@@ -598,19 +597,6 @@ def catch_up(connection_name: str, client: KoomyoClient | None = None) -> dict:
 		summary["done"] = True
 		return summary
 
-	if connection.last_caught_up_on and get_datetime(
-		connection.last_caught_up_on
-	) < now_datetime() - timedelta(days=FEED_SAFE_DAYS):
-		mark_connection(
-			connection,
-			"Needs Re-sync",
-			_(
-				"The events feed was last read completely on {0}. Koomyo keeps events for 30 days, so some may be gone. "
-				"Bring that period in with a backfill, then press Restart Feed."
-			).format(frappe.format(connection.last_caught_up_on, "Datetime")),
-		)
-		return summary
-
 	client = client or KoomyoClient.for_connection(connection)
 	after = int(connection.last_seq or 0)
 	since = None if (after or connection.last_caught_up_on) else str(getdate(connection.start_from_date))
@@ -619,6 +605,16 @@ def catch_up(connection_name: str, client: KoomyoClient | None = None) -> dict:
 		while summary["pages"] < FEED_MAX_PAGES_PER_RUN:
 			page = client.get_events(after=after, since=since, types=types, limit=FEED_PAGE_SIZE)
 			summary["pages"] += 1
+			if page["gap"] and after > 0:
+				# Events between our position and the start of the feed were deleted: do not read on, it would
+				# hide the hole. Read the lists again instead, then continue from the head of the feed.
+				from koomyo_erpnext.sync.resync import start_resync
+
+				frappe.db.rollback()
+				summary["gap"] = True
+				summary["error"] = _("The events feed lost events; a re-sync was started.")
+				start_resync(connection, page["oldest_seq"], page["latest_seq"])
+				return summary
 			if page["next_after"] < after:
 				raise KoomyoAPIError(None, "bad_response", _("Koomyo's events feed went backwards."))
 			for event in page["data"]:

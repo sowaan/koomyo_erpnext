@@ -137,7 +137,7 @@ The address must be public https. On a laptop, use a tunnel such as ngrok.
 
 - **Webhook.** Each event is checked (signature with this connection's secret, timestamp within 5 minutes, the right restaurant), stored once, and answered at once. Booking happens in a background job, one queue per connection.
 - **Catch-up.** Every 5 minutes, each connection reads Koomyo's events feed from the last event number it read. Anything a webhook missed is booked then, so an hour of downtime loses nothing, and nothing doubles.
-- **Feed gap.** Koomyo keeps events for 30 days. A connection that has not read the feed for 29 days stops, shows **Needs Re-sync** and alerts. Bring the gap in with a backfill, then press **Feed > Restart Feed**.
+- **Feed gap.** Koomyo keeps events for 30 days and says so in every answer of `GET /events` (`oldest_seq`, `latest_seq`, `gap`). When `gap` is true the connection stops reading the feed, shows **Needs Re-sync**, alerts, and makes and starts a **Backfill** of the days since its last complete read (sales, refunds, shifts, stock, customers and purchases, as far as each is switched on). When that backfill completes without failures the feed continues from `latest_seq` by itself. If it cannot start (a closed accounting period) or ends with failures, the connection says what to do: fix it and press **Start** or **Retry Failed** on that backfill. **Feed > Restart Feed** remains for starting again from today.
 - **Duplicates.** Every document made from Koomyo carries the Koomyo id, and the database refuses a second one per connection.
 
 ### Event Log
@@ -186,7 +186,7 @@ Set **Alert Email** in **Koomyo Settings**. A connection with a revoked key, an 
 | Webhook test answers 401 | The Webhook Secret is wrong or old (after New secret in Koomyo), or the server clock is off by more than 5 minutes. |
 | Failed: NeedsMapping | Add the row the message names, then Retry. |
 | "ERPNext refused it: ... insufficient stock" | Koomyo allows negative stock, ERPNext does not by default. Enter opening stock (and the Opening Stock Date), or allow negative stock, then Retry. |
-| Needs Re-sync | The feed was not read for 29 days. Backfill the gap, then Restart Feed. |
+| Needs Re-sync | Koomyo reported a feed gap. The re-sync backfill is running or needs you (see Feed gap above). |
 
 What the Koomyo API does not provide yet, and the choices made where the docs leave room, are in [docs/API_GAPS.md](docs/API_GAPS.md).
 

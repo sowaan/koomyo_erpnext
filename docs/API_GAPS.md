@@ -6,15 +6,15 @@ Status keys: **Open** (waiting on Koomyo), **Decision** (the app chose; the owne
 
 ---
 
-## 1. No signal that a feed position is past the 30-day retention (Open)
+## 1. Where the feed starts (Resolved)
 
-**What.** `GET /events?after=<seq>` returns whatever is left above `after`. Nothing in the answer says whether events right after `<seq>` were already deleted after 30 days.
+`GET /events` now answers `oldest_seq`, `latest_seq` and `gap` (docs: events/feed#how-long-events-are-kept; schema `EventList`). `gap` is true when events between our `after` and `oldest_seq` were deleted, never for `after=0`, and the same whatever `types` or `branch_id` filter is used (so it can be true when what was deleted was of no interest: the safe side).
 
-**Why.** A connection that has been down for more than 30 days would otherwise skip deleted events silently.
-
-**Workaround.** The app records when it last read the feed to the end (`last_caught_up_on`). If that was more than 29 days ago, it stops reading, marks the connection **Needs Re-sync**, sends an alert, and offers **Restart Feed** plus a backfill. This is safe but cautious: it may trigger even when nothing was actually lost.
-
-**Planned by Koomyo.** An `oldest_seq` field and a `gap` flag on the `GET /events` list answer. When they exist, replace the 29-day rule in `sync/events.py` (`FEED_SAFE_DAYS`) with: if `gap` is true, or `after < oldest_seq - 1`, the connection needs a re-sync.
+- The 29-day guess (`FEED_SAFE_DAYS`) is removed. Only `gap` stops the feed.
+- On a gap the feed is not read on. The connection is marked Needs Re-sync, the alert goes out, and a Backfill for the days since the last complete read is made and started (`sync/resync.py`); when it completes without failures the feed continues from `latest_seq`. A range longer than one backfill (366 days) is cut at 365 days: older days need their own backfills. Stock before the Opening Stock Date is left out, as everywhere.
+- A Koomyo that does not send the three fields is read as having no gap; nothing is guessed from time.
+- `gap` true without a `latest_seq` stops with a message and no automatic re-sync (there is no head to continue from).
+- **Not verified live.** The fake Koomyo plays the signal; the live API was not made to delete events.
 
 ## 2. Scope list in CLAUDE.md (Resolved)
 

@@ -218,6 +218,7 @@ class KoomyoClient:
 			raise KoomyoAPIError(
 				None, "bad_response", _("Koomyo sent a page of events without a number to continue from.")
 			)
+		check_feed_position(page)
 		return page
 
 	def get_event(self, event_id: str) -> dict:
@@ -326,6 +327,20 @@ def check_account(account: dict):
 	)
 	if not ok:
 		raise KoomyoAPIError(None, "bad_response", _("Koomyo sent account details in an unexpected shape."))
+
+
+def check_feed_position(page: dict):
+	"""`oldest_seq`, `latest_seq` and `gap` say where the feed starts (docs: events/feed#how-long-events-are-kept).
+
+	An answer from a Koomyo that does not send them has no gap signal: it is read as no gap, never guessed.
+	"""
+	for key in ("oldest_seq", "latest_seq"):
+		value = page.get(key)
+		if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+			raise KoomyoAPIError(None, "bad_response", _("Koomyo sent {0} that is not a number.").format(key))
+		page.setdefault(key, None)
+	if not isinstance(page.setdefault("gap", False), bool):
+		raise KoomyoAPIError(None, "bad_response", _("Koomyo sent gap that is not true or false."))
 
 
 EVENT_REQUIRED = ("id", "type", "seq", "tenant_id", "data")

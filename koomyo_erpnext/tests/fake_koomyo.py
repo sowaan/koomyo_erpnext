@@ -66,6 +66,11 @@ class FakeKoomyo:
 		self.rate_limit: tuple[int, int] | None = None  # (limit, remaining) headers on every answer
 		self._idempotent: dict[str, tuple] = {}
 		self.down = False
+		# The feed's start, as GET /events answers it. By default the oldest event it holds and no gap;
+		# set `deleted_through` to drop events up to that number (30-day retention), `head` for latest_seq.
+		self.deleted_through: int | None = None
+		self.head: int | None = None
+		self.send_position = True  # False plays a Koomyo that does not answer oldest_seq/latest_seq/gap
 		# path -> list of FakeResponse to return first (then normal routing)
 		self.scripted: dict[str, list[FakeResponse]] = {}
 		self.calls: list[dict] = []
@@ -287,21 +292,29 @@ class FakeKoomyo:
 		limit = int(params.get("limit") or 100)
 		types = set(params["types"].split(",")) if params.get("types") else None
 		since = params.get("since")
-		rows = [e for e in sorted(self.events, key=lambda e: e["seq"]) if e["seq"] > after]
+		present = [e for e in sorted(self.events, key=lambda e: e["seq"])]
+		if self.deleted_through is not None:
+			present = [e for e in present if e["seq"] > self.deleted_through]
+		rows = [e for e in present if e["seq"] > after]
 		if types:
 			rows = [e for e in rows if e["type"] in types]
 		if since:
 			rows = [e for e in rows if e["created"][:10] >= since[:10]]
 		page = rows[:limit]
-		return FakeResponse(
-			200,
-			{
-				"object": "list",
-				"data": page,
-				"has_more": len(rows) > limit,
-				"next_after": page[-1]["seq"] if page else after,
-			},
-		)
+		body = {
+			"object": "list",
+			"data": page,
+			"has_more": len(rows) > limit,
+			"next_after": page[-1]["seq"] if page else after,
+		}
+		if self.send_position:
+			oldest = present[0]["seq"] if present else None
+			latest = (
+				self.head if self.head is not None else max((e["seq"] for e in self.events), default=None)
+			)
+			deleted = self.deleted_through is not None and after > 0 and after < self.deleted_through
+			body.update({"oldest_seq": oldest, "latest_seq": latest, "gap": deleted})
+		return FakeResponse(200, body)
 
 
 class _Router:
