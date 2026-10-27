@@ -210,9 +210,21 @@ def read_koomyo(connection) -> dict:
 				units.add(ingredient["unit"])
 	else:
 		notes.append(_("The key has no stock.read scope, so ingredient units could not be read."))
+	warehouses = {}
+	if "stock.read" in scopes:
+		# Koomyo has no list of its central warehouses (API_GAPS item 7): they show up as the ends of
+		# stock transfers, so the ones that have been used are found there.
+		try:
+			for transfer in client.iter_list("/stock-transfers", {"limit": 200}, max_pages=10):
+				for end in (transfer.get("from"), transfer.get("to")):
+					if isinstance(end, dict) and end.get("type") == "warehouse" and end.get("id"):
+						warehouses[end["id"]] = end.get("name") or end["id"]
+		except KoomyoAPIError:
+			notes.append(_("Stock transfers could not be read, so central warehouses were not looked for."))
 	return {
 		"account": account,
 		"branches": branches,
+		"warehouses": warehouses,
 		"methods": methods,
 		"units": sorted(units),
 		"notes": notes,
@@ -360,6 +372,21 @@ def build_plan(connection, koomyo: dict) -> list[dict]:
 			_("Discount: {0}").format(source),
 			find_account(co, names, "Expense"),
 			new_name,
+		)
+
+	for warehouse_id, warehouse_name in koomyo.get("warehouses", {}).items():
+		if warehouse_id in mapped_branches:
+			continue
+		name = warehouse_name[:100]
+		wh = frappe.db.exists("Warehouse", {"company": co, "warehouse_name": name, "is_group": 0})
+		add(
+			f"central:{warehouse_id}",
+			_("Central warehouses"),
+			_("{0}: Warehouse (Koomyo central warehouse)").format(name),
+			"Warehouse",
+			USE if wh else CREATE,
+			wh or name,
+			"" if wh else _("New warehouse"),
 		)
 
 	def account_default(fieldname, label, existing, new_name):
@@ -750,6 +777,17 @@ def apply_plan(connection, koomyo: dict, choices: list[dict]) -> dict:
 					"koomyo_branch_name": branch.get("name"),
 					"cost_center": cc,
 					"warehouse": wh,
+				},
+			)
+	for warehouse_id, warehouse_name in koomyo.get("warehouses", {}).items():
+		if resolved.get(f"central:{warehouse_id}"):
+			connection.append(
+				"branch_map",
+				{
+					"location_type": "Warehouse",
+					"koomyo_branch_id": warehouse_id,
+					"koomyo_branch_name": warehouse_name,
+					"warehouse": resolved[f"central:{warehouse_id}"],
 				},
 			)
 	for method in koomyo["methods"]:

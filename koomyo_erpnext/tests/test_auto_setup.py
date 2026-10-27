@@ -114,6 +114,35 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 			d: frappe.db.count(d, {"company": COMPANY_D}) for d in ("Account", "Cost Center", "Warehouse")
 		} | {"Mode of Payment": frappe.db.count("Mode of Payment"), "Customer": frappe.db.count("Customer")}
 
+	def test_central_warehouses_found_from_transfers_are_mapped(self):
+		central = "61111d66-8b23-4992-a9e7-e1508eb02751"
+		self.fake_a.lists["/stock-transfers"] = [
+			{
+				"id": "t1",
+				"from": {"id": central, "name": "Main Warehouse", "type": "warehouse"},
+				"to": {"id": BRANCH, "name": "Pizza Flex Bahadurabad", "type": "branch"},
+			},
+			{
+				"id": "t2",
+				"from": {"id": BRANCH, "name": "Pizza Flex Bahadurabad", "type": "branch"},
+				"to": {"id": central, "name": "Main Warehouse", "type": "warehouse"},
+			},
+		]
+		_koomyo, plan = self.plan()
+		row = plan[f"central:{central}"]
+		self.assertEqual((row["doctype"], row["section"]), ("Warehouse", "Central warehouses"))
+		self.assertEqual(len([k for k in plan if k.startswith("central:")]), 1, "one row per warehouse")
+		self.apply()
+		mapped = {r.koomyo_branch_id: r for r in self.conn.branch_map}
+		self.assertEqual(mapped[central].location_type, "Warehouse")
+		self.assertEqual(mapped[central].koomyo_branch_name, "Main Warehouse")
+		self.assertEqual(frappe.db.get_value("Warehouse", mapped[central].warehouse, "company"), COMPANY_D)
+		self.assertEqual(mapped[BRANCH].location_type, "Branch")
+
+	def test_no_transfers_means_no_central_warehouse_rows(self):
+		_koomyo, plan = self.plan()
+		self.assertEqual([k for k in plan if k.startswith("central:")], [])
+
 	def test_plan_writes_nothing_and_matches_what_exists(self):
 		before = self.counts()
 		koomyo, plan = self.plan()
@@ -212,7 +241,9 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 		before, accounts = self.counts(), len(self.conn.setup_log)
 		_, plan = self.plan()
 		self.assertNotIn("field:income_account", plan)
-		self.assertEqual([k for k in plan if k.startswith(("branch:", "payment:", "tax:", "waste:"))], [])
+		self.assertEqual(
+			[k for k in plan if k.startswith(("branch:", "payment:", "tax:", "waste:", "central:"))], []
+		)
 		self.apply()
 		self.assertEqual(self.counts(), before)
 		self.assertEqual(len(self.conn.setup_log), accounts)
