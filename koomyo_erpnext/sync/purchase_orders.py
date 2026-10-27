@@ -203,6 +203,17 @@ def order_warehouse(connection, order: dict) -> str:
 	return warehouse
 
 
+def order_cost_center(connection, order: dict) -> str | None:
+	"""The branch's Cost Center, else the connection's default, else the Company's: tax rows need one."""
+	if order.get("branch_id"):
+		center = branch_row(connection, order["branch_id"]).cost_center
+		if center:
+			return center
+	return connection.default_cost_center or frappe.get_cached_value(
+		"Company", connection.company, "cost_center"
+	)
+
+
 def charge_method(connection, charge: dict) -> str:
 	"""none | value | quantity, from the connection's override or the charge's own setting."""
 	override = {"None": "none", "By Value": "value", "By Quantity": "quantity"}.get(
@@ -309,9 +320,7 @@ def create_order(connection, order: dict):
 	from koomyo_erpnext.sync.stock import ingredient_item
 
 	warehouse = order_warehouse(connection, order)
-	cost_center = None
-	if order.get("branch_id"):
-		cost_center = branch_row(connection, order["branch_id"]).cost_center
+	cost_center = order_cost_center(connection, order)
 	client = KoomyoClient.for_connection(connection)
 	po = frappe.new_doc("Purchase Order")
 	date = posting_date(order)
@@ -550,7 +559,7 @@ def apply_delivery_costs(pr, po, order, receipt, connection, delivered_value) ->
 	"""Give the receipt its share of the tax and charge rows; return the Landed Cost Voucher lines."""
 	if not po.taxes:
 		return []
-	cost_center = po.taxes[0].cost_center
+	cost_center = po.taxes[0].cost_center or order_cost_center(connection, order)
 	rows = tax_rows(connection, order, cost_center or "")
 	ordered_value = sum((e["net"] for e in order_lines(order)), ZERO)
 	ordered_qty = sum((e["qty"] for e in order_lines(order)), ZERO)

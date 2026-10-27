@@ -423,6 +423,19 @@ class TestTaxAndCharges(PurchaseOrderCase):
 		# 14500 + 2610 spread over 10 kg
 		self.assertEqual(flt(pr.items[0].valuation_rate, 2), 1711)
 
+	def test_an_order_without_a_branch_still_gets_a_cost_center_on_its_tax_rows(self):
+		self.accounts()
+		order = self.taxed(tax_recoverable=False, non_recoverable_tax="2610.00", branch_id=None)
+		order["tax_lines"][0]["recoverable"] = False
+		self.send(order)
+		order.update(
+			status="received", updated_at="2026-10-13T09:00:00Z", receipts=[receipt("rcpt-1", "10.000")]
+		)
+		log = self.send(order, "purchase.received")
+		self.assertEqual(log.status, "Done", (log.message, log.error[-500:]))
+		pr = frappe.get_doc("Purchase Receipt", log.reference_name)
+		self.assertTrue(pr.taxes[0].cost_center)
+
 	def test_withholding_is_a_deduction_never_cost(self):
 		self.accounts()
 		order = self.taxed(
