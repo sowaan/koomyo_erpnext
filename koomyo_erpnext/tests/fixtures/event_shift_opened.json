@@ -23,6 +23,7 @@
   "payments_by_method": [],
   "refunds": {
    "amount": "0.00",
+   "cash_amount": "0.00",
    "count": 0
   },
   "rider_cash_handed_in": "0.00",

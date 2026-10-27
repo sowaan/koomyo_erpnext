@@ -84,6 +84,77 @@ class TestShifts(SalesTestCase):
 		)
 		self.assertEqual(cash, D("2450.00") - D("1000.00"))
 
+	def test_only_cash_refunds_leave_the_drawer(self):
+		# 1000 float + 1500 cash taken; 300 refunded in cash and 200 back to the card (amount 500, cash_amount 300).
+		# The drawer should hold 2500 - 300 = 2200; 2150 counted is 50 short. Koomyo's own variance is -350.
+		log = self.book(
+			shift_event(
+				opening_cash="1000.00",
+				counted_cash="2150.00",
+				expected_cash="2500.00",
+				cash_variance="-350.00",
+				payments_by_method=[
+					{"method": "cash", "amount": "1500.00", "orders": 3, "settles_as_cash": True},
+					{"method": "card", "amount": "800.00", "orders": 2, "settles_as_cash": False},
+				],
+				refunds={"count": 2, "amount": "500.00", "cash_amount": "300.00"},
+			)
+		)
+		self.assertEqual(log.status, "Done", log.message)
+		self.assertEqual(
+			gl("Journal Entry", self.entry().name),
+			{"Cash - _KTA": D("-50.00"), "Miscellaneous Expenses - _KTA": D("50.00")},
+			"refunds.amount (500) would have said 150 over",
+		)
+		self.assertIn("300.00", self.entry().user_remark)
+
+	def test_card_refunds_only_leave_the_drawer_alone(self):
+		log = self.book(
+			shift_event(
+				opening_cash="100.00",
+				counted_cash="1100.00",
+				expected_cash="1100.00",
+				cash_variance="0.00",
+				payments_by_method=[
+					{"method": "cash", "amount": "1000.00", "orders": 2, "settles_as_cash": True}
+				],
+				refunds={"count": 1, "amount": "400.00", "cash_amount": "0.00"},
+			)
+		)
+		self.assertEqual(log.status, "Skipped", "the drawer balanced: nothing to book")
+		self.assertIsNone(self.entry())
+
+	def test_rider_cash_handed_in_at_the_till_is_part_of_expected_and_a_cash_refund_comes_off(self):
+		log = self.book(
+			shift_event(
+				opening_cash="200.00",
+				counted_cash="1200.00",
+				expected_cash="1500.00",
+				cash_variance="-300.00",
+				rider_cash_handed_in="500.00",
+				payments_by_method=[
+					{"method": "cash", "amount": "800.00", "orders": 2, "settles_as_cash": True}
+				],
+				refunds={"count": 1, "amount": "300.00", "cash_amount": "300.00"},
+			)
+		)
+		self.assertEqual(log.status, "Skipped", "200 + 800 + 500 - 300 = 1200 counted: balanced")
+
+	def test_a_shift_stored_without_cash_amount_falls_back_to_amount(self):
+		log = self.book(
+			shift_event(
+				opening_cash="0.00",
+				counted_cash="900.00",
+				expected_cash="1000.00",
+				cash_variance="-100.00",
+				payments_by_method=[
+					{"method": "cash", "amount": "1000.00", "orders": 1, "settles_as_cash": True}
+				],
+				refunds={"count": 1, "amount": "100.00"},
+			)
+		)
+		self.assertEqual(log.status, "Skipped", "the older shape: amount is all there is")
+
 	def test_shortage_without_refunds(self):
 		log = self.book(
 			shift_event(

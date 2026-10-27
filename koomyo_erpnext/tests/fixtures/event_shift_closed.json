@@ -30,6 +30,7 @@
   ],
   "refunds": {
    "amount": "724.50",
+   "cash_amount": "724.50",
    "count": 1
   },
   "rider_cash_handed_in": "0.00",

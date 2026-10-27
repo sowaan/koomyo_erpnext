@@ -3,11 +3,13 @@
 Docs: docs.koomyo.com/events/cash, /guides/erp-sales#shifts-and-cash-variance, OpenAPI schema Shift.
 
 The drawer's takings are already booked by the invoices' Payment Entries, and refunds
-paid out of the drawer by the refunds' Payment Entries. Koomyo's `expected_cash` does
-not subtract those refunds (docs: "expected_cash does not subtract them, so take them
-from the refund events and adjust your cash account"), so the difference left to book is
+paid out of the drawer by the refunds' Payment Entries. Koomyo's `expected_cash` is
+opening cash + cash payments of the shift + rider cash handed in at that till, and it does
+NOT subtract refunds (docs: events/cash, Shift.refunds). Only `refunds.cash_amount` (the refunds
+paid back in cash from the drawer) leaves the drawer: `refunds.amount` is every refund of the
+shift, whatever way the money went back, so it is not used. The difference left to book is
 
-    counted_cash - (expected_cash - refunds.amount)
+    counted_cash - (expected_cash - refunds.cash_amount)
 
 and it goes between the drawer's cash account and the connection's Cash Over/Short
 account. Koomyo's own figures are checked first; if they do not add up nothing is booked.
@@ -58,7 +60,12 @@ def book_shift(shift: dict, connection):
 	expected = money(shift.get("expected_cash"), "expected_cash")
 	variance = money(shift.get("cash_variance"), "cash_variance")
 	rider = money(shift.get("rider_cash_handed_in"), "rider_cash_handed_in")
-	refunds = money((shift.get("refunds") or {}).get("amount"), "refunds.amount")
+	refund_block = shift.get("refunds") or {}
+	if refund_block.get("cash_amount") is not None:
+		refunds = money(refund_block["cash_amount"], "refunds.cash_amount")
+	else:
+		# A shift stored before Koomyo sent cash_amount: only `amount` is there, and nothing better is known.
+		refunds = money(refund_block.get("amount"), "refunds.amount")
 	methods = shift.get("payments_by_method") or []
 	cash_taken = sum(
 		(
@@ -96,8 +103,8 @@ def book_shift(shift: dict, connection):
 			"cheque_no": shift["id"][:140],
 			"cheque_date": posting_date(shift),
 			"user_remark": _(
-				"Koomyo shift {0}: counted {1}, expected {2}, refunds paid from the drawer {3}. "
-				"Cash {4}: {5} (Koomyo's own variance {6} includes those refunds, which are booked with them)."
+				"Koomyo shift {0}: counted {1}, expected {2}, refunds paid back in cash from the drawer {3}. "
+				"Cash {4}: {5} (Koomyo's own variance {6} does not subtract those refunds, which are booked with them)."
 			).format(
 				shift["id"],
 				counted,
