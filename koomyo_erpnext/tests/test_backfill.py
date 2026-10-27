@@ -312,11 +312,76 @@ class TestBackfill(BackfillTestCase):
 
 		doc = self.press(self.make(from_date="2026-10-11", to_date=DAY, bring_sales=0, bring_stock=1))
 		self.assertEqual(doc.status, "Completed", doc.error)
-		self.assertEqual((doc.found, doc.already_there, doc.created), (2, 1, 1))
+		# usage for the 11th (live) and the 12th, and the hand adjustment m4 of the 12th
+		self.assertEqual((doc.found, doc.already_there, doc.created), (3, 1, 2))
 		entry = frappe.db.get_value(
 			"Stock Entry", {"koomyo_connection": self.conn_a.name, "koomyo_id": f"usage:{BRANCH}:{DAY}"}
 		)
 		self.assertEqual(frappe.db.get_value("Stock Entry Detail", {"parent": entry}, "qty"), 3)
+
+	def test_manual_adjustments_are_brought_in_with_the_live_keys_and_never_doubled(self):
+		configure_stock(self.conn_a, "_KTA")
+		self.conn_a.reload()
+		self.fake_a.add_ingredient(KITCHEN, "Kitchen stock", "pcs", "12.5000")
+		self.assertEqual(self.book(adjustment(1, "30.0000")).status, "Done")
+
+		def move(mid, qty, reason, day=DAY):
+			return {
+				"id": mid,
+				"object": "stock_movement",
+				"ingredient_id": KITCHEN,
+				"ingredient": "Kitchen stock",
+				"unit": "pcs",
+				"quantity_change": qty,
+				"unit_cost": "12.5000",
+				"value": "0",
+				"reason": reason,
+				"reference_id": None,
+				"location": {"type": "branch", "id": BRANCH},
+				"created_at": f"{day}T12:00:00Z",
+				"business_date": day,
+			}
+
+		self.fake_a.lists["/stock-movements"] = [
+			move("a1", "-2.0000", "Damaged in the walk-in"),  # free text: manual
+			move("a2", "4.0000", "Found behind the shelf"),  # already booked live below
+			move("c1", "-1.0000", "stock_count"),  # has its own event
+			move("w1", "-1.0000", "non_sale_usage"),  # has its own event
+			move("o1", "9.0000", "opening_stock"),  # already in the opening stock
+			move("s1", "-3.0000", "order_deduction"),  # system
+		]
+		for path in ("/waste", "/stock-counts", "/stock-transfers"):
+			self.fake_a.lists[path] = []
+		live = adjustment(2, "4.0000", movement_id="a2", date=DAY)
+		self.assertEqual(self.book(live).status, "Done")
+
+		doc = self.press(self.make(bring_sales=0, bring_stock=1, to_date=DAY))
+		self.assertEqual(doc.status, "Completed", doc.error)
+		self.assertEqual(
+			(doc.found, doc.already_there, doc.created, doc.failed), (3, 1, 2, 0)
+		)  # a1, a2 and the usage of s1
+		ids = lambda: sorted(  # noqa: E731
+			frappe.get_all(
+				"Stock Entry",
+				filters={
+					"koomyo_connection": self.conn_a.name,
+					"koomyo_id": ("in", ["a1", "a2", "c1", "w1", "o1", "s1"]),
+				},
+				pluck="koomyo_id",
+			)
+		)
+		self.assertEqual(
+			ids(),
+			["a1", "a2"],
+			"same keys as the live event; counts, waste, opening stock and system rows left out",
+		)
+		call = next(
+			c for c in self.fake_a.calls if c["path"] == "/stock-movements" and c["params"].get("kind")
+		)
+		self.assertEqual(call["params"]["kind"], "manual")
+		again = self.press(self.make(bring_sales=0, bring_stock=1, to_date=DAY))
+		self.assertEqual((again.created, again.already_there), (0, 3))
+		self.assertEqual(ids(), ["a1", "a2"])
 
 	def test_all_connections_makes_one_per_connection(self):
 		from koomyo_erpnext.tests.helpers import configure_sales

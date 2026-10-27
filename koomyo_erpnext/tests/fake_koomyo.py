@@ -43,6 +43,25 @@ def error_response(status, code, message="Test error", headers=None):
 	)
 
 
+# Docs: reference/stock-movement-reasons. A reason that is not a system code is free text, always manual.
+MANUAL_REASONS = ("stock_count", "non_sale_usage", "opening_stock")
+SYSTEM_REASONS = (
+	"order_deduction",
+	"order_cancel_restore",
+	"packaging",
+	"po_received",
+	"production_consume",
+	"production_output",
+	"transfer_out",
+	"transfer_in",
+	"transfer_cancelled",
+	"transfer_return",
+	"transfer_loss",
+	"transfer_shrinkage",
+	"import_undo",
+)
+
+
 class FakeKoomyo:
 	def __init__(self, base_url: str, *, tenant_id: str | None = None, currency: str = "PKR", scopes=None):
 		self.base_url = base_url.rstrip("/")
@@ -158,6 +177,9 @@ class FakeKoomyo:
 			"payment_status": lambda r, v: (r.get("payment") or {}).get("status") == v,
 			"status": lambda r, v: r.get("status") == v,
 			"reason": lambda r, v: r.get("reason") == v,
+			"reference_id": lambda r, v: r.get("reference_id") == v,
+			"kind": lambda r, v: (r.get("reason") in MANUAL_REASONS or r.get("reason") not in SYSTEM_REASONS)
+			== (v == "manual"),
 			"branch_id": lambda r, v: v in (r.get("branch_id"), (r.get("location") or {}).get("id")),
 			"created_after": lambda r, v: when(r, "created_at") > v,
 			"created_before": lambda r, v: when(r, "created_at") < v,

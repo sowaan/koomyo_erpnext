@@ -17,7 +17,7 @@ setting. The stock step is its own Event Log row: if ERPNext refuses the stock (
 on hand), the invoice is still booked and only the stock step waits for Retry.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import frappe
 from frappe import _
@@ -41,10 +41,6 @@ DAILY = "Daily (from Koomyo usage)"
 PER_ORDER = "Per Order (from Koomyo movements)"
 ISSUE_STEP = "koomyo.order_stock"
 RESTORE_STEP = "koomyo.order_stock_restore"
-# Koomyo deducts when lines go to the kitchen, which is before payment; the window around
-# the order's own times is wide enough for dine-in rounds and late payment.
-WINDOW_BEFORE = timedelta(minutes=5)
-WINDOW_AFTER = timedelta(hours=6)
 
 
 def effective_mode(connection, day) -> str:
@@ -174,27 +170,12 @@ def book(connection, order: dict, client, restore: bool):
 
 
 def order_movements(connection, client, order: dict, reason: str) -> list[dict]:
-	"""This order's movements of one reason. The list cannot filter by order, so a time window
-	around the order is read and the rows are matched on reference_id."""
-	anchor = order.get("cancelled_at") if reason == "order_cancel_restore" else order.get("created_at")
-	end_anchor = (
-		order.get("cancelled_at")
-		if reason == "order_cancel_restore"
-		else (order.get("paid_at") or order.get("created_at"))
-	)
-	if not anchor:
-		raise Fatal(
-			_("Order {0} has no time to look for its stock movements around.").format(order.get("number"))
-		)
-	start = get_datetime(anchor.replace("Z", "+00:00")) - WINDOW_BEFORE
-	end = get_datetime((end_anchor or anchor).replace("Z", "+00:00")) + WINDOW_AFTER
-	fmt = "%Y-%m-%dT%H:%M:%SZ"
-	params = {
-		"reason": reason,
-		"created_after": start.strftime(fmt),
-		"created_before": end.strftime(fmt),
-		"limit": 500,
-	}
+	"""This order's movements of one reason: GET /stock-movements?reference_id=<order id>&reason=...
+
+	(Koomyo's list takes `reference_id`, which for an order movement is the order id, so no time window
+	is needed.) The rows are matched on reference_id again as a guard against a filter that is ignored.
+	"""
+	params = {"reason": reason, "reference_id": order["id"], "limit": 500}
 	if order.get("branch_id"):
 		params["branch_id"] = order["branch_id"]
 	return [m for m in client.iter_list("/stock-movements", params) if m.get("reference_id") == order["id"]]

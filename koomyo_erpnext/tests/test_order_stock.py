@@ -89,6 +89,15 @@ class TestOrderStock(StockTestCase):
 			fields=["*"],
 		)
 
+	def test_the_order_is_asked_for_by_reference_id_not_by_a_time_window(self):
+		self.assertEqual(self.book(paid()).status, "Done")
+		calls = [c for c in self.fake_a.calls if c["path"] == "/stock-movements"]
+		self.assertTrue(calls)
+		for call in calls:
+			self.assertEqual(call["params"]["reference_id"], ORDER)
+			self.assertNotIn("created_after", call["params"])
+			self.assertNotIn("created_before", call["params"])
+
 	def test_each_order_takes_out_what_koomyo_deducted(self):
 		self.assertEqual(self.book(paid()).status, "Done")
 		(log,) = self.stock_log()

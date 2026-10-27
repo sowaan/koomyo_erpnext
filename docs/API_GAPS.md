@@ -103,15 +103,12 @@ Koomyo's complaints are in the API now: `GET /complaints`, `GET /complaints/{id}
 - Nothing has run against a real Koomyo or a Koomyo sandbox yet. Every Koomyo answer in the tests comes from a fake server built from the docs examples.
 - Frappe and ERPNext v16: the code avoids version-specific APIs (`koomyo_erpnext/compat.py`), but it has only run on v15 (Frappe 15.120.1, ERPNext 15.118.0). The Koomyo workspace JSON uses the v15 format.
 
-## 12. Per-order stock deduction (Decision / Open)
+## 12. Per-order stock deduction (Decision)
 
-**What the app does.** With Stock Deduction set to Per Order, each `order.paid` queues a stock step. The step reads `GET /stock-movements?reason=order_deduction` for the order's branch, in a window from 5 minutes before the order was created to 6 hours after it was paid, and keeps the rows whose `reference_id` is the order. They become one Material Issue (key `order:<id>`). `order.cancelled` does the same with `order_cancel_restore` and makes a Material Receipt (key `order-restore:<id>`). Daily usage is skipped on per-order days. A change of setting applies from the next day, so a day is never booked both ways.
+**What the app does.** With Stock Deduction set to Per Order, each `order.paid` queues a stock step. The step reads `GET /stock-movements?reason=order_deduction&reference_id=<order id>` (the filter Koomyo added; no time window any more) and keeps the rows whose `reference_id` is the order. They become one Material Issue (key `order:<id>`). `order.cancelled` does the same with `order_cancel_restore` and makes a Material Receipt (key `order-restore:<id>`). Daily usage is skipped on per-order days. A change of setting applies from the next day, so a day is never booked both ways.
 
-**Assumptions to confirm with Koomyo.**
-- `reference_id` on an `order_deduction` or `order_cancel_restore` movement is the order id; the schema says "the order ... behind the movement".
-- An order's deductions are recorded within that window. They are made when lines go to the kitchen, before payment.
-
-**Wish.** A `reference_id` filter on `GET /stock-movements`, so one call returns exactly one order's movements; or the deducted ingredient lines on `order.paid` itself.
+- Docs (reference/stock-movement-reasons): for an order movement `reference_id` is the order id; `packaging` movements also carry it (packaging items) and are not booked here, as before. Not run against live Koomyo: the fake plays the filter.
+- **Manual adjustments in a backfill.** A backfill of stock now also brings in `GET /stock-movements?kind=manual` rows (a person's hand adjustments, free text reasons) as `stock.adjusted` with the live key (the movement id), so a live event and a backfill never double. `stock_count` and `non_sale_usage` movements are left out because counts and waste have their own events and backfill kinds, and `opening_stock` is left out because it is already in the opening stock. If Koomyo's live `stock.adjusted` also fires for those, the keys still match nothing here, so nothing is booked twice either way.
 
 ## 13. Sizes, modifiers and categories (Decision / Open)
 

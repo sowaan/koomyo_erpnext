@@ -51,7 +51,7 @@ def kinds_for(backfill) -> list[str]:
 	if backfill.bring_shifts:
 		kinds.append("shift")
 	if backfill.bring_stock:
-		kinds += ["usage", "waste", "stock_count", "stock_transfer"]
+		kinds += ["usage", "waste", "stock_count", "stock_transfer", "adjustment"]
 	return kinds
 
 
@@ -64,6 +64,7 @@ KINDS = {
 	"waste": ("waste.recorded", "Stock Entry", lambda r: r["id"]),
 	"stock_count": ("stock_count.closed", "Stock Reconciliation", lambda r: r["id"]),
 	"stock_transfer": ("stock_transfer.completed", "Stock Entry", lambda r: r["id"]),
+	"adjustment": ("stock.adjusted", "Stock Entry", lambda r: r["id"]),
 	"customer": ("customer.updated", "Customer", lambda r: r["id"]),
 	"purchase_order": ("purchase.updated", "Purchase Order", lambda r: r["id"]),
 }
@@ -219,6 +220,23 @@ class Reader:
 						**branch,
 					},
 					on_day,
+				)
+			]
+		if kind == "adjustment":
+			# What a person adjusted by hand (kind=manual). Counts and waste have their own events and
+			# kinds, and an opening stock upload is already in the opening stock.
+			own = ("stock_count", "non_sale_usage", "opening_stock")
+			return [
+				(
+					"/stock-movements",
+					{
+						"kind": "manual",
+						"created_after": shift_utc(after, -1),
+						"created_before": shift_utc(before, 1),
+						"limit": 500,
+						**branch,
+					},
+					lambda r: on_day(r) and r.get("reason") not in own,
 				)
 			]
 		if kind == "stock_count":
