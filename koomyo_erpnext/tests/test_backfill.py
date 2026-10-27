@@ -155,6 +155,27 @@ class TestBackfill(BackfillTestCase):
 		self.assertIn("_Koomyo closed", str(ctx.exception))
 		frappe.db.rollback()
 
+	def test_frozen_accounts_are_refused(self):
+		meta = frappe.get_meta("Company")
+		on_company = meta.has_field("accounts_frozen_till_date")
+		company = self.conn_a.company
+
+		def freeze(value):
+			if on_company:
+				frappe.db.set_value("Company", company, "accounts_frozen_till_date", value)
+			else:
+				frappe.db.set_single_value("Accounts Settings", "acc_frozen_upto", value)
+
+		freeze("2026-10-12")
+		try:
+			doc = self.make()
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				doc.start()
+			self.assertIn("Accounts are frozen", str(ctx.exception))
+		finally:
+			freeze(None)
+			frappe.db.commit()
+
 	def test_frozen_stock_is_refused(self):
 		configure_stock(self.conn_a, "_KTA")
 		frappe.db.set_single_value("Stock Settings", "stock_frozen_upto", "2026-10-12")

@@ -323,7 +323,7 @@ def create_order(connection, order: dict):
 	cost_center = order_cost_center(connection, order)
 	client = KoomyoClient.for_connection(connection)
 	po = frappe.new_doc("Purchase Order")
-	date = posting_date(order)
+	date = str(posting_date(order))
 	po.update(
 		{
 			"company": connection.company,

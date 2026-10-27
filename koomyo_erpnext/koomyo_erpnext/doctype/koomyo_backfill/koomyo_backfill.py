@@ -252,7 +252,7 @@ def closed_period_problem(backfill) -> str | None:
 			"The books are closed up to {0} by Period Closing Voucher {1}. Start the range after that day."
 		).format(closing[0].period_end_date, closing[0].name)
 
-	frozen = frappe.db.get_single_value("Accounts Settings", "acc_frozen_upto")
+	frozen = accounts_frozen_until(company)
 	if (
 		frozen
 		and getdate(frozen) >= start
@@ -260,9 +260,7 @@ def closed_period_problem(backfill) -> str | None:
 			backfill.bring_sales or backfill.bring_shifts or backfill.bring_purchases or backfill.bring_stock
 		)
 	):
-		return _("Accounts are frozen up to {0} (Accounts Settings). Start the range after that day.").format(
-			frozen
-		)
+		return _("Accounts are frozen up to {0}. Start the range after that day.").format(frozen)
 
 	stock_frozen = frappe.db.get_single_value("Stock Settings", "stock_frozen_upto")
 	if stock_frozen and getdate(stock_frozen) >= start and (backfill.bring_stock or backfill.bring_purchases):
@@ -270,6 +268,13 @@ def closed_period_problem(backfill) -> str | None:
 			stock_frozen
 		)
 	return None
+
+
+def accounts_frozen_until(company: str):
+	"""Accounts are frozen up to this date: a Company field in v16, an Accounts Settings field in v15."""
+	if frappe.get_meta("Company").has_field("accounts_frozen_till_date"):
+		return frappe.db.get_value("Company", company, "accounts_frozen_till_date")
+	return frappe.db.get_single_value("Accounts Settings", "acc_frozen_upto")
 
 
 @frappe.whitelist()

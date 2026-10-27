@@ -332,17 +332,16 @@ def make_payment_entry(
 	invoice, connection, koomyo_id: str, method: str | None, amount: Decimal, reference: str | None
 ):
 	"""One Payment Entry against `invoice` (a sale, or a credit note when amount is paid out)."""
-	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+	from koomyo_erpnext.compat import payment_entry_for
 
 	row = payment_row(connection, method)
 	is_refund = bool(invoice.is_return)
-	pe = get_payment_entry(
+	pe = payment_entry_for(
 		"Sales Invoice",
 		invoice.name,
 		party_amount=None if is_refund else to_field(amount),
 		bank_account=row.account,
 		bank_amount=None if is_refund else to_field(amount),
-		ignore_permissions=True,
 	)
 	pe.posting_date = invoice.posting_date
 	pe.reference_date = invoice.posting_date

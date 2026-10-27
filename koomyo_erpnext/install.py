@@ -37,6 +37,11 @@ def before_migrate():
 	ensure_role()
 
 
+def after_sync():
+	"""On install the custom fields exist only now, so the unique indexes can be made."""
+	add_unique_indexes()
+
+
 def after_migrate():
 	add_unique_indexes()
 

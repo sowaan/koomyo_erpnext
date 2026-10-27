@@ -98,6 +98,8 @@ before_install = "koomyo_erpnext.install.before_install"
 after_install = "koomyo_erpnext.install.after_install"
 before_migrate = "koomyo_erpnext.install.before_migrate"
 after_migrate = "koomyo_erpnext.install.after_migrate"
+# After the custom fields are synced on install (after_install runs before them)
+after_sync = "koomyo_erpnext.install.after_sync"
 
 # Uninstallation
 # ------------
