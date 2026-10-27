@@ -173,6 +173,19 @@ def local_time(utc_text: str | None, timezone: str | None) -> str | None:
 		return None
 
 
+def local_date(utc_text: str | None, timezone: str | None):
+	"""The restaurant's calendar day of an RFC 3339 UTC time, or None."""
+	if not utc_text:
+		return None
+	try:
+		moment = get_datetime(utc_text.replace("Z", "+00:00"))
+		if moment.tzinfo is None:
+			return None
+		return moment.astimezone(ZoneInfo(timezone or "UTC")).date()
+	except Exception:
+		return None
+
+
 def utc_now() -> datetime:
 	from datetime import timezone
 

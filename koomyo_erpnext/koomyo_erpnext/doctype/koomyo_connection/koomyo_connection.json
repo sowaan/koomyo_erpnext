@@ -75,6 +75,14 @@
   "main_warehouse",
   "cb_purchasing",
   "supplier_group",
+  "section_purchase_taxes",
+  "purchase_tax_account",
+  "purchase_withholding_account",
+  "cb_purchase_taxes",
+  "purchase_charge_account",
+  "purchase_charge_expense_account",
+  "landed_cost_method",
+  "purchase_sync_cursor",
   "section_customers",
   "sync_customers",
   "section_customer_settings",
@@ -540,7 +548,7 @@
   {
    "default": "0",
    "depends_on": "sync_purchasing",
-   "description": "A purchase order made in the Koomyo admin and received there becomes a Supplier (if new), a Purchase Order and a Purchase Receipt in ERPNext. Orders made in ERPNext are never doubled.",
+   "description": "A purchase order made in the Koomyo admin becomes a Supplier (if new) and a submitted Purchase Order in ERPNext once it is ordered (drafts create nothing), and each delivery becomes its own Purchase Receipt. Changes and cancellations in Koomyo follow. Orders made in ERPNext are never doubled.",
    "fieldname": "book_koomyo_purchases",
    "fieldtype": "Check",
    "label": "Book Orders Made in Koomyo"
@@ -796,6 +804,60 @@
    "label": "Created by Set Up From Koomyo",
    "no_copy": 1,
    "options": "Koomyo Setup Log",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.sync_purchasing && doc.book_koomyo_purchases",
+   "description": "Koomyo sends the tax, any withholding and extra charges (delivery, labour) of each order. Map them to accounts so the Purchase Order and Receipt match Koomyo to the cent.",
+   "fieldname": "section_purchase_taxes",
+   "fieldtype": "Section Break",
+   "label": "Purchase Taxes and Charges"
+  },
+  {
+   "description": "Input tax that can be claimed back (not part of what an ingredient costs).",
+   "fieldname": "purchase_tax_account",
+   "fieldtype": "Link",
+   "label": "Purchase Tax Account",
+   "options": "Account"
+  },
+  {
+   "description": "Where withholding tax deducted from the supplier's bill is owed. Never part of cost.",
+   "fieldname": "purchase_withholding_account",
+   "fieldtype": "Link",
+   "label": "Withholding Tax Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "cb_purchase_taxes",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "An account of type Expenses Included In Valuation: tax that cannot be claimed back and charges spread over cost end up in the cost of the goods through it.",
+   "fieldname": "purchase_charge_account",
+   "fieldtype": "Link",
+   "label": "Landed Cost Account",
+   "options": "Account"
+  },
+  {
+   "description": "Charges that are not spread over cost (an expense only).",
+   "fieldname": "purchase_charge_expense_account",
+   "fieldtype": "Link",
+   "label": "Charges Expense Account",
+   "options": "Account"
+  },
+  {
+   "default": "Follow Koomyo",
+   "description": "Follow Koomyo uses each charge's own setting (none, by value, by quantity). The others override it for every charge of the connection.",
+   "fieldname": "landed_cost_method",
+   "fieldtype": "Select",
+   "label": "Charges in Landed Cost",
+   "options": "Follow Koomyo\nNone\nBy Value\nBy Quantity"
+  },
+  {
+   "fieldname": "purchase_sync_cursor",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Purchase Orders Read Up To",
    "read_only": 1
   }
  ],

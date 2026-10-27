@@ -65,12 +65,37 @@ KINDS = {
 	"stock_count": ("stock_count.closed", "Stock Reconciliation", lambda r: r["id"]),
 	"stock_transfer": ("stock_transfer.completed", "Stock Entry", lambda r: r["id"]),
 	"customer": ("customer.updated", "Customer", lambda r: r["id"]),
-	"purchase_order": ("purchase.received", "Purchase Receipt", lambda r: r["id"]),
+	"purchase_order": ("purchase.updated", "Purchase Order", lambda r: r["id"]),
 }
+
+
+def purchase_already_there(connection, order: dict) -> bool:
+	"""A purchase order needs nothing when ERPNext holds its latest copy and every delivery."""
+	from koomyo_erpnext.sync.purchase_orders import deliveries, is_stale
+
+	po_name = find_existing("Purchase Order", connection, order["id"])
+	if order.get("status") == "draft":
+		return True  # a plan: nothing is ever booked for it
+	if order.get("status") == "cancelled":
+		return not po_name or frappe.db.get_value("Purchase Order", po_name, "docstatus") == 2
+	if not po_name:
+		return False
+	po = frappe.get_doc("Purchase Order", po_name)
+	if not po.get("koomyo_updated_at") or not (
+		is_stale(po, order) or po.koomyo_updated_at == order.get("updated_at")
+	):
+		return False
+	return all(
+		find_existing("Purchase Receipt", connection, r["id"])
+		or find_existing("Purchase Receipt", connection, order["id"])
+		for r in deliveries(order)
+	)
 
 
 def already_there(connection, kind: str, record: dict) -> bool:
 	_type, doctype, key = KINDS[kind]
+	if kind == "purchase_order":
+		return purchase_already_there(connection, record)
 	koomyo_id = key(record)
 	if find_existing(doctype, connection, koomyo_id):
 		return True

@@ -573,6 +573,13 @@ def schedule_catch_up():
 			deduplicate=True,
 			connection_name=name,
 		)
+		frappe.enqueue(
+			"koomyo_erpnext.sync.purchase_orders.sync_purchase_orders",
+			queue="long",
+			job_id=f"koomyo-purchase-sync-{frappe.local.site}-{name}",
+			deduplicate=True,
+			connection_name=name,
+		)
 		enqueue_processing(name)
 
 
@@ -739,4 +746,14 @@ def _short_text(value, length: int = 140):
 
 
 # Register the handlers of every sync (each module calls @handles at import time).
-from koomyo_erpnext.sync import customers, order_stock, purchasing, refunds, sales, shifts, stock, transfers
+from koomyo_erpnext.sync import (
+	customers,
+	order_stock,
+	purchase_orders,
+	purchasing,
+	refunds,
+	sales,
+	shifts,
+	stock,
+	transfers,
+)

@@ -90,6 +90,8 @@ Every map row must belong to the connection's Company; this is checked when you 
 - **UOM Map** (stock): each Koomyo unit (`kg`, `pcs`, ...) to an ERPNext UOM.
 - **Waste Map** (stock): each waste reason (`spoilage`, `staff_meal`, `comp`, `tasting`, `other`) to an expense account.
 
+**Purchase taxes and charges** (Syncs tab, Purchasing): Koomyo orders carry tax, withholding and extra charges. Recoverable tax goes to the **Purchase Tax Account**; tax that cannot be claimed back, and charges spread over cost, go to the **Landed Cost Account** (type Expenses Included In Valuation) and so into the cost of the goods; withholding is a deduction on the **Withholding Tax Account**, never part of cost; charges that are not spread go to the **Charges Expense Account**. **Charges in Landed Cost** follows Koomyo's setting on each charge, or forces None, By Value or By Quantity for the connection. A charge spread by quantity is posted with a Landed Cost Voucher on each delivery (ERPNext's own tax rows only spread by value). Each delivery takes its share of every row by what has arrived so far and the last delivery takes the remainder, so the rows add up to Koomyo's figures.
+
 ### 4. Switch the syncs on
 
 | Switch | What it books | Settings it needs |
@@ -99,7 +101,7 @@ Every map row must belong to the connection's Company; this is checked when you 
 | **Sync Shifts** | `shift.closed` becomes a Journal Entry for the cash over or short. | Cash Over/Short Account (Cash Drawer Account only when ambiguous) |
 | **Sync Stock** | Daily usage, waste, adjustments, counts and transfers become stock documents. | Opening Stock Date, Ingredient Item Group, Cost of Goods Sold and Stock Adjustment accounts, UOM Map and Waste Map. Transfer Loss Account once a transfer arrives short. |
 | **Sync Purchasing** | Purchase Orders and Purchase Receipts for a mapped Warehouse go to Koomyo, with their Supplier; ingredient cost changes go to Koomyo; an order received in Koomyo becomes a Purchase Receipt. | Ingredients must be Items linked to Koomyo, which the stock sync creates. |
-| **Book Orders Made in Koomyo** (under Sync Purchasing) | An order made in the Koomyo admin and received there becomes a Supplier (if new), a Purchase Order and a Purchase Receipt. | Main Warehouse, Supplier Group |
+| **Book Orders Made in Koomyo** (under Sync Purchasing) | An order made in the Koomyo admin becomes a Supplier (if new) and a submitted Purchase Order once it is **ordered** (a draft creates nothing); each delivery becomes its own Purchase Receipt; an edit before any delivery rebuilds the order; a cancel cancels it (or, if goods were already received, fails with a message for a person). The safety net `GET /purchase-orders?updated_since=` runs every 5 minutes through the same code. | Main Warehouse, Supplier Group; for orders with tax or charges also the Purchase Taxes and Charges accounts below |
 | **Sync Customers** | Koomyo customers become Customers. | Customer Group, Territory, and the webhook's customer data switch on in Koomyo. |
 
 Then tick **Enabled**.

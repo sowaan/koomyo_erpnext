@@ -1,0 +1,77 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T18:05:30Z",
+ "currency": "PKR",
+ "data": {
+  "branch_id": "90000000-0000-4000-8000-000000000001",
+  "business_date": "2026-10-12",
+  "cancel_reason": "Ordered by mistake",
+  "cancelled_at": "2026-10-12T18:05:30Z",
+  "charges": [],
+  "closed_short": false,
+  "created_at": "2026-10-12T17:26:12Z",
+  "currency": "PKR",
+  "expected_date": null,
+  "external_refs": {
+   "erpnext": "PO-DOCS-1"
+  },
+  "id": "26711726-8300-4adc-a447-2a6213d914fa",
+  "items_without_tax": "14500.00",
+  "lines": [
+   {
+    "id": "a93db756-ed1d-4386-9fb9-fbb95c7b9aca",
+    "ingredient": "Mozzarella",
+    "ingredient_id": "2bf072f8-6896-44ab-8724-e48946ccc134",
+    "line_total": "14500.00",
+    "ordered_value": "14500.00",
+    "quantity_ordered": "10.000",
+    "quantity_received": "0",
+    "received_value": "0.00",
+    "tax_amount": "0.00",
+    "tax_exempt": false,
+    "tax_rate": "0",
+    "unit": "kg",
+    "unit_cost": "1450.0000"
+   }
+  ],
+  "non_recoverable_tax": "0.00",
+  "notes": "Weekly dairy order",
+  "number": "PO-2026-0042",
+  "object": "purchase_order",
+  "ordered_at": null,
+  "receipts": [],
+  "received_at": null,
+  "reference": null,
+  "sent_at": null,
+  "status": "cancelled",
+  "supplier": {
+   "id": "3769c772-b085-477f-876c-92f9e28d5cd1",
+   "name": "Fresh Dairy Co Ltd"
+  },
+  "tax_added": "0.00",
+  "tax_included": "0.00",
+  "tax_lines": [],
+  "tax_mode": "exclusive",
+  "tax_name": null,
+  "tax_rate": "0",
+  "tax_recoverable": true,
+  "tax_total": "0.00",
+  "total_ordered": "14500.00",
+  "total_received": "0.00",
+  "updated_at": "2026-10-12T18:05:30Z",
+  "warehouse_id": null,
+  "withholding_total": "0.00"
+ },
+ "entity": {
+  "id": "26711726-8300-4adc-a447-2a6213d914fa",
+  "type": "purchase_order"
+ },
+ "id": "d3b3f4c2-5e6a-4b7c-9d8e-9f0a1b2c3d4e",
+ "object": "event",
+ "seq": 11,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "purchase.cancelled"
+}

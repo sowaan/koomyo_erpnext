@@ -12,9 +12,8 @@ ERPNext -> Koomyo (queued from doc_events, processed like any event, visible in 
 - Item valuation rate changed (a linked ingredient) -> PATCH /ingredients/{id}.
 Every write carries an Idempotency-Key from the document name and its modified time.
 
-Koomyo -> ERPNext:
-- purchase.received for an order made in ERPNext and not yet received there
-  (received in the Koomyo admin) -> Purchase Receipt from the Purchase Order.
+Koomyo -> ERPNext: purchase orders (created, updated, cancelled, received) are in
+sync/purchase_orders.py; suppliers made from them are created here (`koomyo_supplier`).
 """
 
 from decimal import Decimal
@@ -238,6 +237,13 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 		raise
 	if answer.get("object") != "purchase_order":
 		raise Fatal(_("Koomyo answered the receipt with something else."))
+	# The newest delivery on the answer is this receipt: link it, so the purchase.received event that
+	# follows finds it and books nothing.
+	deliveries = [r.get("id") for r in answer.get("receipts") or [] if r.get("id")]
+	if deliveries and not receipt.koomyo_id:
+		receipt.db_set(
+			{"koomyo_connection": connection.name, "koomyo_id": deliveries[-1]}, update_modified=False
+		)
 	return ("Purchase Receipt", receipt.name)
 
 
@@ -330,61 +336,6 @@ def linked_ingredient(item_code: str, connection) -> str:
 # ------------------------------------------------------------------ inbound
 
 
-def create_order_from_koomyo(connection, order: dict) -> str:
-	"""A submitted Purchase Order (and its Supplier) for an order made in the Koomyo admin.
-
-	Stamped with the Koomyo order id, so a replay finds it and the ERPNext-to-Koomyo hook
-	never sends it back.
-	"""
-	from koomyo_erpnext.sync.common import branch_row, check_company, setting
-	from koomyo_erpnext.sync.customers import write_reference
-	from koomyo_erpnext.sync.stock import ingredient_item
-
-	if order.get("branch_id"):
-		warehouse = branch_row(connection, order["branch_id"]).warehouse
-	else:
-		warehouse = setting(connection, "main_warehouse", _("Main Warehouse"))
-	if not warehouse:
-		raise NeedsMapping(_("The branch of purchase order {0} has no Warehouse.").format(order["id"]))
-	check_company(connection, "Warehouse", warehouse, _("Purchase order {0}").format(order["id"]))
-
-	client = KoomyoClient.for_connection(connection)
-	po = frappe.new_doc("Purchase Order")
-	po.update(
-		{
-			"company": connection.company,
-			"supplier": koomyo_supplier(connection, order.get("supplier") or {}),
-			"transaction_date": posting_date(order),
-			"schedule_date": posting_date(order),
-			"set_warehouse": warehouse,
-			"currency": order.get("currency") or connection.koomyo_currency,
-			"conversion_rate": 1,
-			"remarks": _("Koomyo purchase order {0}").format(order["id"]),
-		}
-	)
-	stamp(po, connection, order["id"], order.get("branch_id"))
-	for line in order.get("lines") or []:
-		ordered = money(line.get("quantity_ordered"), "quantity_ordered")
-		if ordered <= 0:
-			continue
-		po.append(
-			"items",
-			{
-				"item_code": ingredient_item(connection, line, client=client),
-				"qty": flt(str(ordered), 6),
-				"rate": flt(str(money(line.get("unit_cost"), "unit_cost")), 6),
-				"warehouse": warehouse,
-				"schedule_date": posting_date(order),
-			},
-		)
-	if not po.items:
-		raise Skipped(_("Purchase order {0} has no lines.").format(order["id"]))
-	po.insert(ignore_permissions=True)
-	po.submit()
-	write_reference(connection, client, "purchase_order", order, po)
-	return po.name
-
-
 def koomyo_supplier(connection, supplier: dict) -> str:
 	from koomyo_erpnext.sync.common import setting
 
@@ -408,65 +359,3 @@ def koomyo_supplier(connection, supplier: dict) -> str:
 	stamp(doc, connection, supplier["id"], KOOMYO_ORIGIN)
 	doc.insert(ignore_permissions=True)
 	return doc.name
-
-
-@handles("purchase.received", switch="sync_purchasing", scopes=WRITE_SCOPES)
-def on_purchase_received(event: dict, connection):
-	order = event["data"]
-	if order.get("object") != "purchase_order" or not order.get("id"):
-		raise Fatal(_("Koomyo sent something that is not a purchase order."))
-	existing = find_existing("Purchase Receipt", connection, order["id"])
-	if existing:
-		return ("Purchase Receipt", existing)
-
-	po_name = find_existing("Purchase Order", connection, order["id"])
-	ref = (order.get("external_refs") or {}).get(connection.ref_system or "erpnext")
-	if not po_name and ref and frappe.db.exists("Purchase Order", ref):
-		po_name = ref
-	if not po_name:
-		if not connection.book_koomyo_purchases:
-			raise Skipped(
-				_(
-					"Purchase order {0} was made in Koomyo, not in ERPNext. Switch on Book Orders Made in Koomyo to book such orders, or book its receipt by hand."
-				).format(order["id"])
-			)
-		po_name = create_order_from_koomyo(connection, order)
-	po = frappe.get_doc("Purchase Order", po_name)
-	if po.company != connection.company:
-		raise NeedsMapping(
-			_("Purchase Order {0} belongs to {1}, not to {2}.").format(
-				po.name, po.company, connection.company
-			)
-		)
-	already = frappe.get_all(
-		"Purchase Receipt Item", filters={"purchase_order": po.name, "docstatus": 1}, pluck="parent", limit=1
-	)
-	if already:
-		raise Skipped(
-			_("Purchase Order {0} is already received in ERPNext ({1}).").format(po.name, already[0])
-		)
-
-	from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
-
-	quantities = {}
-	for line in order.get("lines") or []:
-		quantities[line.get("ingredient_id")] = quantities.get(line.get("ingredient_id"), Decimal(0)) + money(
-			line.get("quantity_received"), "quantity_received"
-		)
-	receipt = make_purchase_receipt(po.name)
-	for item in list(receipt.items):
-		ingredient_id = frappe.db.get_value("Item", item.item_code, "koomyo_id")
-		stock_qty = quantities.get(ingredient_id, Decimal(0))
-		if not stock_qty:
-			receipt.remove(item)
-			continue
-		factor = Decimal(str(flt(item.conversion_factor, 9) or 1))
-		item.qty = item.received_qty = flt(str(stock_qty / factor), 6)
-	if not receipt.items:
-		raise Skipped(_("Nothing was received on purchase order {0}.").format(order["id"]))
-	receipt.posting_date = posting_date(order)
-	receipt.set_posting_time = 1
-	stamp(receipt, connection, order["id"], order.get("branch_id"))
-	receipt.insert(ignore_permissions=True)
-	receipt.submit()
-	return ("Purchase Receipt", receipt.name)

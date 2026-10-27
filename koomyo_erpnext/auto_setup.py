@@ -79,6 +79,34 @@ ACCOUNT_DEFAULTS = {
 		["Indirect Expenses", "Direct Expenses"],
 		"Cash Over and Short",
 	),
+	"purchase_tax_account": (
+		["Input Tax", "Purchase Tax", "Input VAT", "Input GST", "Sales Tax Input"],
+		"Tax",
+		"Liability",
+		["Duties and Taxes"],
+		"Input Tax",
+	),
+	"purchase_withholding_account": (
+		["Withholding Tax Payable", "Withholding Tax", "Income Tax Withheld"],
+		"Tax",
+		"Liability",
+		["Duties and Taxes"],
+		"Withholding Tax Payable",
+	),
+	"purchase_charge_account": (
+		["Expenses Included In Valuation", "Landed Cost Clearing"],
+		"Expenses Included In Valuation",
+		"Expense",
+		["Stock Expenses", "Direct Expenses", "Indirect Expenses"],
+		"Expenses Included In Valuation",
+	),
+	"purchase_charge_expense_account": (
+		["Purchase Charges", "Freight and Forwarding Charges", "Freight Charges"],
+		"",
+		"Expense",
+		["Indirect Expenses", "Direct Expenses"],
+		"Purchase Charges",
+	),
 	"transfer_loss_account": (
 		["Stock Transfer Loss", "Transfer Loss", "Stock Loss"],
 		"",
@@ -877,6 +905,7 @@ def checklist(connection) -> list[dict]:
 			"stock_adjustment_account",
 		),
 		"sync_customers": ("customer_group", "territory"),
+		"book_koomyo_purchases": ("main_warehouse", "supplier_group"),
 	}
 	for switch, fields in required.items():
 		if connection.get(switch):

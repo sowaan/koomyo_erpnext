@@ -12,6 +12,7 @@ KOOMYO_DOCTYPES = (
 	"Supplier",
 	"Purchase Order",
 	"Purchase Receipt",
+	"Landed Cost Voucher",
 	"Stock Entry",
 	"Stock Reconciliation",
 	"Journal Entry",

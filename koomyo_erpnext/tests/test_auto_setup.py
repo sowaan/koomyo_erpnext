@@ -181,6 +181,10 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 			"supplier_group",
 			"main_warehouse",
 			"cash_over_short_account",
+			"purchase_tax_account",
+			"purchase_withholding_account",
+			"purchase_charge_account",
+			"purchase_charge_expense_account",
 			"customer_group",
 			"territory",
 		):

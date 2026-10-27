@@ -116,13 +116,18 @@ If either is wrong, the booked over/short is off by that amount, but the remark 
 - **Modifiers and combo choices are not separate Items.** `list_price`, `unit_price` and `line_total` on an order line already include the chosen options (docs guide: 1099 = 1000 + 99), so the line is one invoice row and the old "extras" row is gone (see item 15). Every modifier, free ones included, is written in the line's description. Their ingredients reach stock through Koomyo's own deductions.
 - **Categories are Item Groups.** One leaf group per Koomyo category, named "<category> (<connection>)", under "<connection> Menu". Items without a category go to the connection's Menu Item Group. A category renamed in Koomyo gets a new group on the next load, its items move there, and the old group is left for you to remove.
 
-## 14. Orders made in Koomyo (Decision / Open)
+## 14. Purchase orders made in Koomyo (Decision / Open)
 
-With Book Orders Made in Koomyo on, a `purchase.received` for an order with no ERPNext Purchase Order creates a Supplier (if new), a submitted Purchase Order (ordered quantities at Koomyo's unit cost) and a Purchase Receipt (received quantities), all stamped with the Koomyo ids. Orders made in ERPNext are never doubled, and Koomyo-made orders and suppliers are never sent back (suppliers carry `origin:koomyo` in `koomyo_branch`). A Koomyo supplier whose name already exists in ERPNext is created as "<name> (<connection>)", never merged. Orders without a branch are received into the connection's Main Warehouse.
+Source: docs.koomyo.com/events/purchasing and /guides/stock-purchasing, schemas `PurchaseOrder`, `Event_Purchase*`.
 
-- Koomyo tells us about an order only when it is **received**, so ERPNext sees it then, not when it was drafted or sent.
-- Costs can carry extra decimals; ERPNext rounds each rate and line to its currency precision, so a total can differ from Koomyo's by a few paisa.
-- **Wish:** `purchase_order.created` events, so the order exists in ERPNext before it arrives.
+- `purchase.created|updated|cancelled|received` and the `GET /purchase-orders?updated_since=` safety net (queued as `koomyo.purchase_sync` Event Log rows every 5 minutes, cursor on the connection) all run through `apply_order`. A draft creates nothing (the sync does not even queue one). Copies older than the booked `updated_at` change nothing.
+- With Book Orders Made in Koomyo on, `ordered` or later makes a submitted Purchase Order and Supplier. Orders made in ERPNext are never rebuilt (only receipted and cancelled), and Koomyo-made orders and suppliers are never sent back. A Koomyo supplier whose name exists in ERPNext is created as "<name> (<connection>)", never merged. Orders without a branch go to the Main Warehouse.
+- **An edit cancels and remakes the Purchase Order** (a submitted order cannot be edited), only when the goods, supplier, charges or tax changed (a fingerprint on the order; a send by email or an expected-date change does not). The cancelled order gives up its Koomyo id. After a delivery, only notes are copied: Koomyo says the same, only notes and the date can change then.
+- **A cancel** cancels the counterpart; if goods were already received in ERPNext it fails with a message for a person and cancels nothing (press Retry after dealing with the receipts).
+- **Each delivery is its own Purchase Receipt**, keyed by the receipt id, dated by the restaurant's day of `received_at`, carrying the supplier's delivery note. A Purchase Receipt made in ERPNext and sent to Koomyo is linked to the delivery Koomyo creates for it (its `receipts[]` entry) and never doubled. An order received before Koomyo kept deliveries (no `receipts`) is one receipt keyed by the order id.
+- Money: line net = `line_total - tax_amount`; the order's tax lines, withholding and charges are Actual rows (see the README section Purchase taxes and charges). ERPNext's total must match `total_ordered` to within a cent per row, else nothing is booked.
+- **Unverified.** Only the fake Koomyo and the docs examples were used: no live order with tax, withholding or charges (the live restaurant has none). Costs with many decimals can differ from Koomyo's by a few paisa after ERPNext rounds each rate.
+- Outbound is unchanged: ERPNext sends one receipt per order (`already_received` is reported clearly). **Wish:** confirm that `POST /purchase-orders/{id}/receive` takes partial deliveries now that Koomyo keeps one receipt each, so ERPNext partial receipts could be sent too.
 
 ## 15. Discounts on sales (Decision / Open)
 

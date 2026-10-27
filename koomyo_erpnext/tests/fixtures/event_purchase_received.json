@@ -7,36 +7,80 @@
  "data": {
   "branch_id": "90000000-0000-4000-8000-000000000001",
   "business_date": "2026-10-12",
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "charges": [],
+  "closed_short": false,
   "created_at": "2026-10-12T16:54:47Z",
   "currency": "PKR",
+  "expected_date": null,
   "external_refs": {
    "erpnext": "PO-0001"
   },
+  "fully_received": true,
   "id": "e5053cfe-3c0f-426c-9d45-a390d0b132fd",
+  "items_without_tax": "125.00",
   "lines": [
    {
     "id": "07eda60d-252f-448a-8c56-b2916b2c6512",
     "ingredient": "Kitchen stock",
     "ingredient_id": "10000000-0000-4000-8000-000000000001",
+    "line_total": "125.0000000",
     "ordered_value": "125.0000000",
     "quantity_ordered": "10.000",
     "quantity_received": "10.000",
     "received_value": "125.0000000",
+    "tax_amount": "0.00",
+    "tax_exempt": false,
+    "tax_rate": "0",
     "unit": "pcs",
     "unit_cost": "12.5000"
    }
   ],
+  "non_recoverable_tax": "0.00",
   "notes": "from ERP",
+  "number": "PO-2026-0041",
   "object": "purchase_order",
   "ordered_at": null,
+  "receipts": [
+   {
+    "closed_short": false,
+    "delivery_note": null,
+    "id": "5a7c0d1e-2b3f-4c4d-8e5f-6a7b8c9d0e1f",
+    "lines": [
+     {
+      "ingredient": "Kitchen stock",
+      "ingredient_id": "10000000-0000-4000-8000-000000000001",
+      "line_id": "07eda60d-252f-448a-8c56-b2916b2c6512",
+      "quantity": "10.000",
+      "unit": "pcs"
+     }
+    ],
+    "received_at": "2026-10-12T16:54:48Z",
+    "received_by": null
+   }
+  ],
   "received_at": "2026-10-12T16:54:48Z",
+  "reference": null,
+  "sent_at": null,
   "status": "received",
   "supplier": {
    "id": "a0d50d39-b20d-4e85-9811-cf8010885691",
    "name": "ERP Supplier Renamed"
   },
+  "tax_added": "0.00",
+  "tax_included": "0.00",
+  "tax_lines": [],
+  "tax_mode": "exclusive",
+  "tax_name": null,
+  "tax_rate": "0",
+  "tax_recoverable": true,
+  "tax_total": "0.00",
   "total_ordered": "125.00",
-  "total_received": "125.0000000"
+  "total_received": "125.0000000",
+  "updated_at": "2026-10-12T16:54:48Z",
+  "warehouse_id": null,
+  "withholding_total": "0.00"
  },
  "entity": {
   "id": "e5053cfe-3c0f-426c-9d45-a390d0b132fd",

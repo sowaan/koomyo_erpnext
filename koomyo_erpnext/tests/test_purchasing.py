@@ -278,8 +278,8 @@ class TestReceipts(PurchasingTestCase):
 		self.assertEqual(order["status"], "received")
 		# Koomyo now sends purchase.received for our own receipt: nothing more is booked.
 		log = self.book(self.received_event(order))
-		self.assertEqual(log.status, "Skipped")
-		self.assertIn(pr.name, log.message)
+		self.assertEqual(log.status, "Done", log.message)
+		self.assertEqual(frappe.db.get_value("Purchase Receipt", pr.name, "koomyo_id"), "po-1-rcpt-1")
 		self.assertEqual(
 			len(frappe.get_all("Purchase Receipt", filters={"company": COMPANY_A, "docstatus": 1})), 1
 		)
@@ -343,8 +343,15 @@ class TestKoomyoMadeOrders(PurchasingTestCase):
 				"quantity_ordered": "10",
 				"quantity_received": "9",
 				"unit_cost": "1450",
+				"ordered_value": "14500.00",
+				"received_value": "13050.00",
+				"line_total": "14500.00",
 			}
 		)
+		data["total_ordered"] = "14500.00"
+		data["receipts"][0]["lines"] = [
+			{"line_id": data["lines"][0]["id"], "ingredient_id": MOZZARELLA, "quantity": "9"}
+		]
 		data.update(changes)
 		event.update({"tenant_id": TENANT_A, "seq": 95, "id": "evt-koomyo-po"})
 		return event
@@ -354,7 +361,9 @@ class TestKoomyoMadeOrders(PurchasingTestCase):
 		log = self.book(event)
 		self.assertEqual(log.status, "Done", (log.message, log.error[-600:]))
 		pr = frappe.get_doc("Purchase Receipt", log.reference_name)
-		self.assertEqual((pr.docstatus, pr.koomyo_id, flt(pr.items[0].qty, 3)), (1, event["data"]["id"], 9))
+		self.assertEqual(
+			(pr.docstatus, pr.koomyo_id, flt(pr.items[0].qty, 3)), (1, event["data"]["receipts"][0]["id"], 9)
+		)
 		po = frappe.get_doc("Purchase Order", pr.items[0].purchase_order)
 		self.assertEqual(
 			(po.docstatus, po.koomyo_id, po.set_warehouse), (1, event["data"]["id"], "Finished Goods - _KTA")

@@ -224,6 +224,9 @@ class FakeKoomyo:
 				"external_refs": {body["external_ref"]["system"]: body["external_ref"]["external_id"]}
 				if body.get("external_ref")
 				else {},
+				"number": f"PO-FAKE-{len(self.purchase_orders) + 1:04d}",
+				"updated_at": "2026-10-12T10:00:00Z",
+				"receipts": [],
 				"lines": [
 					{
 						"id": f"{pid}-line-{i}",
@@ -249,6 +252,22 @@ class FakeKoomyo:
 					line["id"], line["quantity_ordered"] if not wanted else "0"
 				)
 			order["status"] = "received"
+			order["updated_at"] = "2026-10-12T11:00:00Z"
+			order["receipts"].append(
+				{
+					"id": f"{order['id']}-rcpt-{len(order['receipts']) + 1}",
+					"received_at": "2026-10-12T11:00:00Z",
+					"lines": [
+						{
+							"line_id": l["id"],
+							"ingredient_id": l["ingredient_id"],
+							"quantity": l["quantity_received"],
+						}
+						for l in order["lines"]
+						if l["quantity_received"] not in ("0", "0.000")
+					],
+				}
+			)
 			return FakeResponse(200, order)
 		if method == "PATCH" and path.startswith("/ingredients/"):
 			ingredient = self.ingredients.get(path.split("/")[2])
