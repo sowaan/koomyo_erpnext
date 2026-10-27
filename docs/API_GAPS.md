@@ -113,7 +113,7 @@ If either is wrong, the booked over/short is off by that amount, but the remark 
 ## 13. Sizes, modifiers and categories (Decision / Open)
 
 - **Sizes are Item Variants.** A menu item with sizes is a template Item, keyed by the Koomyo menu item id. Each size is a variant on the "Koomyo Size" attribute, keyed by the Koomyo `size_id`, with its own price on the selling price list (ERPNext does not price templates). An order line with a `size_id` books on that variant. A size dropped in Koomyo is disabled, never deleted. An Item that already has invoices or stock as a plain Item cannot become a template in ERPNext, so it keeps taking all its sizes.
-- **Modifiers and combo choices are not separate Items (Open).** Koomyo's API has no modifier list (no `GET /modifiers`). An order line names its modifiers with a price, but the docs do not say whether that price is per unit or per line ("line_total: unit_price times quantity plus modifiers"). So the app books the difference `line_total - unit_price x quantity` as one extra line on the same Item: exact whichever way the price applies. Every modifier, free ones included, is written in the line's description. Their ingredients reach stock through Koomyo's own deductions. **Wish:** `GET /modifiers` with ids, and a clear per-unit price on order line modifiers, so a modifier could be its own Item.
+- **Modifiers and combo choices are not separate Items.** `list_price`, `unit_price` and `line_total` on an order line already include the chosen options (docs guide: 1099 = 1000 + 99), so the line is one invoice row and the old "extras" row is gone (see item 15). Every modifier, free ones included, is written in the line's description. Their ingredients reach stock through Koomyo's own deductions.
 - **Categories are Item Groups.** One leaf group per Koomyo category, named "<category> (<connection>)", under "<connection> Menu". Items without a category go to the connection's Menu Item Group. A category renamed in Koomyo gets a new group on the next load, its items move there, and the old group is left for you to remove.
 
 ## 14. Orders made in Koomyo (Decision / Open)
@@ -123,3 +123,17 @@ With Book Orders Made in Koomyo on, a `purchase.received` for an order with no E
 - Koomyo tells us about an order only when it is **received**, so ERPNext sees it then, not when it was drafted or sent.
 - Costs can carry extra decimals; ERPNext rounds each rate and line to its currency precision, so a total can differ from Koomyo's by a few paisa.
 - **Wish:** `purchase_order.created` events, so the order exists in ERPNext before it arrives.
+
+## 15. Discounts on sales (Decision / Open)
+
+Source: docs.koomyo.com/guides/discounts and the OpenAPI schemas `OrderLine`, `Order`.
+
+- Each line is posted at `price_list_rate = list_price`, discount per unit `list_price - rate`, `rate = net_price / quantity`. "Enable Discount Accounting for Selling" is switched on at install and by a patch; with it off a discounted order fails with a message saying so, instead of posting a wrong book.
+- Each source (`promotion`, `voucher`, `manual`, `points_reward`, `slice_reward`, `gift_item`) has an account in the connection's **Discount Map**; an unmapped source is `Failed: NeedsMapping` naming the row. ERPNext takes one discount account per line (and one for the order), so a line or order that mixes sources is posted on its largest part and a Journal Entry (`koomyo_id` = `discount:<order id>`) moves the other parts to their own accounts. A full refund reverses that entry (`discount-refund:<refund id>`). A **partial** refund (Proportional Credit Note) is not split by source: the credit note matches the refund to the cent (tested), but the reclassification entry is not reversed in part. Wish: a refund that says which discount it gives back.
+- Tax is Koomyo's `tax` as sent, never recalculated. Quantity above 1 with a net that does not divide to the cent becomes two rows (the last unit takes the odd cent), so the invoice still equals `net_price` exactly.
+- A gift item stored before Koomyo kept prices has null `list_price`: it is posted at its net price with no discount and a note on the row, nothing is guessed.
+- If a line's `discounts` parts do not add up to `list_total - net_price`, the whole discount goes to the largest part's account and a note is added to the invoice remarks.
+- The identity `items_list_total - discount_total = items_subtotal - discount - voucher_discount` is checked when the order carries both totals; a break is Fatal and nothing is booked.
+- Channel `api` orders are ordinary sales. Stock is not moved by the invoice (Koomyo deducts ingredients itself).
+- **Not verified against a live order with a discount** (the only live connection has none). Verified on the local test site with Koomyo's documented numbers (GL entries asserted).
+

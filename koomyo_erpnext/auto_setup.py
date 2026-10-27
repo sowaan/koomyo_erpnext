@@ -94,6 +94,15 @@ WASTE_ACCOUNTS = {
 	"staff_meal": (["Staff Meals", "Staff Meal", "Staff Welfare"], "Staff Meals"),
 	"comp": (["Complimentary Food", "Complimentary", "Promotional Expenses"], "Complimentary Food"),
 }
+LOYALTY = (["Loyalty Reward Discount", "Loyalty Discount", "Reward Discount"], "Loyalty Reward Discount")
+DISCOUNT_ACCOUNTS = {
+	"promotion": (["Sales Promotions", "Promotional Discount", "Promotions"], "Sales Promotions"),
+	"voucher": (["Voucher Discount", "Vouchers"], "Voucher Discount"),
+	"manual": (["Staff Discounts", "Manual Discounts", "Staff Discount"], "Staff Discounts"),
+	"points_reward": LOYALTY,
+	"slice_reward": LOYALTY,
+	"gift_item": (["Gift Items Discount", "Gift Items"], "Gift Items Discount"),
+}
 
 
 # ------------------------------------------------------------------ lookups
@@ -313,6 +322,18 @@ def build_plan(connection, koomyo: dict) -> list[dict]:
 			new_name,
 		)
 
+	mapped_sources = {r.source for r in connection.discount_map}
+	for source, (names, new_name) in DISCOUNT_ACCOUNTS.items():
+		if source in mapped_sources:
+			continue
+		propose_account(
+			f"discount:{source}",
+			_("Discounts"),
+			_("Discount: {0}").format(source),
+			find_account(co, names, "Expense"),
+			new_name,
+		)
+
 	def account_default(fieldname, label, existing, new_name):
 		if connection.get(fieldname):
 			return
@@ -501,7 +522,7 @@ class Setup:
 			root, atype, parents = "Asset", "Bank", ["Bank Accounts"]
 		elif kind[0] == "tax":
 			root, atype, parents = "Liability", "Tax", ["Duties and Taxes"]
-		elif kind[0] == "waste":
+		elif kind[0] in ("waste", "discount"):
 			root, atype, parents = "Expense", "", ["Indirect Expenses", "Direct Expenses"]
 		elif field in ACCOUNT_DEFAULTS:
 			_n, atype, root, parents, _new = ACCOUNT_DEFAULTS[field]
@@ -705,6 +726,9 @@ def apply_plan(connection, koomyo: dict, choices: list[dict]) -> dict:
 	for reason in WASTE_ACCOUNTS:
 		if resolved.get(f"waste:{reason}"):
 			connection.append("waste_map", {"reason": reason, "expense_account": resolved[f"waste:{reason}"]})
+	for source in DISCOUNT_ACCOUNTS:
+		if resolved.get(f"discount:{source}"):
+			connection.append("discount_map", {"source": source, "account": resolved[f"discount:{source}"]})
 	for id_, value in resolved.items():
 		if id_.startswith("field:") and value and not connection.get(id_.split(":")[1]):
 			connection.set(id_.split(":")[1], value)
@@ -837,6 +861,8 @@ def checklist(connection) -> list[dict]:
 		need("tab_setup", _("Payment Map is empty."))
 	if (connection.sync_sales or connection.sync_refunds) and not connection.tax_map:
 		need("tab_setup", _("Tax Map is empty."))
+	if connection.sync_sales and not connection.discount_map:
+		need("tab_setup", _("Discount Map is empty."))
 	if connection.sync_stock and not connection.uom_map:
 		need("tab_syncs", _("UOM Map is empty."))
 	if connection.sync_stock and not connection.waste_map:

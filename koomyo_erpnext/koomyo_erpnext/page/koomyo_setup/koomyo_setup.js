@@ -686,7 +686,9 @@ class KoomyoSetupWizard {
 				__("Maps"),
 				`${c.maps.branches} ${__("branches")}, ${c.maps.payments} ${__(
 					"payment methods"
-				)}, ${c.maps.taxes} ${__("tax rows")}`,
+				)}, ${c.maps.taxes} ${__("tax rows")}, ${c.maps.discounts} ${__(
+					"discount sources"
+				)}`,
 			],
 			[__("Syncs switched on"), String(on)],
 			[

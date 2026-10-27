@@ -44,6 +44,8 @@
   "delivery_fee_account",
   "channel_markup_account",
   "payment_adjustment_account",
+  "section_discount_map",
+  "discount_map",
   "section_shifts",
   "sync_shifts",
   "section_shift_settings",
@@ -368,6 +370,18 @@
    "fieldtype": "Link",
    "label": "Payment Method Discount Account",
    "options": "Account"
+  },
+  {
+   "description": "Koomyo discounts are posted as a discount on each line (list price, discount, net price). Give each source its own account so promotions, vouchers and staff discounts can be told apart in the books.",
+   "fieldname": "section_discount_map",
+   "fieldtype": "Section Break",
+   "label": "Discount Accounts"
+  },
+  {
+   "fieldname": "discount_map",
+   "fieldtype": "Table",
+   "label": "Discount Map",
+   "options": "Koomyo Discount Map"
   },
   {
    "fieldname": "section_shifts",

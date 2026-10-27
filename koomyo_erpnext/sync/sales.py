@@ -5,10 +5,11 @@ OpenAPI schemas Order, OrderLine, OrderPayment.
 
 The invoice reproduces Koomyo's numbers exactly; nothing is recomputed:
 
-- lines: one per non-voided order line at Koomyo's `unit_price` x `quantity`; when
-  `line_total` is more than that (modifiers, combo upgrades) the difference is its own line,
-  so every line adds up to Koomyo's `line_total` and the lines to `items_subtotal`.
-- `discount` + `voucher_discount` -> the invoice Discount Amount (on Net Total).
+- lines: one per non-voided order line at Koomyo's `list_price` (options included) with the
+  line's discount shown as a discount amount, so the rate is `net_price`; every line adds up
+  to Koomyo's `net_price` and the lines to `items_subtotal` (see sync/discounts.py).
+- `discount` + `voucher_discount` -> the invoice Discount Amount (on Net Total), each discount
+  source on its own account from the connection's Discount Map.
 - taxes and charges are "Actual" rows with Koomyo's amounts: tax (Tax Map account),
   delivery fee, channel markup, and the payment-method discount (negative) or surcharge.
 - tax-inclusive prices: the tax is moved out of income with a negative row on the income
@@ -23,7 +24,8 @@ import frappe
 from frappe import _
 from frappe.utils import escape_html
 
-from koomyo_erpnext.exceptions import Fatal, Retryable, Skipped
+from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Retryable, Skipped
+from koomyo_erpnext.sync import discounts
 from koomyo_erpnext.sync.common import (
 	branch_row,
 	check_company,
@@ -157,11 +159,15 @@ def book_order(order: dict, connection, timezone: str | None = None):
 		invoice.posting_time = time
 	stamp(invoice, connection, order["id"], order.get("branch_id"))
 
+	book = discounts.DiscountBook(connection)
 	lines_total = Decimal(0)
+	lines_list_total = Decimal(0)
 	for line in order.get("items") or []:
 		if line.get("voided"):
 			continue
-		lines_total += add_order_line(invoice, connection, line, income_account, cost_center)
+		net, listed = add_order_line(invoice, connection, line, income_account, cost_center, book)
+		lines_total += net
+		lines_list_total += listed
 	if lines_total != a["items_subtotal"]:
 		raise Fatal(
 			_(
@@ -170,11 +176,28 @@ def book_order(order: dict, connection, timezone: str | None = None):
 		)
 	if not invoice.items:
 		raise Skipped(_("Order {0} has no lines that were not voided.").format(order.get("number")))
+	if amounts.get("items_list_total") is not None and amounts.get("discount_total") is not None:
+		# conventions: items_list_total - discount_total = items_subtotal - discount - voucher_discount
+		list_total = money(amounts["items_list_total"], "amounts.items_list_total")
+		discount_total = money(amounts["discount_total"], "amounts.discount_total")
+		if lines_list_total == list_total and list_total - discount_total != (
+			a["items_subtotal"] - a["discount"] - a["voucher_discount"]
+		):
+			raise Fatal(
+				_("Order {0}: Koomyo's discount totals do not add up. Nothing was booked.").format(
+					order.get("number")
+				)
+			)
 
-	order_discount = a["discount"] + a["voucher_discount"]
-	if order_discount:
-		invoice.apply_discount_on = "Net Total"
-		invoice.discount_amount = to_field(order_discount)
+	discounts.order_discount(connection, order, a, book, invoice)
+	if book.used() and not discounts.accounting_is_on():
+		raise NeedsMapping(
+			_(
+				"Order {0} has a discount, but Selling Settings has 'Enable Discount Accounting for Selling' off. Switch it on, then press Retry."
+			).format(order.get("number"))
+		)
+	if book.notes:
+		invoice.remarks = invoice.remarks + " | " + " ".join(book.notes)
 
 	def charge(account, amount: Decimal, description: str):
 		if amount:
@@ -224,17 +247,17 @@ def book_order(order: dict, connection, timezone: str | None = None):
 			)
 		)
 	invoice.submit()
+	discounts.reclass_entry(connection, invoice, order, book, cost_center)
 
 	book_payments(invoice, order, connection, a["amount_paid"])
 	return ("Sales Invoice", invoice.name)
 
 
-def add_order_line(invoice, connection, line: dict, income_account: str, cost_center: str) -> Decimal:
-	quantity = line.get("quantity")
-	if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
-		raise Fatal(_("Koomyo order line {0} has quantity {1!r}.").format(line.get("id"), quantity))
-	unit_price = money(line.get("unit_price"), "unit_price")
-	line_total = money(line.get("line_total"), "line_total")
+def add_order_line(
+	invoice, connection, line: dict, income_account: str, cost_center: str, book
+) -> tuple[Decimal, Decimal]:
+	"""Append the invoice row(s) of one order line; returns (net price, list total)."""
+	rows, net, listed = discounts.line_rows(connection, line, book)
 	item_code = menu_item(connection, line)
 	label = line.get("name") or item_code
 	if line.get("size"):
@@ -245,49 +268,24 @@ def add_order_line(invoice, connection, line: dict, income_account: str, cost_ce
 	]
 	chosen = [escape_html(n) for n in chosen if n]
 	description = escape_html(label) + (" — " + ", ".join(chosen) if chosen else "")
+	if line.get("list_price") is None:
+		description += " — " + _("price before discount not recorded by Koomyo")
 
-	row = {
-		"item_code": item_code,
-		"item_name": label[:140],
-		"description": description,
-		"qty": quantity,
-		"rate": to_field(unit_price),
-		"income_account": income_account,
-		"cost_center": cost_center,
-	}
-	if not unit_price:
-		# ERPNext fills a rate of 0 from the Item's price list. Koomyo sold this line for nothing
-		# (a complimentary item), so book it at the list price with a 100% line discount: the
-		# line total is exactly 0.
-		row["discount_percentage"] = 100
-	invoice.append("items", row)
-	extras = line_total - unit_price * quantity
-	if extras < 0:
-		raise Fatal(
-			_("Koomyo order line {0}: line total {1} is less than price x quantity.").format(
-				line.get("id"), line_total
-			)
-		)
-	if extras:
-		names = [m.get("name") for m in line.get("modifiers") or []] + [
-			c.get("name") for c in line.get("combo_selections") or []
-		]
-		description = _("Extras for {0}: {1}").format(
-			escape_html(label), escape_html(", ".join(n for n in names if n) or "-")
-		)
-		invoice.append(
-			"items",
+	for row in rows:
+		row.update(
 			{
 				"item_code": item_code,
-				"item_name": description[:140],
+				"item_name": label[:140],
 				"description": description,
-				"qty": 1,
-				"rate": to_field(extras),
 				"income_account": income_account,
 				"cost_center": cost_center,
-			},
+			}
 		)
-	return line_total
+		if not row["rate"] and "discount_percentage" not in row:
+			# ERPNext fills a rate of 0 from the Item's price list; a 100% discount keeps it at 0.
+			row["discount_percentage"] = 100
+		invoice.append("items", row)
+	return net, listed
 
 
 def order_customer(connection, order: dict) -> str:

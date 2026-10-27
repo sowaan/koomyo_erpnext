@@ -45,6 +45,24 @@ ZERO = {
 }
 
 
+def price_fields(row, given):
+	"""Fill the list/net price fields of a test line the way Koomyo sends them (options inside the prices)."""
+	if "list_price" in given:
+		return
+	qty = row["quantity"]
+	net = D(row["line_total"])
+	unit = D(row["unit_price"])
+	row["list_price"] = row["unit_price"]
+	row["list_total"] = str(unit * qty)
+	row["net_price"] = row["line_total"]
+	row["discount_amount"] = str(unit * qty - net)
+	row["discount_source"] = None
+	row["discounts"] = []
+	if unit * qty != net:
+		row["discount_source"] = "manual"
+		row["discounts"] = [{"source": "manual", "amount": row["discount_amount"]}]
+
+
 def order_event(seq=10, order_id="order-1", lines=None, payments=None, tenant=TENANT_A, **amounts):
 	"""The docs' order.paid example with other lines, payments and amounts."""
 	event = load_fixture("event_order_paid")
@@ -59,6 +77,7 @@ def order_event(seq=10, order_id="order-1", lines=None, payments=None, tenant=TE
 			row = copy.deepcopy(template)
 			row.update({"id": f"{order_id}-line-{i}", "modifiers": [], "promo_discount": "0.00"})
 			row.update(line)
+			price_fields(row, line)
 			order["items"].append(row)
 	if payments is not None:
 		order["payment"]["payments"] = [
@@ -142,10 +161,17 @@ class TestSalesInvoice(SalesTestCase):
 			gl("Sales Invoice", inv.name),
 			{
 				"Debtors - _KTA": D("724.50"),
-				"Sales - _KTA": D("-630.00"),
+				"Sales - _KTA": D("-900.00"),
+				"Sales Promotions - _KTA": D("270.00"),
 				"Sales Tax - _KTA": D("-94.50"),
 			},
 		)
+		# the line is posted at its list price with the discount shown, net = Koomyo's net price
+		(row,) = inv.items
+		self.assertMoney(row.price_list_rate, "900.00")
+		self.assertMoney(row.discount_amount, "270.00")
+		self.assertMoney(row.rate, "630.00")
+		self.assertEqual(row.discount_account, "Sales Promotions - _KTA")
 		(pe,) = self.payments(inv)
 		self.assertEqual((pe.mode_of_payment, pe.koomyo_id), ("Cash", "41a8f2dc-3156-4d01-909c-b0d6244b537c"))
 		self.assertEqual(
@@ -178,7 +204,8 @@ class TestSalesInvoice(SalesTestCase):
 			gl("Sales Invoice", inv.name),
 			{
 				"Debtors - _KTA": D("1380.00"),
-				"Sales - _KTA": D("-1200.00"),
+				"Sales - _KTA": D("-1260.00"),
+				"Staff Discounts - _KTA": D("60.00"),
 				"Sales Tax - _KTA": D("-180.00"),
 			},
 		)
@@ -300,7 +327,7 @@ class TestSalesInvoice(SalesTestCase):
 					"size": "L",
 					"size_id": "size-L",
 					"quantity": 2,
-					"unit_price": "630.00",
+					"unit_price": "680.00",
 					"line_total": "1360.00",
 					"modifiers": [{"modifier_id": "m1", "name": "Extra cheese", "price": "50.00"}],
 				},
@@ -336,12 +363,10 @@ class TestSalesInvoice(SalesTestCase):
 		inv = self.invoice()
 		self.assertEqual(
 			[(i.qty, D(str(i.rate)).quantize(D("0.01"))) for i in inv.items],
-			[(2, D("630.00")), (1, D("100.00")), (1, D("400.00"))],
+			[(2, D("680.00")), (1, D("400.00"))],
 		)
-		self.assertIn("Extra cheese", inv.items[1].description)
 		self.assertIn("Extra cheese", inv.items[0].description, "the line itself names its modifiers")
-		large, extras, small = inv.items
-		self.assertEqual(large.item_code, extras.item_code, "extras book on the line's own Item")
+		large, small = inv.items
 		self.assertNotEqual(large.item_code, small.item_code, "each size is its own variant")
 		template = frappe.db.get_value("Item", large.item_code, "variant_of")
 		self.assertEqual(frappe.db.get_value("Item", small.item_code, "variant_of"), template)
@@ -590,7 +615,8 @@ class TestRefunds(SalesTestCase):
 			gl("Sales Invoice", note.name),
 			{
 				"Debtors - _KTA": D("-724.50"),
-				"Sales - _KTA": D("630.00"),
+				"Sales - _KTA": D("900.00"),
+				"Sales Promotions - _KTA": D("-270.00"),
 				"Sales Tax - _KTA": D("94.50"),
 			},
 		)

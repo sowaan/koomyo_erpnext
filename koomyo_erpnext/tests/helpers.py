@@ -137,6 +137,11 @@ def sales_accounts(company: str, abbr: str) -> dict:
 		"delivery": ensure_account(company, abbr, "Delivery Income", "Direct Income"),
 		"markup": ensure_account(company, abbr, "Channel Markup Income", "Direct Income"),
 		"payment_adj": f"Sales Expenses - {abbr}",
+		"promo": ensure_account(company, abbr, "Sales Promotions", "Direct Expenses"),
+		"voucher": ensure_account(company, abbr, "Voucher Discount", "Direct Expenses"),
+		"manual": ensure_account(company, abbr, "Staff Discounts", "Direct Expenses"),
+		"loyalty": ensure_account(company, abbr, "Loyalty Reward Discount", "Direct Expenses"),
+		"gift": ensure_account(company, abbr, "Gift Items Discount", "Direct Expenses"),
 		"cost_center": f"Main - {abbr}",
 		"warehouse": f"Stores - {abbr}",
 	}
@@ -178,6 +183,16 @@ def configure_sales(conn, abbr: str, branch_id: str = "90000000-0000-4000-8000-0
 	)
 	conn.set("tax_map", [])
 	conn.append("tax_map", {"tax_rate": "", "account_head": acc["tax"]})
+	conn.set("discount_map", [])
+	for source, key in (
+		("promotion", "promo"),
+		("voucher", "voucher"),
+		("manual", "manual"),
+		("points_reward", "loyalty"),
+		("slice_reward", "loyalty"),
+		("gift_item", "gift"),
+	):
+		conn.append("discount_map", {"source": source, "account": acc[key]})
 	conn.update(extra)
 	conn.save(ignore_permissions=True)
 	frappe.db.commit()
@@ -335,6 +350,7 @@ def clean_koomyo_data():
 			"Koomyo UOM Map",
 			"Koomyo Waste Map",
 			"Koomyo Setup Log",
+			"Koomyo Discount Map",
 		):
 			frappe.db.delete(table, {"parent": ("in", connections)})
 		frappe.db.delete("Koomyo Connection", {"name": ("in", connections)})

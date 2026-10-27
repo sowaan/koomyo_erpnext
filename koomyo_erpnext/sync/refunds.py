@@ -84,7 +84,8 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 			)
 		)
 
-	if amount == invoice_total and not refunded_before:
+	mirrored = amount == invoice_total and not refunded_before
+	if mirrored:
 		credit_note = mirror_credit_note(original)
 	elif connection.partial_refunds == PROPORTIONAL:
 		credit_note = proportional_credit_note(original, amount, invoice_total, connection)
@@ -116,6 +117,10 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 			)
 		)
 	credit_note.submit()
+	if mirrored:
+		from koomyo_erpnext.sync.discounts import reverse_reclass
+
+		reverse_reclass(connection, refund["order_id"], refund["id"], credit_note.posting_date)
 
 	if refund.get("payment_method"):
 		make_payment_entry(

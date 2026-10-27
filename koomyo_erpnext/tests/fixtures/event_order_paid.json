@@ -12,6 +12,8 @@
    "channel_markup": "0.00",
    "delivery_fee": "0.00",
    "discount": "0.00",
+   "discount_total": "270.00",
+   "items_list_total": "900.00",
    "items_subtotal": "630.00",
    "payment_discount": "0.00",
    "payment_discount_pre_tax": true,
@@ -33,6 +35,12 @@
   "customer": null,
   "delivery": null,
   "discount": null,
+  "discounts_by_source": [
+   {
+    "amount": "270.00",
+    "source": "promotion"
+   }
+  ],
   "external_refs": {},
   "id": "a8955e7a-335a-4ad0-a872-56b6d2479f80",
   "items": [
@@ -40,11 +48,32 @@
     "category": "Pizza",
     "combo_id": null,
     "combo_selections": [],
+    "discount_amount": "270.00",
+    "discount_ref": {
+     "id": null,
+     "name": "Weekend Pizza Fest",
+     "type": "promotion"
+    },
+    "discount_source": "promotion",
+    "discounts": [
+     {
+      "amount": "270.00",
+      "reference": {
+       "id": null,
+       "name": "Weekend Pizza Fest",
+       "type": "promotion"
+      },
+      "source": "promotion"
+     }
+    ],
     "id": "701fed66-6a09-4dd3-a103-ffae1bfaf3e1",
     "item_id": "a0000000-0000-4000-8000-000000000001",
     "line_total": "630.00",
+    "list_price": "900.00",
+    "list_total": "900.00",
     "modifiers": [],
     "name": "Chicken Tikka Supreme",
+    "net_price": "630.00",
     "notes": null,
     "original_unit_price": "900.00",
     "promo_discount": "270.00",
@@ -63,6 +92,7 @@
   "notes": null,
   "number": "ORD-PFB-20261012-0002",
   "object": "order",
+  "order_discounts": [],
   "paid_at": "2026-10-12T16:53:19Z",
   "payment": {
    "change": "1275.50",

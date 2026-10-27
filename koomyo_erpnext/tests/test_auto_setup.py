@@ -54,6 +54,17 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 		self.fake_a.add_ingredient("i2", "Dough", "pcs")
 		self.fake_a.add_ingredient("i3", "Oil", "barrel")
 		self.fake_a.lists["/ingredients"] = list(self.fake_a.ingredients.values())
+		for stale in frappe.get_all("Koomyo Connection", filters={"connection_name": FRESH}, pluck="name"):
+			for table in (
+				"Koomyo Branch Map",
+				"Koomyo Payment Map",
+				"Koomyo Tax Map",
+				"Koomyo UOM Map",
+				"Koomyo Waste Map",
+				"Koomyo Setup Log",
+				"Koomyo Discount Map",
+			):
+				frappe.db.delete(table, {"parent": stale})
 		frappe.db.delete("Koomyo Connection", {"connection_name": FRESH})
 		self.conn = make_connection(
 			FRESH, COMPANY_D, BASE_A, KEY_A, SECRET_A, tenant_id=TENANT_A, enabled=False
@@ -150,6 +161,10 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 		self.assertEqual(sorted(r.koomyo_method for r in c.payment_map), ["card", "cash", "jazz"])
 		self.assertEqual({r.koomyo_method: r.account for r in c.payment_map}["cash"], "Cash - _KTD")
 		self.assertEqual(len(c.tax_map), 1)
+		self.assertEqual(
+			sorted(r.source for r in c.discount_map),
+			["gift_item", "manual", "points_reward", "promotion", "slice_reward", "voucher"],
+		)
 		self.assertEqual(
 			sorted(r.koomyo_unit for r in c.uom_map), ["kg", "pcs"], "the unknown unit is left for the user"
 		)

@@ -86,6 +86,7 @@ Every map row must belong to the connection's Company; this is checked when you 
 - **Branch Map**: each Koomyo branch to a Cost Center and a Warehouse. Koomyo central warehouses, which appear in stock transfers, use Location Type **Warehouse**. Their id appears in the failed event's message.
 - **Payment Map**: each Koomyo payment method code (`cash`, `card`, ...) to a Mode of Payment and the cash or bank account it lands in. **Fee %** and **Fee Account** book a card or wallet provider's fee as a deduction on each Payment Entry.
 - **Tax Map**: Koomyo sends one tax amount and rate per order. Map each rate (or leave the rate empty for any rate) to a tax account. A row for one branch wins over a row for all branches.
+- **Discount Map** (sales): each Koomyo discount source (`promotion`, `voucher`, `manual`, `points_reward`, `slice_reward`, `gift_item`) to an account. Every sale line is posted at its list price with the discount shown on the line and booked to its source's account (Selling Settings > Enable Discount Accounting for Selling is switched on at install). A line that mixes sources is posted on its largest source and a small Journal Entry moves the rest, so each source's account holds exactly Koomyo's figure. A full refund reverses that entry too.
 - **UOM Map** (stock): each Koomyo unit (`kg`, `pcs`, ...) to an ERPNext UOM.
 - **Waste Map** (stock): each waste reason (`spoilage`, `staff_meal`, `comp`, `tasting`, `other`) to an expense account.
 

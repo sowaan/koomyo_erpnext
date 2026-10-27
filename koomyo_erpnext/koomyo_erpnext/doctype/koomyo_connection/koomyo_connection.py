@@ -137,6 +137,14 @@ class KoomyoConnection(Document):
 				frappe.throw(_("Waste Map row {0}: reason {1} is mapped twice.").format(row.idx, row.reason))
 			reasons.add(row.reason)
 			self.check_account_company(row.expense_account, _("Waste Map row {0}").format(row.idx))
+		sources = set()
+		for row in self.discount_map:
+			if row.source in sources:
+				frappe.throw(
+					_("Discount Map row {0}: source {1} is mapped twice.").format(row.idx, row.source)
+				)
+			sources.add(row.source)
+			self.check_account_company(row.account, _("Discount Map row {0}").format(row.idx))
 		units = set()
 		for row in self.uom_map:
 			unit = (row.koomyo_unit or "").strip().lower()

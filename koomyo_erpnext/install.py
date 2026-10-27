@@ -27,6 +27,7 @@ def after_install():
 	ensure_role()
 	add_unique_indexes()
 	allow_negative_stock()
+	enable_discount_accounting()
 
 
 def before_migrate():
@@ -67,3 +68,8 @@ def allow_negative_stock():
 	Stock Settings is site-wide, so this is switched on once at install and never switched off.
 	"""
 	frappe.db.set_single_value("Stock Settings", "allow_negative_stock", 1)
+
+
+def enable_discount_accounting():
+	"""Koomyo discounts are posted per line with a discount account (list price, discount, net price)."""
+	frappe.db.set_single_value("Selling Settings", "enable_discount_accounting", 1)
