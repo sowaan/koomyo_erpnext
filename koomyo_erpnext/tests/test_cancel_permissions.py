@@ -83,6 +83,28 @@ class TestNewSupplierByManager(RestrictedUserMixin, PurchaseOrderCase):
 		self.assertEqual(self.process_as_manager(run), USER)
 
 
+class TestWebhookJobsRunAsGuest(RestrictedUserMixin, PurchaseOrderCase):
+	"""A webhook is answered as Guest and its processing job is queued by Guest, so it runs as Guest."""
+
+	def as_guest(self, fn):
+		frappe.set_user("Guest")
+		try:
+			return fn()
+		finally:
+			frappe.set_user("Administrator")
+
+	def test_new_supplier_order_and_its_cancel_book_when_the_job_runs_as_guest(self):
+		self.po_seq += 1
+		ordered = make_order("ordered")
+		log = self.as_guest(lambda: self.book(event_for(ordered, "purchase.updated", self.po_seq)))
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.po_seq += 1
+		cancelled = make_order("cancelled", "2026-10-12T18:05:30Z", cancel_reason="Oops")
+		log = self.as_guest(lambda: self.book(event_for(cancelled, "purchase.cancelled", self.po_seq)))
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.assertEqual(frappe.get_doc("Purchase Order", log.reference_name).docstatus, 2)
+
+
 class TestTransferCancelByManager(RestrictedUserMixin, TransferStepsCase):
 	def test_transfer_cancelled_cancels_the_send(self):
 		self.send("transfer.sent", transfer())
