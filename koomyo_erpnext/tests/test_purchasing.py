@@ -11,7 +11,7 @@ import frappe
 from frappe.utils import flt
 
 from koomyo_erpnext.client import KoomyoClient
-from koomyo_erpnext.sync import events
+from koomyo_erpnext.sync import events, purchasing
 from koomyo_erpnext.tests.fake_koomyo import error_response, load_fixture
 from koomyo_erpnext.tests.helpers import COMPANY_A, TENANT_A
 from koomyo_erpnext.tests.test_stock import MOZZARELLA, StockTestCase, adjustment
@@ -94,10 +94,12 @@ class PurchasingTestCase(StockTestCase):
 		frappe.db.commit()
 		return po
 
-	def receive(self, po, qty):
+	def receive(self, po, qty, note=None):
 		from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
 		pr = make_purchase_receipt(po.name)
+		if note:
+			pr.supplier_delivery_note = note
 		pr.posting_date = "2026-10-13"
 		pr.set_posting_time = 1
 		for row in pr.items:
@@ -275,8 +277,8 @@ class TestReceipts(PurchasingTestCase):
 		(call,) = self.writes("/purchase-orders/po-1/receive")
 		self.assertEqual(call["body"], {"lines": [{"line_id": "po-1-line-0", "quantity_received": "8"}]})
 		order = self.fake_a.purchase_orders["po-1"]
-		self.assertEqual(order["status"], "received")
-		# Koomyo now sends purchase.received for our own receipt: nothing more is booked.
+		self.assertEqual(order["status"], "partial", "8 of 10 is not the whole order")
+		# Koomyo now sends purchase.received for our own delivery: nothing more is booked.
 		log = self.book(self.received_event(order))
 		self.assertEqual(log.status, "Done", log.message)
 		self.assertEqual(frappe.db.get_value("Purchase Receipt", pr.name, "koomyo_id"), "po-1-rcpt-1")
@@ -284,16 +286,103 @@ class TestReceipts(PurchasingTestCase):
 			len(frappe.get_all("Purchase Receipt", filters={"company": COMPANY_A, "docstatus": 1})), 1
 		)
 
-	def test_second_receipt_is_refused_clearly(self):
+	def test_a_second_receipt_is_a_second_delivery_with_the_new_total(self):
+		po = self.make_po(qty=10)
+		self.run_queue()
+		first = self.receive(po, 6)
+		self.run_queue()
+		second = self.receive(po, 4)
+		self.run_queue()
+		logs = [l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt"]
+		self.assertEqual([l.status for l in logs], ["Done", "Done"], [l.message for l in logs])
+		bodies = [w["body"] for w in self.writes("/purchase-orders/po-1/receive")]
+		self.assertEqual(
+			[b["lines"][0]["quantity_received"] for b in bodies], ["6", "10"], "totals, not each delivery"
+		)
+		order = self.fake_a.purchase_orders["po-1"]
+		self.assertEqual((order["status"], len(order["receipts"])), ("received", 2))
+		self.assertEqual(
+			[frappe.db.get_value("Purchase Receipt", n, "koomyo_id") for n in (first.name, second.name)],
+			["po-1-rcpt-1", "po-1-rcpt-2"],
+		)
+		# the events Koomyo sends for them book nothing more
+		for i in range(len(order["receipts"])):
+			partial = dict(order, receipts=order["receipts"][: i + 1])
+			self.assertEqual(self.book(self.received_event(partial, seq=91 + i)).status, "Done")
+		self.assertEqual(
+			len(frappe.get_all("Purchase Receipt", filters={"company": COMPANY_A, "docstatus": 1})), 2
+		)
+
+	def test_a_replay_of_the_same_receipt_sends_nothing_twice(self):
 		po = self.make_po(qty=10)
 		self.run_queue()
 		self.receive(po, 6)
-		self.receive(po, 4)
 		self.run_queue()
-		logs = [l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt"]
-		self.assertEqual(sorted(l.status for l in logs), ["Done", "Failed"])
-		failed = next(l for l in logs if l.status == "Failed")
-		self.assertIn("one receipt per order", failed.message)
+		from koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koomyo_event_log import retry
+
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt"]
+		retry([log.name])
+		self.run_queue()
+		self.assertEqual(len(self.fake_a.purchase_orders["po-1"]["receipts"]), 1)
+		again = frappe.get_doc("Koomyo Event Log", log.name)
+		self.assertIn(again.status, ("Done", "Skipped"), again.message)
+
+	def test_the_delivery_note_is_sent_and_a_closed_order_is_finished_short(self):
+		po = self.make_po(qty=10)
+		self.run_queue()
+		pr = self.receive(po, 6, note="DN-77")
+		self.run_queue()
+		(call,) = self.writes("/purchase-orders/po-1/receive")
+		self.assertEqual(call["body"]["delivery_note"], "DN-77")
+		self.assertNotIn("close_short", call["body"])
+		# a person closes the order in ERPNext: Koomyo is told to finish it short
+		doc = frappe.get_doc("Purchase Order", po.name)
+		doc.update_status("Closed")
+		frappe.db.commit()
+		self.assertEqual(purchasing.queue_closed_orders(self.conn_a.name), 1)
+		self.assertEqual(purchasing.queue_closed_orders(self.conn_a.name), 0, "queued once")
+		self.run_queue()
+		close = [w for w in self.writes("/purchase-orders/po-1/receive")][-1]["body"]
+		self.assertTrue(close["close_short"])
+		self.assertEqual(close["lines"], [{"line_id": "po-1-line-0", "quantity_received": "6"}])
+		order = self.fake_a.purchase_orders["po-1"]
+		self.assertEqual((order["status"], order["closed_short"]), ("received", True))
+		self.assertEqual(
+			pr.name, frappe.get_all("Purchase Receipt", filters={"company": COMPANY_A}, pluck="name")[0]
+		)
+
+	def test_closing_an_order_nothing_arrived_for_sends_nothing(self):
+		po = self.make_po(qty=10)
+		self.run_queue()
+		frappe.get_doc("Purchase Order", po.name).update_status("Closed")
+		frappe.db.commit()
+		purchasing.queue_closed_orders(self.conn_a.name)
+		self.run_queue()
+		self.assertEqual(self.writes("/purchase-orders/po-1/receive"), [])
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order_close"]
+		self.assertEqual(log.status, "Skipped")
+
+	def test_nothing_new_is_skipped_and_a_complete_order_is_said_plainly(self):
+		po = self.make_po(qty=10)
+		self.run_queue()
+		self.fake_a.scripted["/purchase-orders/po-1/receive"] = [
+			error_response(409, "nothing_to_receive", "nothing new")
+		]
+		self.receive(po, 3)
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt"]
+		self.assertEqual(log.status, "Skipped")
+		self.assertIn("already holds these quantities", log.message)
+		# the order is complete in Koomyo: a further ERPNext receipt cannot become a delivery
+		order = self.fake_a.purchase_orders["po-1"]
+		order["status"] = "received"
+		self.receive(po, 2)
+		self.run_queue()
+		failed = [
+			l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt" and l.status == "Failed"
+		]
+		self.assertEqual(len(failed), 1)
+		self.assertIn("fully received or closed short", failed[0].message)
 
 	def test_received_in_koomyo_admin_makes_the_receipt(self):
 		po = self.make_po(qty=10)

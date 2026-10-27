@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 import frappe
 from frappe import _
-from frappe.utils import flt
+from frappe.utils import add_to_date, flt, now_datetime
 
 from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping, Skipped
@@ -86,6 +86,34 @@ def on_purchase_receipt_submit(doc, method=None):
 					action=f"receive-{order}",
 					extra={"purchase_order": order},
 				)
+
+
+def queue_closed_orders(connection_name: str) -> int:
+	"""Orders a person closed in ERPNext (the Close button fires no document event, so they are looked for).
+
+	Each Closed Purchase Order sent to Koomyo is queued once; the handler tells Koomyo to finish it short
+	only if part of it arrived. Called every few minutes with the catch-up.
+	"""
+	connection = frappe.get_doc("Koomyo Connection", connection_name)
+	if not (connection.enabled and connection.sync_purchasing):
+		return 0
+	queued = 0
+	for name in frappe.get_all(
+		"Purchase Order",
+		filters={
+			"company": connection.company,
+			"koomyo_connection": connection.name,
+			"koomyo_id": ("is", "set"),
+			"koomyo_content": ("is", "not set"),
+			"status": "Closed",
+			"docstatus": 1,
+			"modified": (">", add_to_date(now_datetime(), days=-30)),
+		},
+		pluck="name",
+	):
+		if store_outbound(connection, "erpnext.purchase_order_close", frappe.get_doc("Purchase Order", name)):
+			queued += 1
+	return queued
 
 
 def on_supplier_update(doc, method=None):
@@ -202,20 +230,73 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 	order = client.get("/purchase-orders/" + quote(po.koomyo_id, safe=""))
 	if order.get("object") != "purchase_order" or order.get("id") != po.koomyo_id:
 		raise Fatal(_("Koomyo answered GET /purchase-orders/{0} with something else.").format(po.koomyo_id))
-	line_ids = {line.get("ingredient_id"): line.get("id") for line in order.get("lines") or []}
+	lines = {line.get("ingredient_id"): line for line in order.get("lines") or [] if line.get("id")}
 
-	received: dict[str, Decimal] = {}
+	# Koomyo takes each line's TOTAL received so far and adds only the difference to stock: this
+	# delivery's quantity goes on top of what Koomyo already holds for the line.
+	delivered: dict[str, Decimal] = {}
 	for item in receipt.items:
 		if item.purchase_order != po.name:
 			continue
 		ingredient_id = linked_ingredient(item.item_code, connection)
-		line_id = line_ids.get(ingredient_id)
-		if not line_id:
+		line = lines.get(ingredient_id)
+		if not line:
 			raise Fatal(
 				_("Item {0} is not on Koomyo purchase order {1}.").format(item.item_code, po.koomyo_id)
 			)
-		received[line_id] = received.get(line_id, Decimal(0)) + Decimal(str(flt(item.stock_qty, 6)))
-	body = {"lines": [{"line_id": k, "quantity_received": text(v)} for k, v in received.items()]}
+		delivered[line["id"]] = delivered.get(line["id"], Decimal(0)) + Decimal(str(flt(item.stock_qty, 6)))
+	totals = {
+		line["id"]: money(line.get("quantity_received") or "0", "quantity_received")
+		for line in lines.values()
+	}
+	body = {
+		"lines": [
+			{"line_id": line_id, "quantity_received": text(totals[line_id] + qty)}
+			for line_id, qty in delivered.items()
+		]
+	}
+	if receipt.get("supplier_delivery_note"):
+		body["delivery_note"] = str(receipt.supplier_delivery_note)[:80]
+	if po.status == "Closed":
+		body["close_short"] = True
+	before = {r.get("id") for r in order.get("receipts") or []}
+	return send_receive(connection, client, po, receipt, body, "receive", before)
+
+
+@handles("erpnext.purchase_order_close", switch="sync_purchasing", scopes=WRITE_SCOPES)
+def push_purchase_close(event: dict, connection, client: KoomyoClient | None = None):
+	"""A Purchase Order closed in ERPNext after part of it arrived: finish the Koomyo order short."""
+	po = frappe.get_doc("Purchase Order", event["data"]["name"])
+	if po.status != "Closed" or po.koomyo_connection != connection.name or not po.koomyo_id:
+		raise Skipped(_("Purchase Order {0} is not a closed order sent to Koomyo.").format(po.name))
+	client = client or KoomyoClient.for_connection(connection)
+	order = client.get("/purchase-orders/" + quote(po.koomyo_id, safe=""))
+	if order.get("object") != "purchase_order" or order.get("id") != po.koomyo_id:
+		raise Fatal(_("Koomyo answered GET /purchase-orders/{0} with something else.").format(po.koomyo_id))
+	if order.get("status") != "partial":
+		raise Skipped(
+			_("Koomyo purchase order {0} is {1}, not partly received: nothing to close short.").format(
+				po.koomyo_id, order.get("status")
+			)
+		)
+	# The lines are sent with what Koomyo already holds, so only the closing changes (an empty body would receive everything).
+	body = {
+		"lines": [
+			{
+				"line_id": line["id"],
+				"quantity_received": text(money(line.get("quantity_received") or "0", "quantity_received")),
+			}
+			for line in order.get("lines") or []
+			if line.get("id")
+		],
+		"close_short": True,
+	}
+	before = {r.get("id") for r in order.get("receipts") or []}
+	return send_receive(connection, client, po, po, body, "close", before)
+
+
+def send_receive(connection, client, po, doc, body: dict, action: str, before: set):
+	"""POST /purchase-orders/{id}/receive: one delivery, linked to its receipts[] entry."""
 	try:
 		answer = koomyo_write(
 			connection,
@@ -223,26 +304,36 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 			"POST",
 			f"/purchase-orders/{quote(po.koomyo_id, safe='')}/receive",
 			body,
-			idempotency_key("Purchase Receipt", receipt.name, receipt.modified, f"receive-{po.name}"),
+			idempotency_key(doc.doctype, doc.name, doc.modified, f"{action}-{po.name}"),
 		)
 	except KoomyoAPIError as e:
+		if e.code == "nothing_to_receive":
+			raise Skipped(
+				_(
+					"Koomyo already holds these quantities for purchase order {0}, so no new delivery was written."
+				).format(po.koomyo_id)
+			)
 		if e.code == "already_received":
 			raise Fatal(
 				_(
-					"Koomyo purchase order {0} was already received. Koomyo takes one receipt per order, so Purchase Receipt {1} could not be sent; adjust the stock in Koomyo by hand."
-				).format(po.koomyo_id, receipt.name)
+					"Koomyo purchase order {0} is already fully received or closed short, so {1} could not be sent as a delivery; adjust the stock in Koomyo by hand."
+				).format(po.koomyo_id, doc.name)
+			)
+		if e.code == "cancelled":
+			raise Fatal(
+				_("Koomyo purchase order {0} was cancelled; {1} could not be sent.").format(
+					po.koomyo_id, doc.name
+				)
 			)
 		raise
 	if answer.get("object") != "purchase_order":
 		raise Fatal(_("Koomyo answered the receipt with something else."))
-	# The newest delivery on the answer is this receipt: link it, so the purchase.received event that
-	# follows finds it and books nothing.
-	deliveries = [r.get("id") for r in answer.get("receipts") or [] if r.get("id")]
-	if deliveries and not receipt.koomyo_id:
-		receipt.db_set(
-			{"koomyo_connection": connection.name, "koomyo_id": deliveries[-1]}, update_modified=False
-		)
-	return ("Purchase Receipt", receipt.name)
+	# The newest delivery on the answer is this one: link it, so the purchase.received event that follows
+	# finds it and books nothing.
+	new = [r.get("id") for r in answer.get("receipts") or [] if r.get("id") and r.get("id") not in before]
+	if new and doc.doctype == "Purchase Receipt" and not doc.koomyo_id:
+		doc.db_set({"koomyo_connection": connection.name, "koomyo_id": new[-1]}, update_modified=False)
+	return (doc.doctype, doc.name)
 
 
 @handles("erpnext.supplier", switch="sync_purchasing", scopes=WRITE_SCOPES)

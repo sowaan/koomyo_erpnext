@@ -58,6 +58,7 @@ class FakeKoomyo:
 		self.ingredients: dict[str, dict] = {}
 		self.suppliers: dict[str, dict] = {}
 		self.purchase_orders: dict[str, dict] = {}
+		self.receive_calls: list[dict] = []
 		self.refs: list[dict] = []
 		self.writes: list[dict] = []  # every write call: method, path, key, body
 		# GET list endpoints for the backfill: path -> records (opaque cursors, docs filters).
@@ -257,34 +258,7 @@ class FakeKoomyo:
 			self.purchase_orders[pid] = order
 			return FakeResponse(201, order)
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):
-			order = self.purchase_orders.get(path.split("/")[2])
-			if not order:
-				return error_response(404, "not_found")
-			if order["status"] == "received":
-				return error_response(409, "already_received")
-			wanted = {line["line_id"]: line["quantity_received"] for line in body.get("lines") or []}
-			for line in order["lines"]:
-				line["quantity_received"] = wanted.get(
-					line["id"], line["quantity_ordered"] if not wanted else "0"
-				)
-			order["status"] = "received"
-			order["updated_at"] = "2026-10-12T11:00:00Z"
-			order["receipts"].append(
-				{
-					"id": f"{order['id']}-rcpt-{len(order['receipts']) + 1}",
-					"received_at": "2026-10-12T11:00:00Z",
-					"lines": [
-						{
-							"line_id": l["id"],
-							"ingredient_id": l["ingredient_id"],
-							"quantity": l["quantity_received"],
-						}
-						for l in order["lines"]
-						if l["quantity_received"] not in ("0", "0.000")
-					],
-				}
-			)
-			return FakeResponse(200, order)
+			return self._receive(path.split("/")[2], body or {})
 		if method == "PATCH" and path.startswith("/ingredients/"):
 			ingredient = self.ingredients.get(path.split("/")[2])
 			if not ingredient:
@@ -297,6 +271,55 @@ class FakeKoomyo:
 			self.refs.append(ref)
 			return FakeResponse(200, ref)
 		return error_response(404, "not_found")
+
+	def _receive(self, order_id, body):
+		"""POST /purchase-orders/{id}/receive: one delivery; lines carry the line's TOTAL so far."""
+		from decimal import Decimal
+
+		order = self.purchase_orders.get(order_id)
+		if not order:
+			return error_response(404, "not_found")
+		if order["status"] == "cancelled":
+			return error_response(409, "cancelled")
+		if order["status"] == "received":
+			return error_response(409, "already_received")
+		wanted = {x["line_id"]: Decimal(x["quantity_received"]) for x in body.get("lines") or []}
+		if not body.get("lines"):
+			wanted = {l["id"]: Decimal(l["quantity_ordered"]) for l in order["lines"]}
+		arrived = []
+		for line in order["lines"]:
+			have = Decimal(line["quantity_received"])
+			total = wanted.get(line["id"], have)
+			if total < have:
+				return error_response(400, "invalid_parameter", "quantity_received is below what is received")
+			if total > have:
+				arrived.append((line, total - have, total))
+		if not arrived and not body.get("close_short"):
+			return error_response(409, "nothing_to_receive")
+		self.receive_calls.append(body)
+		n = len(order["receipts"]) + 1
+		for line, _diff, total in arrived:
+			line["quantity_received"] = str(total)
+		order["receipts"].append(
+			{
+				"id": f"{order['id']}-rcpt-{n}",
+				"received_at": "2026-10-12T11:00:00Z",
+				"received_by": body.get("received_by") or "key",
+				"delivery_note": body.get("delivery_note"),
+				"closed_short": bool(body.get("close_short")),
+				"lines": [
+					{"line_id": l["id"], "ingredient_id": l["ingredient_id"], "quantity": str(diff)}
+					for l, diff, _t in arrived
+				],
+			}
+		)
+		complete = all(
+			Decimal(l["quantity_received"]) >= Decimal(l["quantity_ordered"]) for l in order["lines"]
+		)
+		order["closed_short"] = bool(body.get("close_short")) and not complete
+		order["status"] = "received" if complete or body.get("close_short") else "partial"
+		order["updated_at"] = f"2026-10-12T11:0{n}:00Z"
+		return FakeResponse(200, order)
 
 	def _events(self, params):
 		after = int(params.get("after") or 0)
