@@ -6,8 +6,7 @@ Crust, whose Large row gives back 0.45 kg of Pizza Dough and takes one dough bal
 
 from decimal import Decimal as D
 
-from frappe.tests.utils import FrappeTestCase
-
+from koomyo_erpnext.compat import KoomyoTestCase as FrappeTestCase
 from koomyo_erpnext.exceptions import Fatal
 from koomyo_erpnext.sync import catalog
 from koomyo_erpnext.sync.recipes import (
