@@ -245,3 +245,131 @@ class TestDiscountRefunds(SalesTestCase):
 				),
 			)[0][0]
 			self.assertEqual(D(str(balance)), D("0"), account)
+
+
+def book_balance(accounts, vouchers):
+	"""Net debit (+) or credit (-) per account over the given vouchers (any voucher type)."""
+	out = {}
+	for account in accounts:
+		value = frappe.db.sql(
+			"select coalesce(sum(debit-credit),0) from `tabGL Entry` where account=%s and is_cancelled=0 and voucher_no in %s",
+			(account, tuple(vouchers) or ("-",)),
+		)[0][0]
+		out[account] = D(str(value)).quantize(D("0.01"))
+	return out
+
+
+PROMO, LOYALTY = "Sales Promotions - _KTA", "Loyalty Reward Discount - _KTA"
+
+
+class TestRefundGivesDiscountBack(SalesTestCase):
+	def setUp(self):
+		super().setUp()
+		self.conn_a.reload()
+		self.conn_a.partial_refunds = "Proportional Credit Note"
+		self.conn_a.save()
+		# 1099 list, promotion 600 + slice reward 400, pays 99 (no tax)
+		line = discounted("1099.00", "99.00", ("promotion", "600.00"), ("slice_reward", "400.00"))
+		self.event = order([line], "99.00", "1000.00")
+		self.assertEqual(self.book(self.event).status, "Done")
+		self.order_id = self.event["data"]["id"]
+		self.sale = self.invoice(self.order_id)
+
+	def refund(self, amount, back, lines=None, refund_id="refund-1", seq=20):
+		event = refund_event(seq=seq, refund_id=refund_id, order_id=self.order_id, amount=amount)
+		event["data"]["discount_given_back"] = [{"source": s, "amount": a} for s, a in back]
+		event["data"]["lines"] = lines or []
+		return self.book(event)
+
+	def vouchers(self):
+		names = [self.sale.name]
+		names += frappe.get_all("Journal Entry", filters={"koomyo_connection": self.conn_a.name}, pluck="name")
+		names += frappe.get_all(
+			"Sales Invoice", filters={"koomyo_connection": self.conn_a.name, "is_return": 1}, pluck="name"
+		)
+		return names
+
+	def test_a_partial_refund_reverses_each_source_by_its_share(self):
+		log = self.refund("49.50", [("promotion", "300.00"), ("slice_reward", "200.00")])
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		note = frappe.get_doc("Sales Invoice", log.reference_name)
+		self.assertMoney(note.grand_total, "-49.50")
+		self.assertEqual(
+			gl("Sales Invoice", note.name),
+			{"Debtors - _KTA": D("-49.50"), "Sales - _KTA": D("549.50"), PROMO: D("-500.00")},
+			"the income is given back at its price before the discount, the discount is credited",
+		)
+		# after the credit note and its small entry each source holds its own share of what is left
+		self.assertEqual(
+			book_balance([PROMO, LOYALTY], self.vouchers()), {PROMO: D("300.00"), LOYALTY: D("200.00")}
+		)
+		self.assertTrue(find_existing("Journal Entry", self.conn_a, "discount-refund:refund-1"))
+
+	def test_two_partial_refunds_then_nothing_is_left_on_the_discount_accounts(self):
+		self.assertEqual(self.refund("49.50", [("promotion", "300.00"), ("slice_reward", "200.00")]).status, "Done")
+		log = self.refund("49.50", [("promotion", "300.00"), ("slice_reward", "200.00")], refund_id="refund-2", seq=21)
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		self.assertEqual(book_balance([PROMO, LOYALTY], self.vouchers()), {PROMO: D("0.00"), LOYALTY: D("0.00")})
+		self.assertEqual(
+			book_balance(["Sales - _KTA"], self.vouchers()), {"Sales - _KTA": D("0.00")}
+		)
+
+	def test_a_full_refund_with_lines_checks_them_and_reverses_the_same_way(self):
+		line_id = self.event["data"]["items"][0]["id"]
+		lines = [{"line_id": line_id, "name": "Pizza", "quantity": 1, "amount": "99.00"}]
+		log = self.refund("99.00", [("promotion", "600.00"), ("slice_reward", "400.00")], lines=lines)
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		self.assertEqual(book_balance([PROMO, LOYALTY], self.vouchers()), {PROMO: D("0.00"), LOYALTY: D("0.00")})
+		self.assertEqual(frappe.db.get_value("Sales Invoice", log.reference_name, "is_return"), 1)
+
+	def test_lines_that_do_not_match_the_invoice_are_refused(self):
+		line_id = self.event["data"]["items"][0]["id"]
+		wrong_amount = [{"line_id": line_id, "name": "Pizza", "quantity": 1, "amount": "98.00"}]
+		log = self.refund("99.00", [("promotion", "600.00"), ("slice_reward", "400.00")], lines=wrong_amount)
+		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
+		self.assertIn("98.00", log.message)
+		unknown = [{"line_id": "nope", "name": "Ghost", "quantity": 1, "amount": "99.00"}]
+		log = self.refund("99.00", [], lines=unknown, refund_id="refund-2", seq=21)
+		self.assertEqual(log.error_class, "Fatal")
+		self.assertIn("Ghost", log.message)
+
+	def test_an_invoice_booked_before_line_ids_is_taken_as_it_is(self):
+		for row in self.sale.items:
+			frappe.db.set_value("Sales Invoice Item", row.name, "koomyo_line_id", None)
+		lines = [{"line_id": "anything", "name": "Pizza", "quantity": 1, "amount": "99.00"}]
+		log = self.refund("99.00", [("promotion", "600.00"), ("slice_reward", "400.00")], lines=lines)
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+
+	def test_a_rounding_difference_stays_with_the_largest_part_and_the_entry_balances(self):
+		# Koomyo's parts add to 500.01 while the credit note carries 500.00
+		log = self.refund("49.50", [("promotion", "300.01"), ("slice_reward", "200.00")])
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		je = frappe.get_doc("Journal Entry", find_existing("Journal Entry", self.conn_a, "discount-refund:refund-1"))
+		self.assertEqual(je.total_debit, je.total_credit)
+
+	def test_refund_without_the_split_keeps_the_old_net_revenue_credit_note(self):
+		event = refund_event(order_id=self.order_id, amount="49.50")
+		log = self.book(event)
+		self.assertEqual(log.status, "Done", log.message)
+		self.assertEqual(
+			gl("Sales Invoice", log.reference_name),
+			{"Debtors - _KTA": D("-49.50"), "Sales - _KTA": D("49.50")},
+		)
+		self.assertFalse(find_existing("Journal Entry", self.conn_a, "discount-refund:refund-1"))
+
+	def test_a_split_with_discount_accounting_off_is_a_mapping_problem(self):
+		frappe.db.set_single_value("Selling Settings", "enable_discount_accounting", 0)
+		try:
+			log = self.refund("49.50", [("promotion", "300.00"), ("slice_reward", "200.00")])
+			self.assertEqual(log.error_class, "NeedsMapping")
+			self.assertIn("Discount Accounting", log.message)
+		finally:
+			frappe.db.set_single_value("Selling Settings", "enable_discount_accounting", 1)
+
+	def test_an_unmapped_source_names_the_row_to_add(self):
+		self.conn_a.reload()
+		self.conn_a.set("discount_map", [r for r in self.conn_a.discount_map if r.source != "points_reward"])
+		self.conn_a.save()
+		log = self.refund("49.50", [("points_reward", "500.00")])
+		self.assertEqual(log.error_class, "NeedsMapping")
+		self.assertIn("points_reward", log.message)

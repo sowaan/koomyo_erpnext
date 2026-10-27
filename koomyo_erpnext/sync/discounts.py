@@ -236,6 +236,80 @@ def reclass_entry(connection, invoice, order: dict, book: DiscountBook, cost_cen
 	return entry
 
 
+def given_back(refund: dict) -> list[tuple[str, Decimal]]:
+	"""The refund's share of the order's discounts by source (Refund.discount_given_back), as exact Decimals."""
+	return [
+		(part["source"], money(part["amount"], "discount given back"))
+		for part in refund.get("discount_given_back") or []
+		if part.get("source") and part.get("amount") is not None and money(part["amount"], "amount") != 0
+	]
+
+
+def refund_reclass(connection, credit_note, refund: dict, parts: list[tuple[str, Decimal]], cost_center):
+	"""Make each discount account hold exactly the part of the discount this refund gives back.
+
+	ERPNext credits the discount accounts of the credit note on its own (a row has one account); Koomyo
+	says which source each part belongs to. The difference per account is moved with a small Journal Entry
+	(`discount-refund:<refund id>`), so a partial refund reverses the original reclassification in part.
+	If the two totals differ by rounding, the difference stays with the largest part so the entry balances.
+	"""
+	accounts = {row.account for row in connection.discount_map}
+	posted: dict[str, Decimal] = {}
+	for entry in frappe.get_all(
+		"GL Entry",
+		filters={
+			"voucher_type": "Sales Invoice",
+			"voucher_no": credit_note.name,
+			"is_cancelled": 0,
+			"account": ("in", list(accounts)),
+		},
+		fields=["account", "debit", "credit"],
+	):
+		posted[entry.account] = (
+			posted.get(entry.account, Decimal(0)) + Decimal(str(entry.credit)) - Decimal(str(entry.debit))
+		)
+	wanted: dict[str, Decimal] = {}
+	for source, amount in parts:
+		account = discount_account(connection, source)
+		wanted[account] = wanted.get(account, Decimal(0)) + amount
+	residual = sum(posted.values(), Decimal(0)) - sum(wanted.values(), Decimal(0))
+	if wanted and residual:
+		largest = max(wanted, key=lambda a: wanted[a])
+		wanted[largest] += residual
+	moves = {}
+	for account in set(wanted) | set(posted):
+		diff = wanted.get(account, Decimal(0)) - posted.get(account, Decimal(0))
+		if diff:
+			moves[account] = diff  # positive: credit more (the refund gives more back here)
+	if not moves:
+		return None
+	entry = frappe.new_doc("Journal Entry")
+	entry.update(
+		{
+			"voucher_type": "Journal Entry",
+			"company": connection.company,
+			"posting_date": credit_note.posting_date,
+			"user_remark": _(
+				"Koomyo refund {0}: the discount it gives back, moved to its own accounts."
+			).format(refund.get("order_number")),
+		}
+	)
+	for account, diff in sorted(moves.items()):
+		entry.append(
+			"accounts",
+			{
+				"account": account,
+				"cost_center": cost_center,
+				"credit_in_account_currency": to_field(diff) if diff > 0 else 0,
+				"debit_in_account_currency": to_field(-diff) if diff < 0 else 0,
+			},
+		)
+	stamp(entry, connection, f"discount-refund:{refund['id']}", credit_note.koomyo_branch)
+	entry.insert(ignore_permissions=True)
+	entry.submit()
+	return entry
+
+
 def reverse_reclass(connection, order_id: str, refund_id: str, posting_date):
 	"""A full refund mirrors the invoice, discount rows included; reverse the reclassification too."""
 	from koomyo_erpnext.sync.common import find_existing

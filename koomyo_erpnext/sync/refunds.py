@@ -18,7 +18,8 @@ import frappe
 from frappe import _
 
 from koomyo_erpnext.client import KoomyoClient
-from koomyo_erpnext.exceptions import Fatal, Retryable, Skipped
+from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Retryable, Skipped
+from koomyo_erpnext.sync import discounts
 from koomyo_erpnext.sync.common import (
 	cents,
 	doc_money,
@@ -85,10 +86,18 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 		)
 
 	mirrored = amount == invoice_total and not refunded_before
+	parts = discounts.given_back(refund)
+	if parts and not discounts.accounting_is_on():
+		raise NeedsMapping(
+			_(
+				"Refund {0} gives back a discount, but Selling Settings has 'Enable Discount Accounting for Selling' off. Switch it on, then press Retry."
+			).format(refund["id"])
+		)
 	if mirrored:
 		credit_note = mirror_credit_note(original)
+		check_refund_lines(original, refund)
 	elif connection.partial_refunds == PROPORTIONAL:
-		credit_note = proportional_credit_note(original, amount, invoice_total, connection)
+		credit_note = proportional_credit_note(original, amount, invoice_total, connection, parts)
 	else:
 		raise Fatal(
 			_(
@@ -117,10 +126,12 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 			)
 		)
 	credit_note.submit()
-	if mirrored:
-		from koomyo_erpnext.sync.discounts import reverse_reclass
-
-		reverse_reclass(connection, refund["order_id"], refund["id"], credit_note.posting_date)
+	if parts:
+		# Koomyo says how much of each discount this refund gives back: move it to the right accounts.
+		discounts.refund_reclass(connection, credit_note, refund, parts, credit_note.cost_center)
+	elif mirrored:
+		# An answer without the split (an older Koomyo): a full refund reverses the order's reclassification.
+		discounts.reverse_reclass(connection, refund["order_id"], refund["id"], credit_note.posting_date)
 
 	if refund.get("payment_method"):
 		make_payment_entry(
@@ -158,8 +169,54 @@ def mirror_credit_note(original):
 	return make_sales_return(original.name)
 
 
-def proportional_credit_note(original, amount: Decimal, invoice_total: Decimal, connection):
-	"""Reverse each tax/charge row by amount/invoice_total; revenue takes the rounding so the total is exact."""
+def check_refund_lines(original, refund: dict):
+	"""`lines` is filled only for a refund of everything collected: each line must be on the invoice, at its net price.
+
+	The credit note mirrors the invoice, which is exactly these lines. An invoice booked before its rows
+	carried the Koomyo line id cannot be checked and is taken as it is.
+	"""
+	lines = refund.get("lines") or []
+	if not lines:
+		return
+	rows = [r for r in original.items if r.get("koomyo_line_id")]
+	if not rows:
+		return
+	net_by_line: dict[str, Decimal] = {}
+	for row in rows:
+		net_by_line[row.koomyo_line_id] = net_by_line.get(row.koomyo_line_id, Decimal(0)) + doc_money(
+			row.amount
+		)
+	for line in lines:
+		booked = net_by_line.get(line.get("line_id"))
+		if booked is None:
+			raise Fatal(
+				_("Refund {0} pays back line {1} ({2}), which is not on Sales Invoice {3}.").format(
+					refund["id"], line.get("line_id"), line.get("name"), original.name
+				)
+			)
+		if booked != money(line.get("amount"), "refund line amount"):
+			raise Fatal(
+				_("Refund {0}: line {1} is {2} in Koomyo but {3} on Sales Invoice {4}.").format(
+					refund["id"], line.get("name"), line["amount"], booked, original.name
+				)
+			)
+	if len(lines) != len(net_by_line):
+		raise Fatal(
+			_("Refund {0} lists {1} lines but Sales Invoice {2} has {3}.").format(
+				refund["id"], len(lines), original.name, len(net_by_line)
+			)
+		)
+
+
+def proportional_credit_note(
+	original, amount: Decimal, invoice_total: Decimal, connection, parts: list | None = None
+):
+	"""Reverse each tax/charge row by amount/invoice_total; revenue takes the rounding so the total is exact.
+
+	When Koomyo says how much of the order's discount the refund gives back (`parts`), the revenue row is at
+	the price before that discount with the discount shown, so income and discount accounts are reversed
+	by the share Koomyo names; the total is still exactly the refund.
+	"""
 	note = frappe.new_doc("Sales Invoice")
 	note.update(
 		{
@@ -195,16 +252,24 @@ def proportional_credit_note(original, amount: Decimal, invoice_total: Decimal, 
 		)
 	revenue = amount - reversed_charges
 	first = original.items[0]
-	note.append(
-		"items",
-		{
-			"item_code": partial_refund_item(connection),
-			"item_name": _("Partial refund of {0}").format(original.name),
-			"description": _("Partial refund of {0}").format(original.name),
-			"qty": -1,
-			"rate": to_field(revenue),
-			"income_account": first.income_account,
-			"cost_center": first.cost_center,
-		},
-	)
+	row = {
+		"item_code": partial_refund_item(connection),
+		"item_name": _("Partial refund of {0}").format(original.name),
+		"description": _("Partial refund of {0}").format(original.name),
+		"qty": -1,
+		"rate": to_field(revenue),
+		"income_account": first.income_account,
+		"cost_center": first.cost_center,
+	}
+	back = sum((a for _s, a in parts or []), Decimal(0))
+	if back:
+		dominant = max(parts, key=lambda p: p[1])[0]
+		row.update(
+			{
+				"price_list_rate": to_field(revenue + back),
+				"discount_amount": to_field(back),
+				"discount_account": discounts.discount_account(connection, dominant),
+			}
+		)
+	note.append("items", row)
 	return note

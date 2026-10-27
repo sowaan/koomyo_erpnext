@@ -274,6 +274,7 @@ def add_order_line(
 	for row in rows:
 		row.update(
 			{
+				"koomyo_line_id": line.get("id"),
 				"item_code": item_code,
 				"item_name": label[:140],
 				"description": description,
