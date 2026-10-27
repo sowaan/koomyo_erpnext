@@ -78,6 +78,7 @@ class FakeKoomyo:
 		self.suppliers: dict[str, dict] = {}
 		self.purchase_orders: dict[str, dict] = {}
 		self.receive_calls: list[dict] = []
+		self.unsettled_days: set[str] = set()  # GET /stock-usage answers 409 day_not_settled for these
 		self.refs: list[dict] = []
 		self.writes: list[dict] = []  # every write call: method, path, key, body
 		# GET list endpoints for the backfill: path -> records (opaque cursors, docs filters).
@@ -138,6 +139,12 @@ class FakeKoomyo:
 			return self._write(method, path, json_body, (headers or {}).get("Idempotency-Key"))
 		if path.startswith("/purchase-orders/") and path[len("/purchase-orders/") :] in self.purchase_orders:
 			return FakeResponse(200, self.purchase_orders[path[len("/purchase-orders/") :]])
+		if path == "/stock-usage":
+			day = (params or {}).get("business_date")
+			if not day:
+				return error_response(400, "invalid_parameter", "business_date is required")
+			if day in self.unsettled_days:
+				return error_response(409, "day_not_settled", "the day is not over yet")
 		if path.startswith("/suppliers/"):
 			sid = path.split("/")[2]
 			for card in [*self.lists.get("/suppliers", []), *self.suppliers.values()]:

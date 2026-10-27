@@ -274,36 +274,20 @@ class TestBackfill(BackfillTestCase):
 			self.make(bring_sales=0, bring_stock=1)
 		self.assertIn("Opening Stock Date", str(ctx.exception))
 
-	def test_stock_usage_rebuilt_without_doubling_live(self):
+	def test_stock_usage_comes_from_the_usage_endpoint_without_doubling_live(self):
 		configure_stock(self.conn_a, "_KTA")
 		self.conn_a.reload()
 		self.fake_a.add_ingredient(KITCHEN, "Kitchen stock", "pcs", "12.5000")
 		self.assertEqual(self.book(adjustment(1, "20.0000")).status, "Done")
 
-		def move(mid, qty, reason, day):
-			return {
-				"id": mid,
-				"object": "stock_movement",
-				"ingredient_id": KITCHEN,
-				"ingredient": "Kitchen stock",
-				"unit": "pcs",
-				"quantity_change": qty,
-				"unit_cost": "12.5000",
-				"value": "0",
-				"reason": reason,
-				"reference_id": None,
-				"location": {"type": "branch", "id": BRANCH},
-				"created_at": f"{day}T12:00:00Z",
-				"business_date": day,
-			}
+		def usage(day, qty, branch=BRANCH):
+			data = copy.deepcopy(load_fixture("event_stock_usage_daily")["data"])
+			data.update({"branch_id": branch, "business_date": day})
+			data["lines"][0]["quantity_used"] = qty
+			return data
 
-		self.fake_a.lists["/stock-movements"] = [
-			move("m1", "-5.0000", "order_deduction", "2026-10-11"),
-			move("m2", "1.0000", "order_cancel_restore", "2026-10-11"),
-			move("m3", "-3.0000", "order_deduction", DAY),
-			move("m4", "-9.0000", "spilled", DAY),  # a manual change: never counted as usage
-		]
-		for path in ("/waste", "/stock-counts", "/stock-transfers"):
+		self.fake_a.lists["/stock-usage"] = [usage("2026-10-11", "4.0000"), usage(DAY, "3.0000")]
+		for path in ("/waste", "/stock-counts", "/stock-transfers", "/stock-movements"):
 			self.fake_a.lists[path] = []
 		# The live usage event for 2026-10-11 already came in.
 		live = load_fixture("event_stock_usage_daily") | {"tenant_id": TENANT_A, "seq": 2}
@@ -312,12 +296,44 @@ class TestBackfill(BackfillTestCase):
 
 		doc = self.press(self.make(from_date="2026-10-11", to_date=DAY, bring_sales=0, bring_stock=1))
 		self.assertEqual(doc.status, "Completed", doc.error)
-		# usage for the 11th (live) and the 12th, and the hand adjustment m4 of the 12th
-		self.assertEqual((doc.found, doc.already_there, doc.created), (3, 1, 2))
+		self.assertEqual((doc.found, doc.already_there, doc.created), (2, 1, 1))
 		entry = frappe.db.get_value(
 			"Stock Entry", {"koomyo_connection": self.conn_a.name, "koomyo_id": f"usage:{BRANCH}:{DAY}"}
 		)
 		self.assertEqual(frappe.db.get_value("Stock Entry Detail", {"parent": entry}, "qty"), 3)
+		calls = [c for c in self.fake_a.calls if c["path"] == "/stock-usage"]
+		self.assertEqual({c["params"]["business_date"] for c in calls}, {"2026-10-11", DAY})
+		self.assertFalse(
+			[
+				c
+				for c in self.fake_a.calls
+				if c["path"] == "/stock-movements" and c["params"].get("reason") == "order_deduction"
+			],
+			"usage is no longer summed from movements",
+		)
+		again = self.press(self.make(from_date="2026-10-11", to_date=DAY, bring_sales=0, bring_stock=1))
+		self.assertEqual((again.created, again.already_there), (0, 2))
+
+	def test_a_day_that_is_not_settled_is_waited_for_not_treated_as_empty(self):
+		configure_stock(self.conn_a, "_KTA")
+		self.conn_a.reload()
+		self.fake_a.add_ingredient(KITCHEN, "Kitchen stock", "pcs", "12.5000")
+		self.assertEqual(self.book(adjustment(1, "20.0000")).status, "Done")
+		data = copy.deepcopy(load_fixture("event_stock_usage_daily")["data"])
+		data.update({"branch_id": BRANCH, "business_date": DAY})
+		self.fake_a.lists["/stock-usage"] = [data]
+		for path in ("/waste", "/stock-counts", "/stock-transfers", "/stock-movements"):
+			self.fake_a.lists[path] = []
+		self.fake_a.unsettled_days = {DAY}
+		doc = self.press(self.make(from_date=DAY, to_date=DAY, bring_sales=0, bring_stock=1))
+		self.assertEqual((doc.status, doc.skipped, doc.created), ("Completed", 1, 0), doc.error)
+		self.assertIn("not settled", " ".join(c.message or "" for c in doc.chunks))
+		self.assertFalse(frappe.db.exists("Stock Entry", {"koomyo_id": f"usage:{BRANCH}:{DAY}"}))
+		# once Koomyo has settled the day, running that day again books it
+		self.fake_a.unsettled_days = set()
+		chunk = doc.chunks[0].name
+		doc = self.press(doc, "rerun_day", chunk=chunk)
+		self.assertTrue(frappe.db.exists("Stock Entry", {"koomyo_id": f"usage:{BRANCH}:{DAY}"}))
 
 	def test_manual_adjustments_are_brought_in_with_the_live_keys_and_never_doubled(self):
 		configure_stock(self.conn_a, "_KTA")
@@ -350,16 +366,14 @@ class TestBackfill(BackfillTestCase):
 			move("o1", "9.0000", "opening_stock"),  # already in the opening stock
 			move("s1", "-3.0000", "order_deduction"),  # system
 		]
-		for path in ("/waste", "/stock-counts", "/stock-transfers"):
+		for path in ("/waste", "/stock-counts", "/stock-transfers", "/stock-usage"):
 			self.fake_a.lists[path] = []
 		live = adjustment(2, "4.0000", movement_id="a2", date=DAY)
 		self.assertEqual(self.book(live).status, "Done")
 
 		doc = self.press(self.make(bring_sales=0, bring_stock=1, to_date=DAY))
 		self.assertEqual(doc.status, "Completed", doc.error)
-		self.assertEqual(
-			(doc.found, doc.already_there, doc.created, doc.failed), (3, 1, 2, 0)
-		)  # a1, a2 and the usage of s1
+		self.assertEqual((doc.found, doc.already_there, doc.created, doc.failed), (2, 1, 1, 0))  # a1 and a2
 		ids = lambda: sorted(  # noqa: E731
 			frappe.get_all(
 				"Stock Entry",
@@ -380,7 +394,7 @@ class TestBackfill(BackfillTestCase):
 		)
 		self.assertEqual(call["params"]["kind"], "manual")
 		again = self.press(self.make(bring_sales=0, bring_stock=1, to_date=DAY))
-		self.assertEqual((again.created, again.already_there), (0, 3))
+		self.assertEqual((again.created, again.already_there), (0, 2))
 		self.assertEqual(ids(), ["a1", "a2"])
 
 	def test_all_connections_makes_one_per_connection(self):

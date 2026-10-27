@@ -32,8 +32,6 @@ from koomyo_erpnext.sync.common import find_existing, money
 
 BACKFILL = "Koomyo Backfill"
 SAMPLE_SIZE = 10
-# Koomyo sends a day's usage about an hour after midnight (docs: events/stock); give it two.
-USAGE_SETTLE_HOURS = 2
 SLEEP = time.sleep
 
 
@@ -261,65 +259,14 @@ class Reader:
 				)
 			]
 		if kind == "usage":
-			movement = {
-				"created_after": shift_utc(after, -1),
-				"created_before": shift_utc(before, 1),
-				"limit": 500,
-				**branch,
-			}
-			return [
-				("/stock-movements", {**movement, "reason": reason}, on_day)
-				for reason in ("order_deduction", "order_cancel_restore")
-			]
+			# The same objects as stock.usage_daily, one per branch that used ingredients, for the day.
+			return [("/stock-usage", {"business_date": day_text, "limit": 200, **branch}, lambda r: True)]
 		raise ValueError(kind)
 
 
 def shift_utc(text: str, days: int) -> str:
 	moment = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ") + timedelta(days=days)
 	return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def usage_from_movements(movements: list[dict], day: str) -> list[dict]:
-	"""Rebuild stock.usage_daily per branch from order_deduction / order_cancel_restore movements.
-
-	Usage is net: quantity_used = -(sum of quantity_change) per ingredient (docs: events/stock).
-	"""
-	per_branch: dict[str, dict[str, dict]] = {}
-	for movement in movements:
-		location = movement.get("location") or {}
-		if location.get("type") not in (None, "branch") or not location.get("id"):
-			continue
-		lines = per_branch.setdefault(location["id"], {})
-		line = lines.setdefault(
-			movement["ingredient_id"],
-			{
-				"ingredient_id": movement["ingredient_id"],
-				"ingredient": movement.get("ingredient"),
-				"unit": movement.get("unit"),
-				"unit_cost": movement.get("unit_cost"),
-				"_qty": Decimal(0),
-			},
-		)
-		line["_qty"] -= money(movement.get("quantity_change"), "quantity_change")
-		line["unit_cost"] = movement.get("unit_cost") or line["unit_cost"]
-	usages = []
-	for branch_id, lines in sorted(per_branch.items()):
-		out = []
-		for line in lines.values():
-			qty = line.pop("_qty")
-			if qty:
-				out.append({**line, "quantity_used": format(qty, "f")})
-		if out:
-			usages.append(
-				{
-					"object": "stock_usage",
-					"branch_id": branch_id,
-					"business_date": day,
-					"source": "sales",
-					"lines": out,
-				}
-			)
-	return usages
 
 
 # ------------------------------------------------------------------ the job
@@ -433,18 +380,23 @@ def run_chunk(backfill, connection, reader, chunk, dry_run: bool, sample: list):
 						"{0}: Stock Deduction is Per Order, so ingredients come with each order (tick Sales and Refunds)."
 					).format(chunk.day)
 				)
-			elif usage_day_is_settled(connection, chunk.day):
-				movements = []
-				for path, params, keep in reader.lists_for("usage", chunk.day, backfill.koomyo_branch_id):
-					movements += [m for m in read_all(reader, path, params) if keep(m)]
-				for usage in usage_from_movements(movements, str(chunk.day)):
-					handle("usage", usage)
 			else:
-				messages.append(
-					_("Usage of {0} is left to the live daily event: the day is not settled yet.").format(
-						chunk.day
-					)
-				)
+				for path, params, _keep in reader.lists_for("usage", chunk.day, backfill.koomyo_branch_id):
+					try:
+						usages = read_all(reader, path, params)
+					except KoomyoAPIError as e:
+						if e.code != "day_not_settled":
+							raise
+						# Not empty: Koomyo gives a day's usage only once it is final (an hour after the day ends).
+						counts["skipped"] += 1
+						messages.append(
+							_(
+								"Usage of {0} is not settled in Koomyo yet (day_not_settled). Run this day again later."
+							).format(chunk.day)
+						)
+						continue
+					for usage in usages:
+						handle("usage", usage)
 		else:
 			for path, params, keep in reader.lists_for(kind, chunk.day, backfill.koomyo_branch_id):
 				cursor_key = f"{kind}:{path}:{params.get('reason', '')}"
@@ -511,14 +463,6 @@ def chunk_kinds(backfill, chunk) -> list[str]:
 	if chunk.chunk == "purchases":
 		return ["purchase_order"]
 	return kinds_for(backfill)
-
-
-def usage_day_is_settled(connection, day) -> bool:
-	zone = ZoneInfo(connection.koomyo_timezone or "UTC")
-	settled_at = datetime.combine(add_days(getdate(day), 1), datetime.min.time(), zone) + timedelta(
-		hours=USAGE_SETTLE_HOURS
-	)
-	return datetime.now(zone) >= settled_at
 
 
 def book(connection, kind: str, record: dict, backfill_name: str, dry_run: bool) -> tuple[str, str | None]:

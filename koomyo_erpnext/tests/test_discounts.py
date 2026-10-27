@@ -283,7 +283,9 @@ class TestRefundGivesDiscountBack(SalesTestCase):
 
 	def vouchers(self):
 		names = [self.sale.name]
-		names += frappe.get_all("Journal Entry", filters={"koomyo_connection": self.conn_a.name}, pluck="name")
+		names += frappe.get_all(
+			"Journal Entry", filters={"koomyo_connection": self.conn_a.name}, pluck="name"
+		)
 		names += frappe.get_all(
 			"Sales Invoice", filters={"koomyo_connection": self.conn_a.name, "is_return": 1}, pluck="name"
 		)
@@ -306,20 +308,26 @@ class TestRefundGivesDiscountBack(SalesTestCase):
 		self.assertTrue(find_existing("Journal Entry", self.conn_a, "discount-refund:refund-1"))
 
 	def test_two_partial_refunds_then_nothing_is_left_on_the_discount_accounts(self):
-		self.assertEqual(self.refund("49.50", [("promotion", "300.00"), ("slice_reward", "200.00")]).status, "Done")
-		log = self.refund("49.50", [("promotion", "300.00"), ("slice_reward", "200.00")], refund_id="refund-2", seq=21)
-		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
-		self.assertEqual(book_balance([PROMO, LOYALTY], self.vouchers()), {PROMO: D("0.00"), LOYALTY: D("0.00")})
 		self.assertEqual(
-			book_balance(["Sales - _KTA"], self.vouchers()), {"Sales - _KTA": D("0.00")}
+			self.refund("49.50", [("promotion", "300.00"), ("slice_reward", "200.00")]).status, "Done"
 		)
+		log = self.refund(
+			"49.50", [("promotion", "300.00"), ("slice_reward", "200.00")], refund_id="refund-2", seq=21
+		)
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		self.assertEqual(
+			book_balance([PROMO, LOYALTY], self.vouchers()), {PROMO: D("0.00"), LOYALTY: D("0.00")}
+		)
+		self.assertEqual(book_balance(["Sales - _KTA"], self.vouchers()), {"Sales - _KTA": D("0.00")})
 
 	def test_a_full_refund_with_lines_checks_them_and_reverses_the_same_way(self):
 		line_id = self.event["data"]["items"][0]["id"]
 		lines = [{"line_id": line_id, "name": "Pizza", "quantity": 1, "amount": "99.00"}]
 		log = self.refund("99.00", [("promotion", "600.00"), ("slice_reward", "400.00")], lines=lines)
 		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
-		self.assertEqual(book_balance([PROMO, LOYALTY], self.vouchers()), {PROMO: D("0.00"), LOYALTY: D("0.00")})
+		self.assertEqual(
+			book_balance([PROMO, LOYALTY], self.vouchers()), {PROMO: D("0.00"), LOYALTY: D("0.00")}
+		)
 		self.assertEqual(frappe.db.get_value("Sales Invoice", log.reference_name, "is_return"), 1)
 
 	def test_lines_that_do_not_match_the_invoice_are_refused(self):
@@ -344,7 +352,9 @@ class TestRefundGivesDiscountBack(SalesTestCase):
 		# Koomyo's parts add to 500.01 while the credit note carries 500.00
 		log = self.refund("49.50", [("promotion", "300.01"), ("slice_reward", "200.00")])
 		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
-		je = frappe.get_doc("Journal Entry", find_existing("Journal Entry", self.conn_a, "discount-refund:refund-1"))
+		je = frappe.get_doc(
+			"Journal Entry", find_existing("Journal Entry", self.conn_a, "discount-refund:refund-1")
+		)
 		self.assertEqual(je.total_debit, je.total_credit)
 
 	def test_refund_without_the_split_keeps_the_old_net_revenue_credit_note(self):
