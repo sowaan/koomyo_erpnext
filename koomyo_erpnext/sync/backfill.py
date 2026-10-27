@@ -97,11 +97,11 @@ def already_there(connection, kind: str, record: dict) -> bool:
 	if kind == "purchase_order":
 		return purchase_already_there(connection, record)
 	koomyo_id = key(record)
-	if find_existing(doctype, connection, koomyo_id):
-		return True
-	return kind == "stock_transfer" and bool(
-		find_existing("Stock Entry", connection, koomyo_id + ":shortfall")
-	)
+	if kind == "stock_transfer":
+		from koomyo_erpnext.sync.transfers import fully_booked
+
+		return fully_booked(record, connection)
+	return bool(find_existing(doctype, connection, koomyo_id))
 
 
 def envelope(connection, kind: str, record: dict) -> dict:

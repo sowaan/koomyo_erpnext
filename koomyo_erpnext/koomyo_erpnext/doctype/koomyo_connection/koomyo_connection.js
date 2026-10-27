@@ -28,6 +28,7 @@ frappe.ui.form.on("Koomyo Connection", {
 		frm.set_query("customer_group", () => ({ filters: { is_group: 0 } }));
 		frm.set_query("supplier_group", () => ({ filters: { is_group: 0 } }));
 		frm.set_query("main_warehouse", company_filter);
+		frm.set_query("transit_warehouse", company_filter);
 		frm.set_query("territory", () => ({ filters: { is_group: 0 } }));
 		frm.set_query("account", "payment_map", company_filter);
 		frm.set_query("fee_account", "payment_map", company_filter);

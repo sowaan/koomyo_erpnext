@@ -64,6 +64,7 @@
   "cogs_account",
   "stock_adjustment_account",
   "transfer_loss_account",
+  "transit_warehouse",
   "section_stock_maps",
   "uom_map",
   "cb_stock_maps",
@@ -859,6 +860,14 @@
    "hidden": 1,
    "label": "Purchase Orders Read Up To",
    "read_only": 1
+  },
+  {
+   "depends_on": "sync_stock",
+   "description": "Stock sent between places waits here until it arrives (ERPNext's Send to Warehouse / Receive at Warehouse). With it, a transfer is posted in steps: sent, each delivery, then returned or lost. Without it, a transfer is posted in one step when it completes.",
+   "fieldname": "transit_warehouse",
+   "fieldtype": "Link",
+   "label": "Transit Warehouse",
+   "options": "Warehouse"
   }
  ],
  "links": [],

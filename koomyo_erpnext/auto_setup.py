@@ -413,6 +413,17 @@ def build_plan(connection, koomyo: dict) -> list[dict]:
 			USE if wh else CREATE,
 			wh or "Main Warehouse",
 		)
+	if not connection.transit_warehouse:
+		wh = frappe.db.exists("Warehouse", {"company": co, "warehouse_name": "Koomyo Transit", "is_group": 0})
+		add(
+			"field:transit_warehouse",
+			_("Defaults"),
+			label_of("transit_warehouse"),
+			"Warehouse",
+			USE if wh else CREATE,
+			wh or "Koomyo Transit",
+			"" if wh else _("Where stock waits while it is sent between places"),
+		)
 	if not connection.walk_in_customer:
 		name = f"{restaurant} Walk-in"[:140]
 		add(
@@ -606,15 +617,20 @@ class Setup:
 			self.used.append(existing)
 			return existing
 		root = f"All Warehouses - {self.info.abbr}"
-		doc = frappe.get_doc(
-			{
-				"doctype": "Warehouse",
-				"warehouse_name": name,
-				"company": self.co,
-				"parent_warehouse": root if frappe.db.exists("Warehouse", root) else None,
-				"is_group": 0,
-			}
-		).insert(ignore_permissions=True)
+		values = {
+			"doctype": "Warehouse",
+			"warehouse_name": name,
+			"company": self.co,
+			"parent_warehouse": root if frappe.db.exists("Warehouse", root) else None,
+			"is_group": 0,
+		}
+		if row["id"] == "field:transit_warehouse":
+			if not frappe.db.exists("Warehouse Type", "Transit"):
+				frappe.get_doc({"doctype": "Warehouse Type", "name": "Transit"}).insert(
+					ignore_permissions=True
+				)
+			values["warehouse_type"] = "Transit"
+		doc = frappe.get_doc(values).insert(ignore_permissions=True)
 		self.remember("Warehouse", doc.name)
 		return doc.name
 

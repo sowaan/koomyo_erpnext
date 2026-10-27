@@ -10,7 +10,7 @@ Koomyo is a restaurant POS. This app is the ERPNext side of its public integrati
 | Refund | Credit Note against the invoice, plus the payment out |
 | Shift closed | Journal Entry for the cash over or short |
 | Daily ingredient usage, waste, adjustments, stock counts | Stock Entries and Stock Reconciliations |
-| Stock transfer | Material Transfer between Warehouses |
+| Stock transfer | Material Transfers between Warehouses, in steps through a Transit Warehouse |
 | Customer | Customer (name, phone and email only) |
 | ← Purchase Order, Purchase Receipt, Supplier, ingredient cost | Written to Koomyo from ERPNext |
 
@@ -92,6 +92,8 @@ Every map row must belong to the connection's Company; this is checked when you 
 
 **Purchase taxes and charges** (Syncs tab, Purchasing): Koomyo orders carry tax, withholding and extra charges. Recoverable tax goes to the **Purchase Tax Account**; tax that cannot be claimed back, and charges spread over cost, go to the **Landed Cost Account** (type Expenses Included In Valuation) and so into the cost of the goods; withholding is a deduction on the **Withholding Tax Account**, never part of cost; charges that are not spread go to the **Charges Expense Account**. **Charges in Landed Cost** follows Koomyo's setting on each charge, or forces None, By Value or By Quantity for the connection. A charge spread by quantity is posted with a Landed Cost Voucher on each delivery (ERPNext's own tax rows only spread by value). Each delivery takes its share of every row by what has arrived so far and the last delivery takes the remainder, so the rows add up to Koomyo's figures.
 
+**Stock transfers in steps.** With a **Transit Warehouse** on the connection (Syncs tab, Stock), a transfer is posted as Koomyo moves it: `transfer.sent` is a Material Transfer with Transit on from the source into the Transit Warehouse (ERPNext's Send to Warehouse); each delivery (`transfer.received`, keyed by its receipt id) is the matching Receive at Warehouse of that delivery to the destination; stock returned to the sender is a receive back into the source; stock lost in transit is a Material Issue from transit to the **Transfer Loss Account**, with Koomyo's reason and value in the remarks; `transfer.cancelled` cancels the send (or fails with a message if a delivery was booked against it). Every event carries the transfer as it stands, so they can arrive in any order, twice, or be replaced by `stock_transfer.completed` or a backfill, and nothing is doubled. A draft creates nothing. Without a Transit Warehouse the step events are skipped with a message, and `stock_transfer.completed` books a transfer in one step as before. In ERPNext v15 the steps are `add_to_transit` and `outgoing_stock_entry` on Material Transfer; v16 is expected to behave the same (not run).
+
 ### 4. Switch the syncs on
 
 | Switch | What it books | Settings it needs |
@@ -99,7 +101,7 @@ Every map row must belong to the connection's Company; this is checked when you 
 | **Sync Sales** | `order.paid` becomes a Sales Invoice (no stock movement) plus Payment Entries. `order.cancelled` adds a note to the invoice. | Walk-in Customer, Menu Item Group, Income Account, Selling Price List. Delivery Fee, Channel Markup and Payment Method Discount accounts once orders use them. |
 | **Sync Refunds** | `refund.created` becomes a Credit Note plus the payment out. A full refund mirrors the invoice. A partial refund follows **Partial Refunds**. | Partial Refunds |
 | **Sync Shifts** | `shift.closed` becomes a Journal Entry for the cash over or short. | Cash Over/Short Account (Cash Drawer Account only when ambiguous) |
-| **Sync Stock** | Daily usage, waste, adjustments, counts and transfers become stock documents. | Opening Stock Date, Ingredient Item Group, Cost of Goods Sold and Stock Adjustment accounts, UOM Map and Waste Map. Transfer Loss Account once a transfer arrives short. |
+| **Sync Stock** | Daily usage, waste, adjustments, counts and transfers become stock documents. | Opening Stock Date, Ingredient Item Group, Cost of Goods Sold and Stock Adjustment accounts, UOM Map and Waste Map. Transfer Loss Account once stock is lost in transit. Transit Warehouse to post transfers in steps (see below). |
 | **Sync Purchasing** | Purchase Orders and Purchase Receipts for a mapped Warehouse go to Koomyo, with their Supplier; ingredient cost changes go to Koomyo; an order received in Koomyo becomes a Purchase Receipt. | Ingredients must be Items linked to Koomyo, which the stock sync creates. |
 | **Book Orders Made in Koomyo** (under Sync Purchasing) | An order made in the Koomyo admin becomes a Supplier (if new) and a submitted Purchase Order once it is **ordered** (a draft creates nothing); each delivery becomes its own Purchase Receipt; an edit before any delivery rebuilds the order; a cancel cancels it (or, if goods were already received, fails with a message for a person). The safety net `GET /purchase-orders?updated_since=` runs every 5 minutes through the same code. | Main Warehouse, Supplier Group; for orders with tax or charges also the Purchase Taxes and Charges accounts below |
 | **Sync Customers** | Koomyo customers become Customers. | Customer Group, Territory, and the webhook's customer data switch on in Koomyo. |

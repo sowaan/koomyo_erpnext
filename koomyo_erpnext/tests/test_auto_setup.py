@@ -180,6 +180,7 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 			"ingredient_item_group",
 			"supplier_group",
 			"main_warehouse",
+			"transit_warehouse",
 			"cash_over_short_account",
 			"purchase_tax_account",
 			"purchase_withholding_account",

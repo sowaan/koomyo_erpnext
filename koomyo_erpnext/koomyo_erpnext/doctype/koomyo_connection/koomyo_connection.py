@@ -176,13 +176,18 @@ class KoomyoConnection(Document):
 			"transfer_loss_account",
 		):
 			self.check_account_company(self.get(fieldname), _(self.meta.get_label(fieldname)))
-		if (
-			self.main_warehouse
-			and frappe.db.get_value("Warehouse", self.main_warehouse, "company") != self.company
-		):
+		for fieldname in ("main_warehouse", "transit_warehouse"):
+			warehouse = self.get(fieldname)
+			if warehouse and frappe.db.get_value("Warehouse", warehouse, "company") != self.company:
+				frappe.throw(
+					_("{0} {1} does not belong to Company {2}.").format(
+						_(self.meta.get_label(fieldname)), warehouse, self.company
+					)
+				)
+		if self.transit_warehouse and any(row.warehouse == self.transit_warehouse for row in self.branch_map):
 			frappe.throw(
-				_("Main Warehouse {0} does not belong to Company {1}.").format(
-					self.main_warehouse, self.company
+				_("Transit Warehouse {0} is also on the Branch Map. Use a warehouse of its own.").format(
+					self.transit_warehouse
 				)
 			)
 		if self.price_list:
