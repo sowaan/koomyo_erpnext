@@ -113,6 +113,13 @@ def on_usage_daily(event: dict, connection):
 
 @handles("waste.recorded", switch="sync_stock", scopes=STOCK_SCOPES)
 def on_waste_recorded(event: dict, connection):
+	"""One Material Issue from the waste's `lines`: the ingredients it took out of stock.
+
+	Docs: OpenAPI Waste.lines, events/stock#wasterecorded. A menu-item waste has one line per recipe
+	ingredient, an ingredient waste has one line. `lines` can be empty (free-text waste, an old
+	menu-item waste from before movements were kept, a cancelled order logged as waste whose
+	ingredients are in the order's own order_deduction movements, so it is not booked twice here).
+	"""
 	waste = event["data"]
 	if waste.get("object") != "waste" or not waste.get("id"):
 		raise Fatal(_("Koomyo sent something that is not a waste record."))
@@ -120,26 +127,49 @@ def on_waste_recorded(event: dict, connection):
 	if existing:
 		return ("Stock Entry", existing)
 	check_opening_date(connection, waste)
+	lines = [line for line in waste.get("lines") or [] if line.get("ingredient_id")]
 	ingredient = waste.get("ingredient")
-	if not ingredient or not ingredient.get("id"):
-		raise Fatal(
-			_(
-				"Waste {0} ({1}) is a whole menu item. Koomyo does not send which ingredients left stock, so it was "
-				"not booked. Book it by hand if needed."
-			).format(waste["id"], waste.get("description"))
-		)
+	if not lines:
+		if not ingredient or not ingredient.get("id"):
+			raise Fatal(
+				_(
+					"Waste {0} ({1}) is of a whole menu item and Koomyo sent no ingredient lines for it. This happens for waste "
+					"recorded before Koomyo kept stock movements and for a cancelled order logged as waste (its ingredients are "
+					"in the order's own stock movements, so booking them here would count them twice). It was not booked: book "
+					"it by hand if needed."
+				).format(waste["id"], waste.get("description"))
+			)
+		# An ingredient waste with no lines (free text): the waste's own ingredient and quantity.
+		lines = [
+			{
+				"ingredient_id": ingredient["id"],
+				"ingredient_name": ingredient.get("name"),
+				"unit": ingredient.get("unit"),
+				"quantity": waste.get("quantity"),
+			}
+		]
 	warehouse, branch = location_warehouse(connection, waste.get("location"), waste.get("branch_id"))
 	expense = waste_account(connection, waste.get("reason"))
-	qty = quantity(waste.get("quantity"), "quantity")
 	entry = new_stock_entry(connection, "Material Issue", waste, waste["id"], waste.get("branch_id"))
 	entry.remarks = _("Koomyo waste ({0}): {1}").format(waste.get("reason"), waste.get("description"))
-	line = {
-		"ingredient_id": ingredient["id"],
-		"ingredient": ingredient.get("name"),
-		"unit": ingredient.get("unit"),
-	}
-	if qty > 0:
-		add_line(entry, connection, line, qty, source=warehouse, expense=expense, branch=branch)
+	for line in lines:
+		qty = quantity(line.get("quantity"), "quantity")
+		if qty < 0:
+			raise Fatal(_("Waste {0} has a line with a negative quantity.").format(waste["id"]))
+		if qty > 0:
+			add_line(
+				entry,
+				connection,
+				{
+					"ingredient_id": line["ingredient_id"],
+					"ingredient": line.get("ingredient_name") or line.get("ingredient"),
+					"unit": line.get("unit"),
+				},
+				qty,
+				source=warehouse,
+				expense=expense,
+				branch=branch,
+			)
 	return submit_entry(entry, _("Nothing was wasted."))
 
 

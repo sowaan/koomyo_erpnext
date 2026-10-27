@@ -17,6 +17,16 @@
    "name": "Kitchen stock",
    "unit": "pcs"
   },
+  "lines": [
+   {
+    "ingredient_id": "10000000-0000-4000-8000-000000000001",
+    "ingredient_name": "Kitchen stock",
+    "quantity": "2.000",
+    "unit": "pcs",
+    "unit_cost": "12.5000",
+    "value": "25.00"
+   }
+  ],
   "location": {
    "id": "90000000-0000-4000-8000-000000000001",
    "type": "branch"

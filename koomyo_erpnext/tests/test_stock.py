@@ -152,10 +152,99 @@ class TestStock(StockTestCase):
 				1,
 				ingredient=None,
 				menu_item_id="a0000000-0000-4000-8000-000000000001",
+				lines=[],
 			)
 		)
 		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
 		self.assertIn("whole menu item", log.message)
+		self.assertIn("cancelled order", log.message)
+
+	def test_menu_item_waste_is_booked_from_its_lines(self):
+		self.assertEqual(self.book(adjustment(1, "10.0000")).status, "Done")
+		self.assertEqual(
+			self.book(adjustment(2, "10.0000", ingredient=MOZZARELLA, unit_cost="1450.0000")).status, "Done"
+		)
+		log = self.book(
+			fixture(
+				"event_waste_recorded",
+				3,
+				ingredient=None,
+				menu_item_id="a0000000-0000-4000-8000-000000000001",
+				quantity="1.000",
+				lines=[
+					{
+						"ingredient_id": KITCHEN,
+						"ingredient_name": "Kitchen stock",
+						"quantity": "2.000",
+						"unit": "pcs",
+						"unit_cost": "12.5000",
+						"value": "25.00",
+					},
+					{
+						"ingredient_id": MOZZARELLA,
+						"ingredient_name": "Mozzarella",
+						"quantity": "0.250",
+						"unit": "kg",
+						"unit_cost": "1450.0000",
+						"value": "362.50",
+					},
+				],
+			)
+		)
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		rows = frappe.get_all(
+			"Stock Entry Detail",
+			filters={"parent": log.reference_name},
+			fields=["item_code", "qty", "s_warehouse"],
+		)
+		self.assertEqual(
+			{r.item_code: (r.qty, r.s_warehouse) for r in rows},
+			{self.item(KITCHEN): (2, STORES), self.item(MOZZARELLA): (0.25, STORES)},
+		)
+		self.assertEqual(self.qty(STORES, KITCHEN), D("8"))
+		self.assertEqual(self.qty(STORES, MOZZARELLA), D("9.75"))
+		# the same waste again (a resent event) books nothing more
+		again = self.book(
+			fixture(
+				"event_waste_recorded",
+				4,
+				ingredient=None,
+				menu_item_id="a0000000-0000-4000-8000-000000000001",
+				lines=[
+					{
+						"ingredient_id": KITCHEN,
+						"ingredient_name": "Kitchen stock",
+						"quantity": "2.000",
+						"unit": "pcs",
+						"unit_cost": "12.5000",
+						"value": "25.00",
+					}
+				],
+			)
+		)
+		self.assertEqual(again.status, "Done")
+		self.assertEqual(self.qty(STORES, KITCHEN), D("8"))
+
+	def test_ingredient_waste_with_no_lines_still_books_from_the_waste_itself(self):
+		self.assertEqual(self.book(adjustment(1, "10.0000")).status, "Done")
+		log = self.book(fixture("event_waste_recorded", 3, lines=[]))
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.assertEqual(self.qty(STORES, KITCHEN), D("8"))
+
+	def test_a_negative_line_is_refused(self):
+		self.assertEqual(self.book(adjustment(1, "10.0000")).status, "Done")
+		bad = [
+			{
+				"ingredient_id": KITCHEN,
+				"ingredient_name": "Kitchen stock",
+				"quantity": "-2",
+				"unit": "pcs",
+				"unit_cost": "1",
+				"value": "-2",
+			}
+		]
+		log = self.book(fixture("event_waste_recorded", 3, lines=bad))
+		self.assertEqual(log.error_class, "Fatal")
 
 	def test_not_enough_stock_in_erpnext_is_refused_clearly(self):
 		refuse_negative_stock(self)
