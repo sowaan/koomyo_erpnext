@@ -116,6 +116,7 @@ If either is wrong, the booked over/short is off by that amount, but the remark 
 
 - **Sizes are Item Variants.** A menu item with sizes is a template Item, keyed by the Koomyo menu item id. Each size is a variant on the "Koomyo Size" attribute, keyed by the Koomyo `size_id`, with its own price on the selling price list (ERPNext does not price templates). An order line with a `size_id` books on that variant. A size dropped in Koomyo is disabled, never deleted. An Item that already has invoices or stock as a plain Item cannot become a template in ERPNext, so it keeps taking all its sizes.
 - **Modifiers and combo choices are not separate Items.** `list_price`, `unit_price` and `line_total` on an order line already include the chosen options (docs guide: 1099 = 1000 + 99), so the line is one invoice row and the old "extras" row is gone (see item 15). Every modifier, free ones included, is written in the line's description. Their ingredients reach stock through Koomyo's own deductions.
+- **Options read for costing only (item 16).** `GET /option-groups`, `GET /option-groups/{id}` and the menu item `include=options` exist now (scope `catalog.read`). The app reads them for costing and bills of materials, never for stock: `sync/recipes.py` has the docs' `stockForLine` arithmetic in exact Decimals (item recipe for the size, each chosen option's rows for the size, swaps giving the replaced ingredient back as a negative use, times the quantity), the match of an order line's `modifiers[].modifier_id` to an option (an unmatched modifier is reported, never guessed) and cost from ingredient costs. Load Menu and Ingredients reads the groups and says how many, how many take nothing from stock, and which recipes count an ingredient twice.
 - **Categories are Item Groups.** One leaf group per Koomyo category, named "<category> (<connection>)", under "<connection> Menu". Items without a category go to the connection's Menu Item Group. A category renamed in Koomyo gets a new group on the next load, its items move there, and the old group is left for you to remove.
 
 ## 14. Purchase orders made in Koomyo (Decision / Open)
@@ -143,4 +144,12 @@ Source: docs.koomyo.com/guides/discounts and the OpenAPI schemas `OrderLine`, `O
 - The identity `items_list_total - discount_total = items_subtotal - discount - voucher_discount` is checked when the order carries both totals; a break is Fatal and nothing is booked.
 - Channel `api` orders are ordinary sales. Stock is not moved by the invoice (Koomyo deducts ingredients itself).
 - **Not verified against a live order with a discount** (the only live connection has none). Verified on the local test site with Koomyo's documented numbers (GL entries asserted).
+
+## 16. Options and bills of materials (Decision / Open)
+
+- Koomyo deducts ingredient stock itself, so options change nothing in ERPNext stock: the invoice does not move stock and the per-order deduction copies Koomyo's own movements (item 12).
+- **No event when an option changes** (docs: "Staying in step"). The app does not keep a copy; Load Menu and Ingredients reads the groups again on request. Cost and BOM work should read `GET /option-groups` just before it runs.
+- **Bills of materials are not built.** An ERPNext BOM is a manufacturing document, and CLAUDE.md puts manufacturing out of scope for v1. The calculator and the reader are ready (and tested against the docs' Thin Crust example); a BOM per menu item and size, with each option as an optional row, is a small step if the owner puts it in scope. Items made from menu sizes are variants, so a BOM would hang on the size variant.
+- A row with no size stacks on a row for one size (the docs say so and warn that Koomyo's admin does too); the arithmetic follows Koomyo. A size with a price and no recipe row takes nothing.
+- **Not verified live.** The live restaurant's options were not read; the fake Koomyo serves the docs' example.
 

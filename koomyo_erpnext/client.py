@@ -193,6 +193,25 @@ class KoomyoClient:
 	def list_branches(self) -> list[dict]:
 		return list(self.iter_list("/branches"))
 
+	def list_option_groups(self, item_id: str | None = None, active: bool | None = None) -> list[dict]:
+		"""GET /option-groups: the choices (modifiers) and what each takes from stock (scope catalog.read)."""
+		params: dict = {"limit": 200}
+		if item_id:
+			params["item_id"] = item_id
+		if active is not None:
+			params["active"] = "true" if active else "false"
+		return list(self.iter_list("/option-groups", params))
+
+	def get_option_group(self, group_id: str) -> dict:
+		group = self.get("/option-groups/" + quote(group_id, safe=""))
+		if group.get("object") != "option_group" or group.get("id") != group_id:
+			raise KoomyoAPIError(
+				None,
+				"bad_response",
+				_("Koomyo answered GET /option-groups/{0} with something else.").format(group_id),
+			)
+		return group
+
 	def get_events(
 		self,
 		*,

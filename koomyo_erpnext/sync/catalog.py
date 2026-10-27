@@ -54,6 +54,7 @@ def load_catalog(connection_name: str, preview: bool = False) -> dict:
 
 		return finish(connection, summary, preview, error=connection_error_message(e))
 
+	read_options(client, summary)
 	frappe.db.savepoint("koomyo_catalog")
 	for record in menu:
 		guarded(
@@ -67,6 +68,29 @@ def load_catalog(connection_name: str, preview: bool = False) -> dict:
 	if preview:
 		frappe.db.rollback(save_point="koomyo_catalog")
 	return finish(connection, summary, preview)
+
+
+def read_options(client, summary: dict):
+	"""Read the option groups (modifiers) for the summary: how many, and which recipes look wrong.
+
+	Options are only read, for costing and bills of materials (sync/recipes.py): Koomyo deducts their
+	stock itself, and no event says when one changes. A Koomyo without the endpoint is left alone.
+	"""
+	from koomyo_erpnext.sync.recipes import option_warnings
+
+	try:
+		groups = read_list(client, "/option-groups", {"limit": 200, "active": "true"})
+	except KoomyoAPIError as e:
+		if e.status != 404:
+			summary["problems"].append(_("Options could not be read: {0}").format(e)[:300])
+		return
+	options = [o for g in groups for o in g.get("options") or []]
+	summary["options"] = {
+		"groups": len(groups),
+		"options": len(options),
+		"no_recipe": sum(1 for o in options if not o.get("recipe")),
+		"warnings": [w for g in groups for w in option_warnings(g)],
+	}
 
 
 def guarded(summary, kind, record, fn):
@@ -276,6 +300,13 @@ def finish(connection, summary: dict, preview: bool, error: str | None = None) -
 		i["updated"],
 		i["unchanged"],
 	)
+	o = summary.get("options")
+	if o:
+		text += " " + _(
+			"{0} option groups with {1} options were read ({2} take nothing from stock); they are only used for costing."
+		).format(o["groups"], o["options"], o["no_recipe"])
+		if o["warnings"]:
+			text += " " + _("Recipes that count an ingredient twice:") + " " + "; ".join(o["warnings"][:5])
 	if summary["problems"]:
 		text += (
 			" "
