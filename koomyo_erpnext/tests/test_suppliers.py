@@ -9,6 +9,7 @@ import frappe
 
 from koomyo_erpnext.tests.fake_koomyo import load_fixture
 from koomyo_erpnext.tests.helpers import TENANT_A, hard_delete, purge_orphan_contact_rows
+from koomyo_erpnext.tests.test_backfill import BackfillTestCase
 from koomyo_erpnext.tests.test_purchase_orders import PurchaseOrderCase, make_order
 
 SUPPLIER_ID = "5bb41bd1-ec94-409b-ae63-08b6b4a97ed2"
@@ -310,3 +311,91 @@ class TestSupplierOnAnOrder(SupplierCase):
 
 		self.po_seq += 1
 		return self.book(event_for(order, "purchase.updated", self.po_seq))
+
+
+class TestSupplierBackfill(BackfillTestCase):
+	"""A backfill with Purchases ticked brings in every supplier card, like supplier.updated would."""
+
+	def setUp(self):
+		purge_orphan_contact_rows()
+		super().setUp()
+		if not frappe.db.exists("Supplier Group", "_Koomyo Suppliers"):
+			frappe.get_doc(
+				{
+					"doctype": "Supplier Group",
+					"supplier_group_name": "_Koomyo Suppliers",
+					"parent_supplier_group": "All Supplier Groups",
+				}
+			).insert()
+		self.conn_a.reload()
+		self.conn_a.update(
+			{
+				"sync_purchasing": 1,
+				"book_koomyo_purchases": 1,
+				"supplier_group": "_Koomyo Suppliers",
+				"main_warehouse": "Stores - _KTA",
+			}
+		)
+		self.conn_a.save()
+		self.fake_a.lists["/suppliers"] = [
+			card(id="bf-1", name="_BF Dairy", created_at="2026-10-01T08:00:00Z"),
+			card(
+				id="bf-2",
+				name="_BF Bakery",
+				created_at="2026-10-05T08:00:00Z",
+				payment_terms="cod",
+				address=None,
+			),
+			card(id="bf-late", name="_BF Later", created_at="2026-12-01T08:00:00Z"),
+		]
+		self.fake_a.lists["/purchase-orders"] = []
+
+	def tearDown(self):
+		for name in frappe.get_all("Supplier", filters={"koomyo_connection": self.conn_a.name}, pluck="name"):
+			for doctype in ("Address", "Contact"):
+				for link in frappe.get_all(
+					"Dynamic Link",
+					filters={"parenttype": doctype, "link_doctype": "Supplier", "link_name": name},
+					pluck="parent",
+				):
+					hard_delete(doctype, link)
+		super().tearDown()
+
+	def suppliers(self):
+		return sorted(
+			frappe.get_all("Supplier", filters={"koomyo_connection": self.conn_a.name}, pluck="koomyo_id")
+		)
+
+	def test_preview_counts_run_brings_them_in_and_a_second_run_changes_nothing(self):
+		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"), "preview")
+		self.assertEqual((doc.found, doc.created, doc.failed), (2, 2, 0), doc.error)
+		self.assertEqual(self.suppliers(), [], "a preview writes nothing")
+		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		self.assertEqual((doc.status, doc.created, doc.failed), ("Completed", 2, 0), doc.error)
+		self.assertEqual(self.suppliers(), ["bf-1", "bf-2"], "a supplier made after the range is left out")
+		again = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		self.assertEqual((again.created, again.already_there), (0, 2))
+		self.assertEqual(len(self.suppliers()), 2)
+		self.assertTrue(frappe.db.exists("Address", {"koomyo_id": "bf-1"}))
+
+	def test_a_live_event_and_a_backfill_never_double(self):
+		live = supplier_event(
+			card(id="bf-1", name="_BF Dairy", updated_at="2026-10-12T16:54:31Z"), "supplier.updated"
+		)
+		self.assertEqual(self.book(live).status, "Done")
+		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		self.assertEqual((doc.created, doc.already_there), (1, 1))
+
+	def test_a_changed_card_is_brought_up_to_date(self):
+		self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		self.fake_a.lists["/suppliers"][0] = card(
+			id="bf-1",
+			name="_BF Dairy",
+			created_at="2026-10-01T08:00:00Z",
+			phone="+92 111",
+			updated_at="2026-10-20T08:00:00Z",
+		)
+		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		self.assertEqual((doc.created, doc.already_there), (1, 1))
+		contact = frappe.get_doc("Contact", frappe.db.get_value("Contact", {"koomyo_id": "bf-1"}))
+		self.assertEqual(contact.phone_nos[0].phone, "+92 111")

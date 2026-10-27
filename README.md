@@ -168,7 +168,7 @@ Use **Retry** on a row, or **Retry All Failed** on the list. Done rows are delet
 3. **Stop** pauses; **Start** carries on from where it was.
 4. **Retry Failed** tries the failed records again; **Re-run a Day** runs one day again.
 
-Stock backfill reads Koomyo's daily usage (`GET /stock-usage`; a day Koomyo has not settled yet is skipped with a message and can be run again later), waste, counts, transfers and hand adjustments, all under the same keys as live events. A run is refused if the range touches a closed accounting period, a Period Closing Voucher, frozen accounts or frozen stock, or (for stock) days before the Opening Stock Date. Calls are paced to the key's rate limit. **All Connections** on the list makes one backfill per connection.
+Ticking **Purchases** also brings in every Koomyo supplier card (needs Book Orders Made in Koomyo). Stock backfill reads Koomyo's daily usage (`GET /stock-usage`; a day Koomyo has not settled yet is skipped with a message and can be run again later), waste, counts, transfers and hand adjustments, all under the same keys as live events. A run is refused if the range touches a closed accounting period, a Period Closing Voucher, frozen accounts or frozen stock, or (for stock) days before the Opening Stock Date. Calls are paced to the key's rate limit. **All Connections** on the list makes one backfill per connection.
 
 ### Dashboard
 

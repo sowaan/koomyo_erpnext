@@ -360,7 +360,12 @@ def process_event(log_name: str):
 	event = json.loads(log.payload)
 	frappe.db.savepoint("koomyo_event")
 	dry_run = bool(connection.dry_run)
+	user = frappe.session.user
 	try:
+		# Booking is the app's own work, not the work of whoever queued the job (a Koomyo Manager who pressed
+		# Retry, or Guest for a webhook): ERPNext's permission checks on the documents it makes, changes and
+		# cancels must not decide whether Koomyo's event is booked.
+		frappe.set_user("Administrator")
 		result = handler(event, connection)
 		if dry_run:
 			raise DryRunDone(result)
@@ -423,6 +428,7 @@ def process_event(log_name: str):
 		reference = result if isinstance(result, tuple | list) and len(result) == 2 else (None, None)
 		_finish(log, "Done", reference=reference)
 	finally:
+		frappe.set_user(user)
 		# Messages ERPNext printed while building documents mean nothing to a background job.
 		frappe.local.message_log = []
 

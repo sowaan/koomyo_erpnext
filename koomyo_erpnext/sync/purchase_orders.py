@@ -421,6 +421,7 @@ def refresh_order(po, order: dict, connection, event_type: str):
 		# Goods have arrived, so the order cannot be rebuilt; the lines on file stay as they are.
 		return po
 	old = po.name
+	po.flags.ignore_permissions = True  # the app cancels what Koomyo cancelled, whoever queued the job
 	po.cancel()
 	# The old document keeps its history but gives up the Koomyo id, so the new one can have it.
 	po.db_set({"koomyo_connection": None, "koomyo_id": None}, update_modified=False)
@@ -447,6 +448,7 @@ def cancel_counterpart(po, order: dict, connection):
 				"Koomyo cancelled purchase order {0} ({1}) but goods were already received in ERPNext ({2}). Nothing was cancelled: decide by hand, then press Retry once the receipts are dealt with."
 			).format(order.get("number") or order["id"], po.name, ", ".join(received))
 		)
+	po.flags.ignore_permissions = True  # the app cancels what Koomyo cancelled, whoever queued the job
 	po.cancel()
 	po.add_comment("Comment", _("Cancelled in Koomyo. Reason: {0}").format(order.get("cancel_reason") or "-"))
 	return ("Purchase Order", po.name)

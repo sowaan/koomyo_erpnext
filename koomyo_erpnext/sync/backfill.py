@@ -65,6 +65,7 @@ KINDS = {
 	"adjustment": ("stock.adjusted", "Stock Entry", lambda r: r["id"]),
 	"customer": ("customer.updated", "Customer", lambda r: r["id"]),
 	"purchase_order": ("purchase.updated", "Purchase Order", lambda r: r["id"]),
+	"supplier": ("supplier.updated", "Supplier", lambda r: r["id"]),
 }
 
 
@@ -91,10 +92,28 @@ def purchase_already_there(connection, order: dict) -> bool:
 	)
 
 
+def supplier_already_there(connection, card: dict) -> bool:
+	"""A supplier needs nothing when ERPNext holds this card (or a newer one), or made it itself."""
+	from koomyo_erpnext.sync.suppliers import existing_supplier, is_stale
+
+	name = existing_supplier(card, connection)
+	if not name:
+		return False
+	doc = frappe.get_doc("Supplier", name)
+	if doc.get("koomyo_branch") != "origin:koomyo":
+		return True  # made in ERPNext: it stays ERPNext's
+	return bool(
+		doc.get("koomyo_updated_at")
+		and (is_stale(doc, card) or doc.koomyo_updated_at == card.get("updated_at"))
+	)
+
+
 def already_there(connection, kind: str, record: dict) -> bool:
 	_type, doctype, key = KINDS[kind]
 	if kind == "purchase_order":
 		return purchase_already_there(connection, record)
+	if kind == "supplier":
+		return supplier_already_there(connection, record)
 	koomyo_id = key(record)
 	if kind == "stock_transfer":
 		from koomyo_erpnext.sync.transfers import fully_booked
@@ -106,8 +125,12 @@ def already_there(connection, kind: str, record: dict) -> bool:
 def envelope(connection, kind: str, record: dict) -> dict:
 	"""The live event this record would have come in, so the same handler books it."""
 	event_type, _doctype, key = KINDS[kind]
+	event_id = f"backfill:{kind}:{key(record)}"
+	if kind in ("supplier", "customer", "purchase_order") and record.get("updated_at"):
+		# These records change: a later copy is another event, so a run after a change is not mistaken for a repeat.
+		event_id += f":{record['updated_at']}"
 	return {
-		"id": f"backfill:{kind}:{key(record)}",
+		"id": event_id,
 		"object": "event",
 		"api_version": "v1",
 		"type": event_type,
@@ -369,7 +392,7 @@ def run_chunk(backfill, connection, reader, chunk, dry_run: bool, sample: list):
 	for kind in chunk_kinds(backfill, chunk):
 		if kind in state.get("done", []):
 			continue
-		if kind in ("customer", "purchase_order"):
+		if kind in ("customer", "purchase_order", "supplier"):
 			read_unpaged_kind(backfill, reader, kind, state, handle, chunk, counts, dry_run)
 		elif kind == "usage":
 			from koomyo_erpnext.sync.order_stock import PER_ORDER, effective_mode
@@ -428,6 +451,10 @@ def read_unpaged_kind(backfill, reader, kind, state, handle, chunk, counts, dry_
 	if kind == "customer":
 		path, params = "/customers", {"updated_since": start, "limit": 500}
 		keep = lambda r: (r.get("updated_at") or "")[:10] <= end  # noqa: E731
+	elif kind == "supplier":
+		# A supplier has no business date: every supplier made up to the end of the range comes in.
+		path, params = "/suppliers", {"limit": 200}
+		keep = lambda r: (r.get("created_at") or "")[:10] <= end  # noqa: E731
 	else:
 		path, params = "/purchase-orders", {"status": "received", "limit": 200}
 		if backfill.koomyo_branch_id:
@@ -461,7 +488,7 @@ def chunk_kinds(backfill, chunk) -> list[str]:
 	if chunk.chunk == "customers":
 		return ["customer"]
 	if chunk.chunk == "purchases":
-		return ["purchase_order"]
+		return ["supplier", "purchase_order"]
 	return kinds_for(backfill)
 
 

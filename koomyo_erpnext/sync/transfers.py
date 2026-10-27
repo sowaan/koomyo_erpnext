@@ -217,6 +217,7 @@ def cancel_send(transfer: dict, connection):
 				"Koomyo cancelled transfer {0} but {1} was already booked against its send {2}. Nothing was cancelled: reverse those entries, then press Retry."
 			).format(transfer.get("number") or transfer["id"], ", ".join(against), name)
 		)
+	entry.flags.ignore_permissions = True  # the app cancels what Koomyo cancelled, whoever queued the job
 	entry.cancel()
 	entry.add_comment(
 		"Comment", _("Cancelled in Koomyo. Reason: {0}").format(transfer.get("cancel_reason") or "-")
