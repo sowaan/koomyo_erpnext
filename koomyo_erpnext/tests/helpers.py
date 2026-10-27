@@ -291,7 +291,28 @@ KOOMYO_DOCTYPES_TO_CLEAN = (
 	"Journal Entry",
 	"Stock Entry",
 	"Stock Reconciliation",
+	"Address",
+	"Contact",
 )
+
+
+def purge_orphan_contact_rows():
+	"""Child rows of Contacts and Addresses whose parent is gone (Frappe leaves them when a Supplier is deleted).
+
+	A new Contact of the same name would otherwise show them as its own.
+	"""
+	for table, parenttype in (
+		("Contact Phone", "Contact"),
+		("Contact Email", "Contact"),
+		("Dynamic Link", "Contact"),
+		("Dynamic Link", "Address"),
+	):
+		parents = frappe.get_all(parenttype, pluck="name")
+		filters = {"parenttype": parenttype} if table == "Dynamic Link" else {}
+		rows = frappe.get_all(table, filters=filters, fields=["name", "parent"])
+		stale = [r.name for r in rows if r.parent not in set(parents)]
+		if stale:
+			frappe.db.delete(table, {"name": ("in", stale)})
 
 
 def hard_delete(doctype: str, name: str):
@@ -354,6 +375,7 @@ def clean_koomyo_data():
 		):
 			frappe.db.delete(table, {"parent": ("in", connections)})
 		frappe.db.delete("Koomyo Connection", {"name": ("in", connections)})
+	purge_orphan_contact_rows()
 	# Size values the tests added and no Item uses any more.
 	used = set(
 		frappe.get_all(

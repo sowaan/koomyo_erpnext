@@ -118,6 +118,12 @@ class FakeKoomyo:
 			return self._write(method, path, json_body, (headers or {}).get("Idempotency-Key"))
 		if path.startswith("/purchase-orders/") and path[len("/purchase-orders/") :] in self.purchase_orders:
 			return FakeResponse(200, self.purchase_orders[path[len("/purchase-orders/") :]])
+		if path.startswith("/suppliers/"):
+			sid = path.split("/")[2]
+			for card in [*self.lists.get("/suppliers", []), *self.suppliers.values()]:
+				if card["id"] == sid:
+					return FakeResponse(200, card)
+			return error_response(404, "not_found")
 		if path.startswith("/option-groups/"):
 			for group in self.lists.get("/option-groups", []):
 				if group["id"] == path.split("/")[2]:

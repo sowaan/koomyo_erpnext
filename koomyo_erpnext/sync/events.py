@@ -751,5 +751,6 @@ from koomyo_erpnext.sync import (
 	sales,
 	shifts,
 	stock,
+	suppliers,
 	transfers,
 )

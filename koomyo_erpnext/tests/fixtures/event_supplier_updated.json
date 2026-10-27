@@ -1,0 +1,60 @@
+{
+ "api_version": "v1",
+ "branch_id": null,
+ "business_date": "2026-10-12",
+ "created": "2026-10-12T16:54:31Z",
+ "currency": "PKR",
+ "data": {
+  "active": true,
+  "address": null,
+  "address_line2": null,
+  "alt_phone": null,
+  "city": "Lahore",
+  "code": "SUP-0001",
+  "contact_name": null,
+  "country": "Pakistan",
+  "created_at": "2026-10-12T16:54:31Z",
+  "credit_limit": "250000.00",
+  "currency": null,
+  "delivery_days": [
+   "mon",
+   "thu"
+  ],
+  "email": "buy@example.invalid",
+  "external_refs": {
+   "erpnext": "SUP-0001"
+  },
+  "id": "a0d50d39-b20d-4e85-9811-cf8010885691",
+  "lead_time_days": null,
+  "min_order_value": null,
+  "name": "ERP Supplier Renamed",
+  "notes": null,
+  "object": "supplier",
+  "payment_days": 30,
+  "payment_terms": "net",
+  "phone": null,
+  "postal_code": null,
+  "preferred": false,
+  "rating": null,
+  "region": null,
+  "tags": [
+   "Dairy"
+  ],
+  "tax_number": null,
+  "tax_number2": null,
+  "tax_status": null,
+  "updated_at": "2026-10-12T16:54:31Z",
+  "website": null,
+  "whatsapp": null
+ },
+ "entity": {
+  "id": "a0d50d39-b20d-4e85-9811-cf8010885691",
+  "type": "supplier"
+ },
+ "id": "c4580d13-710d-43dc-b4b2-144a80a5d3c3",
+ "object": "event",
+ "seq": 8,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "supplier.updated"
+}

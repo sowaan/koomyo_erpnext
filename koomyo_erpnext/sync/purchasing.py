@@ -27,10 +27,8 @@ from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping, Skipped
 from koomyo_erpnext.sync.common import find_existing, money, posting_date, stamp
 from koomyo_erpnext.sync.events import handles, idempotency_key, koomyo_write, store_outbound
+from koomyo_erpnext.sync.suppliers import KOOMYO_ORIGIN
 
-# Suppliers made from a Koomyo order carry this in koomyo_branch (unused on Suppliers), so they
-# are never pushed back to Koomyo, which already owns them.
-KOOMYO_ORIGIN = "origin:koomyo"
 WRITE_SCOPES = ("purchasing.read", "purchasing.write", "suppliers.write", "ingredients.write")
 QTY = Decimal("0.0001")
 
@@ -336,26 +334,26 @@ def linked_ingredient(item_code: str, connection) -> str:
 # ------------------------------------------------------------------ inbound
 
 
-def koomyo_supplier(connection, supplier: dict) -> str:
-	from koomyo_erpnext.sync.common import setting
+def koomyo_supplier(connection, supplier: dict, client: KoomyoClient | None = None) -> str:
+	"""The Supplier of a Koomyo purchase order, made from Koomyo's whole card when it can be read.
+
+	The order only names the supplier; `GET /suppliers/{id}` has the card (sync/suppliers.py). If that
+	cannot be read now, the Supplier is made from the name and filled in by the supplier event later.
+	"""
+	from koomyo_erpnext.sync.suppliers import apply_card, new_supplier
 
 	if not supplier.get("id"):
 		raise Fatal(_("Koomyo sent a purchase order without a supplier."))
 	existing = find_existing("Supplier", connection, supplier["id"])
 	if existing:
 		return existing
-	name = (supplier.get("name") or supplier["id"])[:140]
-	if frappe.db.exists("Supplier", name):
-		# A Supplier of that name is already in ERPNext and is not this Koomyo supplier: never merge.
-		name = f"{name[:100]} ({connection.name})"
-	doc = frappe.new_doc("Supplier")
-	doc.update(
-		{
-			"supplier_name": name,
-			"supplier_group": setting(connection, "supplier_group", _("Supplier Group")),
-			"supplier_type": "Company",
-		}
-	)
-	stamp(doc, connection, supplier["id"], KOOMYO_ORIGIN)
+	try:
+		client = client or KoomyoClient.for_connection(connection)
+		card = client.get("/suppliers/" + quote(supplier["id"], safe=""))
+		if card.get("object") == "supplier" and card.get("id") == supplier["id"]:
+			return apply_card(card, connection)[1]
+	except KoomyoAPIError:
+		pass
+	doc = new_supplier({"id": supplier["id"], "name": supplier.get("name")}, connection)
 	doc.insert(ignore_permissions=True)
 	return doc.name

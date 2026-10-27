@@ -318,7 +318,7 @@ def create_order(connection, order: dict):
 	po.update(
 		{
 			"company": connection.company,
-			"supplier": koomyo_supplier(connection, order.get("supplier") or {}),
+			"supplier": koomyo_supplier(connection, order.get("supplier") or {}, client),
 			"transaction_date": date,
 			"schedule_date": order.get("expected_date") or date,
 			"set_warehouse": warehouse,

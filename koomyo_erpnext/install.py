@@ -10,6 +10,8 @@ KOOMYO_DOCTYPES = (
 	"Customer",
 	"Item",
 	"Supplier",
+	"Address",
+	"Contact",
 	"Purchase Order",
 	"Purchase Receipt",
 	"Landed Cost Voucher",

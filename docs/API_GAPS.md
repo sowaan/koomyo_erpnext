@@ -153,3 +153,14 @@ Source: docs.koomyo.com/guides/discounts and the OpenAPI schemas `OrderLine`, `O
 - A row with no size stacks on a row for one size (the docs say so and warn that Koomyo's admin does too); the arithmetic follows Koomyo. A size with a price and no recipe row takes nothing.
 - **Not verified live.** The live restaurant's options were not read; the fake Koomyo serves the docs' example.
 
+## 17. Suppliers (Decision / Open)
+
+Source: docs.koomyo.com/events/master-data, schema `Supplier`.
+
+- `supplier.created|updated` (switch: Book Orders Made in Koomyo) make or update a Supplier, one Billing Address, one Contact and a Payment Terms Template (`sync/suppliers.py`). A copy older than the stored `updated_at` changes nothing. Koomyo's `POST /suppliers` with our external reference fires `supplier.updated`; that echo is skipped because the Supplier is ERPNext-made.
+- ERPNext has no field for the credit limit, lead time, minimum order, delivery days, tags, preferred flag, rating, code, second tax number or tax status of a supplier, so they are written as plain text in the Supplier's "More Information" (escaped). `tax_status` is not mapped to a Tax Category (the app does not guess which of the site's categories means "registered"). Payment terms `advance` has no ERPNext meaning beyond "due on the invoice date"; the template says so in its description.
+- The address needs a first line, a city and a country ERPNext knows by name: Address requires all three. Otherwise no address is made and the Supplier gets a comment saying what was missing. The country is matched by ERPNext name only (capitals ignored); nothing is guessed from a code.
+- **Not pushed back.** ERPNext still sends only name, active flag, phone and email (`POST /suppliers`); the fuller card is read-only here. **Wish:** none needed unless the owner wants edits to flow back; then `PATCH /suppliers/{id}` has the fields.
+- **Not built:** a list read of `GET /suppliers` for old suppliers (a backfill kind). Suppliers arrive by event, or with a purchase order. A supplier changed while the app was down is caught up by the events feed.
+- **Not verified live:** only the docs examples through the fake Koomyo.
+
