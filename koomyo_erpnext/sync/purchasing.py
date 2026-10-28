@@ -73,21 +73,11 @@ def on_purchase_order_submit(doc, method=None):
 
 
 def on_purchase_order_cancel(doc, method=None):
-	"""A Purchase Order sent to Koomyo was cancelled in ERPNext.
-
-	Koomyo's API has no call to cancel a purchase order, so it cannot be done from here. It is queued as
-	its own Event Log row that fails with what to do, so it is seen, and noted on the order.
-	"""
+	"""A Purchase Order sent to Koomyo was cancelled in ERPNext: Koomyo is told (POST .../cancel)."""
 	if not doc.get("koomyo_connection") or not doc.get("koomyo_id") or doc.get("koomyo_content"):
 		return  # never sent to Koomyo, or an order Koomyo made itself (its own cancel comes as an event)
 	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
 	if connection.enabled and connection.sync_purchasing:
-		doc.add_comment(
-			"Comment",
-			_(
-				"Cancelled in ERPNext, but Koomyo's API has no call to cancel a purchase order: Koomyo still has order {0} open."
-			).format(doc.koomyo_id),
-		)
 		store_outbound(connection, "erpnext.purchase_order_cancel", doc)
 
 
@@ -424,15 +414,53 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 
 @handles("erpnext.purchase_order_cancel", switch="sync_purchasing", scopes=WRITE_SCOPES)
 def push_purchase_order_cancel(event: dict, connection, client: KoomyoClient | None = None):
-	"""Koomyo cannot be told through its API: say so, once, where a person will see it."""
+	"""POST /purchase-orders/{id}/cancel: what the order held goes back to the purchase requests.
+
+	Koomyo cancels a draft or an ordered order. A partly received order answers 409 partially_received (finish
+	it with the receive call and close_short), a received one 409 already_received; one already cancelled
+	answers 409 already_cancelled, which is the job done.
+	"""
 	po = frappe.get_doc("Purchase Order", event["data"]["name"])
 	if po.docstatus != 2:
 		raise Skipped(_("Purchase Order {0} is not cancelled any more.").format(po.name))
-	raise Fatal(
-		_(
-			"Purchase Order {0} was cancelled in ERPNext, but Koomyo's API cannot cancel an order: Koomyo still expects it (its request lines stay ordered). Cancel it in the Koomyo admin (Purchases). Nothing is needed here afterwards: its cancellation comes back as an event."
-		).format(po.name)
+	if po.koomyo_connection != connection.name or not po.koomyo_id:
+		raise Skipped(_("Purchase Order {0} was never sent to Koomyo.").format(po.name))
+	client = client or KoomyoClient.for_connection(connection)
+	attempt = int(event.get("attempt", 1))
+	try:
+		answer = koomyo_write(
+			connection,
+			client,
+			"POST",
+			f"/purchase-orders/{quote(po.koomyo_id, safe='')}/cancel",
+			{"reason": _("Cancelled in ERPNext ({0})").format(po.name)[:300]},
+			# After a refusal a retry needs a fresh key: Koomyo replays a refused answer for the same one.
+			idempotency_key(
+				"Purchase Order", po.name, po.modified, "cancel" if attempt <= 1 else f"cancel-{attempt}"
+			),
+		)
+	except KoomyoAPIError as e:
+		if e.code == "already_cancelled":
+			return ("Purchase Order", po.name)
+		if e.code == "partially_received":
+			raise Fatal(
+				_(
+					"Koomyo purchase order {0} was partly received, so it cannot be cancelled. Finish it short instead: receive what arrived and close the rest (Close the Purchase Order in ERPNext, or close it short in the Koomyo admin). Purchase Order {1} stays cancelled in ERPNext."
+				).format(po.koomyo_id, po.name)
+			)
+		if e.code == "already_received":
+			raise Fatal(
+				_(
+					"Koomyo purchase order {0} is already received or closed short, so it cannot be cancelled in Koomyo. Purchase Order {1} stays cancelled in ERPNext: adjust the stock in Koomyo by hand."
+				).format(po.koomyo_id, po.name)
+			)
+		raise
+	if answer.get("object") != "purchase_order" or answer.get("status") != "cancelled":
+		raise Fatal(_("Koomyo answered the cancel of {0} with something else.").format(po.koomyo_id))
+	po.add_comment(
+		"Comment", _("Cancelled in Koomyo too (order {0}).").format(answer.get("number") or po.koomyo_id)
 	)
+	return ("Purchase Order", po.name)
 
 
 @handles("erpnext.purchase_order_close", switch="sync_purchasing", scopes=WRITE_SCOPES)

@@ -267,3 +267,22 @@ class TestEditsComeBack(RequestOrderCase):
 				self.book(request_event(card, "purchase_request.approved", self.seq)).status, "Done"
 			)
 		self.assertEqual({r.parent for r in self.material_rows()}, names)
+
+
+class TestCancelReturnsTheQuantity(RequestOrderCase):
+	def test_cancelling_in_erpnext_puts_the_request_lines_back_to_approved(self):
+		po = self.make_order()
+		self.run_queue()
+		cards = {c["id"]: c for c in self.fake_a.lists["/purchase-requests"]}
+		self.assertEqual({c["lines"][0]["status"] for c in cards.values()}, {"ordered"})
+		frappe.get_doc("Purchase Order", po.name).cancel()
+		frappe.db.commit()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order_cancel"]
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.assertEqual({c["lines"][0]["status"] for c in cards.values()}, {"approved"})
+		self.assertEqual({float(c["lines"][0]["ordered_quantity"]) for c in cards.values()}, {0.0})
+		# the order can be made again, and Koomyo takes it
+		again = self.make_order()
+		self.run_queue()
+		self.assertTrue(frappe.db.get_value("Purchase Order", again.name, "koomyo_id"))

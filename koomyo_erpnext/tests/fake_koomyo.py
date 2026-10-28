@@ -78,6 +78,7 @@ class FakeKoomyo:
 		self.suppliers: dict[str, dict] = {}
 		self.purchase_orders: dict[str, dict] = {}
 		self.receive_calls: list[dict] = []
+		self.cancel_calls: list[dict] = []
 		self.purchase_bodies: list[dict] = []  # every POST /purchase-orders body that was accepted
 		self.purchase_requests_off = False  # GET /purchase-requests answers 403 feature_not_available
 		self.unsettled_days: set[str] = set()  # GET /stock-usage answers 409 day_not_settled for these
@@ -311,6 +312,8 @@ class FakeKoomyo:
 			self.purchase_bodies.append(body)
 			self.purchase_orders[pid] = order
 			return FakeResponse(201, order)
+		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/cancel"):
+			return self._cancel(path.split("/")[2], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):
 			return self._receive(path.split("/")[2], body or {})
 		if method == "PATCH" and path.startswith("/ingredients/"):
@@ -392,6 +395,38 @@ class FakeKoomyo:
 			if Decimal(request_line["ordered_quantity"]) >= Decimal(request_line["approved_quantity"]):
 				request_line["status"] = "ordered"
 		return out
+
+	def _cancel(self, order_id, body):
+		"""POST /purchase-orders/{id}/cancel (docs: a draft or ordered order; the quantities go back to the requests)."""
+		from decimal import Decimal
+
+		order = self.purchase_orders.get(order_id)
+		if not order:
+			return error_response(404, "not_found")
+		reason = body.get("reason")
+		if not isinstance(reason, str) or not 1 <= len(reason) <= 300:
+			return error_response(400, "invalid_parameter", "reason is required, 1 to 300 characters")
+		if order["status"] == "cancelled":
+			return error_response(409, "already_cancelled", "already cancelled")
+		if order["status"] == "partial":
+			return error_response(409, "partially_received", "close it short instead")
+		if order["status"] == "received":
+			return error_response(409, "already_received", "already received")
+		self.cancel_calls.append(body)
+		order["status"] = "cancelled"
+		order["cancel_reason"] = reason
+		order["cancelled_at"] = "2026-10-29T09:00:00Z"
+		order["updated_at"] = "2026-10-29T09:00:00Z"
+		by_line = {l["id"]: l for card in self.lists.get("/purchase-requests", []) for l in card["lines"]}
+		for line in order["lines"]:
+			for share in line.get("allocations") or []:
+				request_line = by_line.get(share.get("request_line_id"))
+				if request_line:
+					left = Decimal(request_line["ordered_quantity"]) - Decimal(share["quantity"])
+					request_line["ordered_quantity"] = str(max(left, Decimal(0)))
+					if request_line["status"] == "ordered":
+						request_line["status"] = "approved"
+		return FakeResponse(200, order)
 
 	def _receive(self, order_id, body):
 		"""POST /purchase-orders/{id}/receive: one delivery; lines carry the line's TOTAL so far."""
