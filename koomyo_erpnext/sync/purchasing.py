@@ -72,6 +72,25 @@ def on_purchase_order_submit(doc, method=None):
 		store_outbound(connection, "erpnext.purchase_order", doc)
 
 
+def on_purchase_order_cancel(doc, method=None):
+	"""A Purchase Order sent to Koomyo was cancelled in ERPNext.
+
+	Koomyo's API has no call to cancel a purchase order, so it cannot be done from here. It is queued as
+	its own Event Log row that fails with what to do, so it is seen, and noted on the order.
+	"""
+	if not doc.get("koomyo_connection") or not doc.get("koomyo_id") or doc.get("koomyo_content"):
+		return  # never sent to Koomyo, or an order Koomyo made itself (its own cancel comes as an event)
+	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
+	if connection.enabled and connection.sync_purchasing:
+		doc.add_comment(
+			"Comment",
+			_(
+				"Cancelled in ERPNext, but Koomyo's API has no call to cancel a purchase order: Koomyo still has order {0} open."
+			).format(doc.koomyo_id),
+		)
+		store_outbound(connection, "erpnext.purchase_order_cancel", doc)
+
+
 def on_purchase_receipt_submit(doc, method=None):
 	if doc.get("koomyo_connection"):
 		return  # made from a Koomyo receipt: Koomyo already has it
@@ -378,6 +397,19 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 		body["close_short"] = True
 	before = {r.get("id") for r in order.get("receipts") or []}
 	return send_receive(connection, client, po, receipt, body, "receive", before)
+
+
+@handles("erpnext.purchase_order_cancel", switch="sync_purchasing", scopes=WRITE_SCOPES)
+def push_purchase_order_cancel(event: dict, connection, client: KoomyoClient | None = None):
+	"""Koomyo cannot be told through its API: say so, once, where a person will see it."""
+	po = frappe.get_doc("Purchase Order", event["data"]["name"])
+	if po.docstatus != 2:
+		raise Skipped(_("Purchase Order {0} is not cancelled any more.").format(po.name))
+	raise Fatal(
+		_(
+			"Purchase Order {0} was cancelled in ERPNext, but Koomyo's API cannot cancel an order: Koomyo still expects it (its request lines stay ordered). Cancel it in the Koomyo admin (Purchases). Nothing is needed here afterwards: its cancellation comes back as an event."
+		).format(po.name)
+	)
 
 
 @handles("erpnext.purchase_order_close", switch="sync_purchasing", scopes=WRITE_SCOPES)

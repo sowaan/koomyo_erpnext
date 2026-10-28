@@ -184,3 +184,7 @@ Source: docs.koomyo.com/guides/purchase-requests and /events/purchase-requests, 
 - **Deleted open stock counts** disappear from `GET /stock-counts` and send no event; a backfill reads closed counts only, so nothing is needed and nothing was ever booked for them.
 - **Payment methods.** The code list is never assumed. A method not in the Payment Map fails with the row to add (CLAUDE.md: a missing mapping is never guessed), unless the connection has a Default Mode of Payment with a default account for the Company, as the brief asked: then it is booked there, the Payment Entry's remarks say so, and the Event Log row carries a warning. Fees are not applied to such a payment.
 
+## 21. Cancelling a purchase order from ERPNext (Open)
+
+The public API has no way to cancel a purchase order (`/purchase-orders` takes GET and POST, `/purchase-orders/{id}` only GET; the only cancel call is for sales orders). So cancelling a Purchase Order in ERPNext cannot reach Koomyo. The app does not pretend otherwise: it notes it on the Purchase Order and queues a Koomyo Event Log row (`erpnext.purchase_order_cancel`) that fails with what to do: cancel the order in the Koomyo admin (Purchases), where its request lines stay ordered until then; the cancellation then comes back as `purchase.cancelled`, which is already handled. Nothing is sent to Koomyo. **Wish:** `POST /purchase-orders/{id}/cancel` (a draft or ordered order, as in the admin), so the cancel could follow.
+

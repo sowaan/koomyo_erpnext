@@ -215,6 +215,7 @@ Set **Alert Email** in **Koomyo Settings**. A connection with a revoked key, an 
 | Failed: "Discount Map" or "Discount Accounting" | Add the Discount Map row for that source, or switch on Selling Settings > Enable Discount Accounting for Selling, then Retry. |
 | A transfer or purchase order fails naming a Koomyo warehouse id | Run Set Up From Koomyo again (it reads the warehouse list), or add a Branch Map row of Location Type Warehouse. |
 | Failed: "Koomyo will not take Purchase Order ..." | A request line is not approved, or the order takes more than purchasing approved, or the restaurant lacks the feature: the message says which. Nothing was created in Koomyo; fix it and Retry. |
+| Failed: "Purchase Order ... was cancelled in ERPNext, but Koomyo's API cannot cancel an order" | Koomyo's API has no call to cancel a purchase order. Cancel it in the Koomyo admin (Purchases); its cancellation then comes back by itself. |
 | Failed: "purchase order ... already fully received or closed short" | Koomyo has nothing more to receive for that order; adjust the stock in Koomyo. |
 
 What the Koomyo API does not provide yet, and the choices made where the docs leave room, are in [docs/API_GAPS.md](docs/API_GAPS.md).

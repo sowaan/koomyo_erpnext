@@ -560,3 +560,33 @@ class TestReadOnly(PurchasingTestCase):
 		event["data"]["external_refs"] = {}
 		event.update({"tenant_id": TENANT_A, "seq": 97, "id": "evt-ro-po"})
 		return event
+
+
+class TestCancelInErpnext(PurchasingTestCase):
+	def test_koomyo_cannot_be_told_so_it_is_said_where_a_person_sees_it(self):
+		po = self.make_po()
+		self.run_queue()
+		self.assertEqual(self.fake_a.purchase_orders["po-1"]["status"], "ordered")
+		self.fake_a.writes.clear()
+		frappe.get_doc("Purchase Order", po.name).cancel()
+		frappe.db.commit()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order_cancel"]
+		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
+		self.assertIn("Cancel it in the Koomyo admin", log.message)
+		self.assertIn(po.name, log.message)
+		self.assertEqual(self.fake_a.writes, [], "no call to Koomyo exists for it")
+		comments = frappe.get_all(
+			"Comment",
+			filters={"reference_doctype": "Purchase Order", "reference_name": po.name},
+			pluck="content",
+		)
+		self.assertTrue([c for c in comments if "no call to cancel a purchase order" in c])
+
+	def test_an_order_never_sent_or_made_by_koomyo_says_nothing(self):
+		unsent = self.make_po()
+		frappe.db.set_value("Purchase Order", unsent.name, {"koomyo_connection": None, "koomyo_id": None})
+		frappe.get_doc("Purchase Order", unsent.name).cancel()
+		frappe.db.commit()
+		self.run_queue()
+		self.assertEqual([l for l in self.outbound() if l.event_type == "erpnext.purchase_order_cancel"], [])
