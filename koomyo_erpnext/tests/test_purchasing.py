@@ -811,7 +811,9 @@ class TestTaxAndChargesOutbound(PurchasingTestCase):
 
 	def test_a_line_discount_goes_as_a_percent_on_the_price_before_it(self):
 		po = self.make_po(submit=False)
+		po.items[0].price_list_rate = 1450  # a discount needs the price before it
 		po.items[0].discount_percentage = 10
+		po.items[0].rate = 1305  # 1450 less 10%
 		po.save()
 		po.submit()
 		frappe.db.commit()
