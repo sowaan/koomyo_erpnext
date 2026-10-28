@@ -65,6 +65,61 @@ class TestCustomers(SalesTestCase):
 			("customer", data["id"], customer.name),
 		)
 
+	def test_unnamed_customers_never_get_the_koomyo_id_as_a_name(self):
+		data_id = "7f13642a-c07d-4f33-a046-4aadc16e4e30"
+		log = self.book(customer_event(1, id=data_id, name=None, phone=None, email=None))
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		customer = self.customer(data_id)
+		self.assertEqual(customer.customer_name, "Koomyo customer 7f13642a")
+		self.assertNotIn(data_id, customer.customer_name + customer.name, "the id is not the name")
+		self.assertEqual(customer.koomyo_id, data_id, "it is kept in the Koomyo id field")
+		# with only a phone, the number is the name, as before
+		other = "9a13642a-c07d-4f33-a046-4aadc16e4e31"
+		self.book(customer_event(2, id=other, name=None, phone="+923001112223", email=None))
+		self.assertEqual(self.customer(other).customer_name, "+923001112223")
+		# the contact made for it is not named after the id either
+		contacts = frappe.get_all("Contact", filters={"name": ("like", "%7f13642a%")}, pluck="name")
+		for name in contacts:
+			self.assertNotIn(data_id, name)
+
+	def test_a_real_name_arriving_later_renames_customer_and_contact_and_a_nameless_event_never_undoes_it(
+		self,
+	):
+		data_id = "7f13642a-c07d-4f33-a046-4aadc16e4e30"
+		self.book(customer_event(1, id=data_id, name=None, phone="+923001112223", email="a@example.test"))
+		customer = self.customer(data_id)
+		self.assertTrue(customer.customer_primary_contact)
+		self.book(
+			customer_event(
+				2,
+				kind="customer.updated",
+				id=data_id,
+				name="Ayesha Khan",
+				phone="+923001112223",
+				email="a@example.test",
+			)
+		)
+		customer = self.customer(data_id)
+		self.assertEqual(customer.customer_name, "Ayesha Khan")
+		contact = frappe.get_doc("Contact", customer.customer_primary_contact)
+		self.assertEqual((contact.first_name, contact.last_name), ("Ayesha", "Khan"))
+		# a later event without a name keeps the real one
+		self.book(
+			customer_event(
+				3,
+				kind="customer.updated",
+				id=data_id,
+				name=None,
+				phone="+923009998887",
+				email="a@example.test",
+			)
+		)
+		customer = self.customer(data_id)
+		self.assertEqual(customer.customer_name, "Ayesha Khan")
+		contact = frappe.get_doc("Contact", customer.customer_primary_contact)
+		self.assertEqual((contact.first_name, contact.last_name), ("Ayesha", "Khan"))
+		self.assertEqual(contact.mobile_no, "+923009998887", "the new number still reaches the contact")
+
 	def test_update_and_late_older_event(self):
 		data_id = load_fixture("event_customer_created")["data"]["id"]
 		self.book(customer_event(1))

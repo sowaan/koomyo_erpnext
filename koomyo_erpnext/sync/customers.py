@@ -43,14 +43,19 @@ def on_customer_event(event: dict, connection, client: KoomyoClient | None = Non
 	if newer:
 		raise Skipped(_("A newer change of this customer was already applied."))
 
-	name = (data.get("name") or "").strip() or (data.get("phone") or "").strip() or data["id"]
+	real_name = (data.get("name") or "").strip()
 	existing = find_existing("Customer", connection, data["id"])
 	if existing:
 		customer = frappe.get_doc("Customer", existing)
-		customer.customer_name = name[:140]
-		customer.save(ignore_permissions=True)
+		if real_name and customer.customer_name != real_name[:140]:
+			# Only a name Koomyo really sent renames the Customer: an event without one never replaces a
+			# name (or number) already there with a stand-in.
+			customer.customer_name = real_name[:140]
+			customer.save(ignore_permissions=True)
+			rename_contact(customer)
 		update_primary_contact(customer, data)
 	else:
+		name = display_name(data)
 		customer = frappe.new_doc("Customer")
 		customer.update(
 			{
@@ -69,18 +74,48 @@ def on_customer_event(event: dict, connection, client: KoomyoClient | None = Non
 	return ("Customer", customer.name)
 
 
+def display_name(data: dict) -> str:
+	"""The name a new Customer gets: Koomyo's name, else the phone number, else a plain label.
+
+	Koomyo's id is never used as a name; the label carries only its first characters so two unnamed
+	customers stay apart.
+	"""
+	name = (data.get("name") or "").strip() or (data.get("phone") or "").strip()
+	return name or _("Koomyo customer {0}").format(str(data["id"])[:8])
+
+
+def rename_contact(customer):
+	"""The primary Contact carries the Customer's name, split like ERPNext splits it when it makes one."""
+	if not customer.customer_primary_contact:
+		return
+	contact = frappe.get_doc("Contact", customer.customer_primary_contact)
+	first, _sep, last = customer.customer_name.partition(" ")
+	if (contact.first_name, contact.last_name or "") != (first, last):
+		contact.first_name, contact.last_name = first, last or None
+		contact.save(ignore_permissions=True)
+
+
 def update_primary_contact(customer, data: dict):
+	"""A changed phone or email becomes the primary one of the Customer's Contact (the old one is kept as a row)."""
 	if not customer.customer_primary_contact:
 		return
 	contact = frappe.get_doc("Contact", customer.customer_primary_contact)
 	changed = False
-	if data.get("phone") and contact.mobile_no != data["phone"]:
-		contact.add_phone(data["phone"], is_primary_mobile_no=1)
-		contact.mobile_no = data["phone"]
+	phone, email = (data.get("phone") or "").strip(), (data.get("email") or "").strip()
+	if phone and contact.mobile_no != phone:
+		row = next((r for r in contact.phone_nos if r.phone == phone), None) or contact.append(
+			"phone_nos", {"phone": phone}
+		)
+		for other in contact.phone_nos:
+			other.is_primary_mobile_no = 1 if other is row else 0
+			other.is_primary_phone = 0
 		changed = True
-	if data.get("email") and contact.email_id != data["email"]:
-		contact.add_email(data["email"], is_primary=1)
-		contact.email_id = data["email"]
+	if email and contact.email_id != email:
+		row = next((r for r in contact.email_ids if r.email_id == email), None) or contact.append(
+			"email_ids", {"email_id": email}
+		)
+		for other in contact.email_ids:
+			other.is_primary = 1 if other is row else 0
 		changed = True
 	if changed:
 		contact.save(ignore_permissions=True)

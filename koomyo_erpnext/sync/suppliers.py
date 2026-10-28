@@ -99,7 +99,7 @@ def is_stale(doc, card: dict) -> bool:
 
 
 def new_supplier(card: dict, connection):
-	name = (card.get("name") or card["id"])[:140]
+	name = ((card.get("name") or "").strip() or _("Koomyo supplier {0}").format(str(card["id"])[:8]))[:140]
 	if frappe.db.exists("Supplier", name):
 		# A Supplier of that name is already in ERPNext and is not this Koomyo supplier: never merge.
 		name = f"{name[:100]} ({connection.name})"

@@ -158,3 +158,9 @@ Source: docs.koomyo.com/events/master-data, schema `Supplier`.
 - **Processing user.** Events are booked as Administrator, whoever queued the job: a Koomyo Manager who pressed Retry or Catch Up Now used to get a PermissionError when Koomyo cancelled a purchase order or transfer, or when an order named a supplier ERPNext did not have yet.
 - **Not verified live:** only the docs examples through the fake Koomyo.
 
+## 18. Names of customers and suppliers (Decision)
+
+- A Customer is named from Koomyo's name; with no name, from the phone number; with neither, "Koomyo customer <first 8 characters of the id>". Koomyo's full id is never used as a name (it is kept in the Koomyo Id field). A later event without a name never replaces a name already there, and a real name that arrives later renames the Customer and its primary Contact (first and last name split as ERPNext does). A changed phone or email becomes the Contact's primary one; the old one stays as a row. The same label rule applies to a supplier card without a name ("Koomyo supplier <8>"); Koomyo's schema makes the name required, so this is a guard.
+- ERPNext's own document names follow Selling Settings (Customer Name or Naming Series); that setting is the site's, not the app's.
+- Contacts made for Customers carry no Koomyo fields. Contacts and Addresses made for Suppliers carry the supplier's Koomyo id in `koomyo_id` (so a later update finds them), never in a name.
+
