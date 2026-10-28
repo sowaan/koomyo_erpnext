@@ -179,6 +179,10 @@ def fingerprint(order: dict) -> str:
 				line.get("unit_cost"),
 				line.get("line_total"),
 				line.get("tax_amount"),
+				[
+					[a.get("id"), a.get("quantity"), a.get("destination_type"), a.get("destination_id")]
+					for a in line.get("allocations") or []
+				],
 			]
 			for line in order.get("lines") or []
 		],
@@ -324,7 +328,9 @@ def create_order(connection, order: dict):
 	from koomyo_erpnext.sync.purchasing import koomyo_supplier
 	from koomyo_erpnext.sync.stock import ingredient_item
 
-	warehouse = order_warehouse(connection, order)
+	shared = any(line.get("allocations") for line in order.get("lines") or [])
+	every_line_shared = shared and all(line.get("allocations") for line in order.get("lines") or [])
+	warehouse = None if every_line_shared else order_warehouse(connection, order)
 	cost_center = order_cost_center(connection, order)
 	client = KoomyoClient.for_connection(connection)
 	po = frappe.new_doc("Purchase Order")
@@ -335,7 +341,7 @@ def create_order(connection, order: dict):
 			"supplier": koomyo_supplier(connection, order.get("supplier") or {}, client),
 			"transaction_date": date,
 			"schedule_date": order.get("expected_date") or date,
-			"set_warehouse": warehouse,
+			"set_warehouse": warehouse if not shared else None,
 			"currency": order.get("currency") or connection.koomyo_currency,
 			"conversion_rate": 1,
 			"disable_rounded_total": 1,
@@ -348,16 +354,24 @@ def create_order(connection, order: dict):
 	lines = order_lines(order)
 	for entry in lines:
 		line = entry["line"]
-		po.append(
-			"items",
-			{
-				"item_code": ingredient_item(connection, line, client=client),
-				"qty": to_field(entry["qty"], 6),
-				"rate": to_field(entry["net"] / entry["qty"], 6),
-				"warehouse": warehouse,
-				"schedule_date": order.get("expected_date") or date,
-			},
-		)
+		item_code = ingredient_item(connection, line, client=client)
+		rate = to_field(entry["net"] / entry["qty"], 6)
+		shares = [a for a in line.get("allocations") or [] if money(a.get("quantity") or "0", "quantity") > 0]
+		# A line with branch shares is one row per share, each for its place: the branch's Warehouse, or the
+		# warehouse the goods go to first.
+		for share in shares or [None]:
+			po.append(
+				"items",
+				{
+					"item_code": item_code,
+					"qty": to_field(money(share["quantity"], "quantity"), 6)
+					if share
+					else to_field(entry["qty"], 6),
+					"rate": rate,
+					"warehouse": share_warehouse(connection, share) if share else warehouse,
+					"schedule_date": order.get("expected_date") or date,
+				},
+			)
 	if not po.items:
 		raise Skipped(_("Purchase order {0} has no lines.").format(order["id"]))
 	for row in tax_rows(connection, order, cost_center or ""):
@@ -372,6 +386,30 @@ def create_order(connection, order: dict):
 	)
 	write_reference(connection, client, "purchase_order", order, po)
 	return po
+
+
+def share_warehouse(connection, share: dict) -> str:
+	"""The ERPNext Warehouse of a share: its branch's, or the Koomyo warehouse it is delivered to."""
+	from koomyo_erpnext.sync.stock import location_row
+
+	if share.get("destination_type") == "warehouse":
+		row = location_row(connection, "warehouse", share.get("destination_id"))
+	else:
+		row = branch_row(connection, share.get("destination_id") or share.get("branch_id"))
+	if not row.warehouse:
+		raise NeedsMapping(
+			_("Koomyo place {0} has no Warehouse on the Branch Map.").format(share.get("destination_id"))
+		)
+	return row.warehouse
+
+
+def receipt_warehouse(connection, receipt: dict) -> str | None:
+	"""Where a delivery landed (`location_type` and `location_id` of the receipt); None on an older answer."""
+	if not receipt.get("location_id"):
+		return None
+	from koomyo_erpnext.sync.stock import location_row
+
+	return location_row(connection, receipt.get("location_type"), receipt["location_id"]).warehouse
 
 
 def check_total(po, order: dict):
@@ -497,7 +535,7 @@ def share(total: Decimal, delivered: Decimal, ordered: Decimal, applied: Decimal
 def book_delivery(po, order: dict, receipt: dict, connection) -> str | None:
 	"""The Purchase Receipt of one delivery, made once. Returns its name when it was made now."""
 	receipt_id = receipt["id"]
-	if find_existing("Purchase Receipt", connection, receipt_id):
+	if receipt_booked(connection, receipt_id):
 		return None
 	if receipt.get("legacy") is None and find_existing("Purchase Receipt", connection, order["id"]):
 		return None  # booked before deliveries were kept per receipt
@@ -514,14 +552,25 @@ def book_delivery(po, order: dict, receipt: dict, connection) -> str | None:
 			line.get("quantity"), "quantity"
 		)
 	pr = make_purchase_receipt(po.name)
+	place = receipt_warehouse(connection, receipt)
+	if place:
+		restrict_to_place(pr, po, place, order)
+	# An ingredient on several rows (one per branch share) is filled row by row; the last row takes the rest.
+	last_row = {}
+	for item in pr.items:
+		last_row[frappe.db.get_value("Item", item.item_code, "koomyo_id")] = id(item)
 	delivered_value = ZERO
 	for item in list(pr.items):
 		ingredient_id = frappe.db.get_value("Item", item.item_code, "koomyo_id")
-		stock_qty = quantities.get(ingredient_id, ZERO)
-		if not stock_qty:
+		factor = Decimal(str(flt(item.conversion_factor, 9) or 1))
+		left = quantities.get(ingredient_id, ZERO)
+		if not left:
 			pr.remove(item)
 			continue
-		factor = Decimal(str(flt(item.conversion_factor, 9) or 1))
+		stock_qty = (
+			left if id(item) == last_row[ingredient_id] else min(left, Decimal(str(item.qty)) * factor)
+		)
+		quantities[ingredient_id] = left - stock_qty
 		item.qty = item.received_qty = to_field(stock_qty / factor, 6)
 		delivered_value += stock_qty * Decimal(str(item.rate))
 	if not pr.items:
@@ -541,14 +590,51 @@ def book_delivery(po, order: dict, receipt: dict, connection) -> str | None:
 	return pr.name
 
 
+def receipt_booked(connection, receipt_id: str) -> bool:
+	"""This Koomyo delivery is a Purchase Receipt already: by its id, or among the other deliveries of a receipt
+	that spans several places."""
+	if find_existing("Purchase Receipt", connection, receipt_id):
+		return True
+	return bool(
+		frappe.db.exists(
+			"Purchase Receipt",
+			{
+				"koomyo_connection": connection.name,
+				"koomyo_extra_ids": ("like", f"%{receipt_id}%"),
+				"docstatus": ("<", 2),
+			},
+		)
+	)
+
+
+def restrict_to_place(pr, po, place: str, order: dict):
+	"""Keep the rows for the Warehouse the goods landed at. An order with one place for every row (made in
+	ERPNext for one Warehouse) takes the delivery's place, so stock lands where Koomyo put it."""
+	here = [item for item in pr.items if item.warehouse == place]
+	if here:
+		for item in list(pr.items):
+			if item.warehouse != place:
+				pr.remove(item)
+		return
+	warehouses = {item.warehouse for item in pr.items}
+	if len(warehouses) == 1:
+		for item in pr.items:
+			item.warehouse = place
+		return
+	raise NeedsMapping(
+		_(
+			"Koomyo delivered purchase order {0} to Warehouse {1}, but no row of Purchase Order {2} is for it. Check the Branch Map and the order's rows, then press Retry."
+		).format(order.get("number") or order["id"], place, po.name)
+	)
+
+
 def link_unstamped_receipt(po, order: dict, receipt: dict, connection) -> bool:
 	"""A Purchase Receipt made in ERPNext and sent to Koomyo is this delivery: link it, book nothing."""
-	candidates = frappe.get_all(
-		"Purchase Receipt Item",
-		filters={"purchase_order": po.name, "docstatus": 1},
-		pluck="parent",
-		distinct=True,
-	)
+	filters = {"purchase_order": po.name, "docstatus": 1}
+	place = receipt_warehouse(connection, receipt)
+	if place:
+		filters["warehouse"] = place  # an order received once for each place: the receipt for this one
+	candidates = frappe.get_all("Purchase Receipt Item", filters=filters, pluck="parent", distinct=True)
 	for name in candidates:
 		if frappe.db.get_value("Purchase Receipt", name, "koomyo_id"):
 			continue

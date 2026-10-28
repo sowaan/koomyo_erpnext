@@ -24,7 +24,7 @@ from koomyo_erpnext.tests.test_purchasing import PurchasingTestCase
 BRANCH_1 = "90000000-0000-4000-8000-000000000001"
 BRANCH_2 = "90000000-0000-4000-8000-000000000002"
 REQUEST_2 = "6e8b2d73-1c2f-4a1f-8e44-3a7a6b5c9f22"
-WAREHOUSE_2 = "Finished Goods - _KTA"
+WAREHOUSE_2 = "Work In Progress - _KTA"  # Johar Town (Finished Goods is the Koomyo central warehouse)
 
 
 class RequestOrderCase(PurchasingTestCase):

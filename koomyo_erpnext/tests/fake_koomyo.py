@@ -404,6 +404,8 @@ class FakeKoomyo:
 			return error_response(409, "cancelled")
 		if order["status"] == "received":
 			return error_response(409, "already_received")
+		if any(line.get("allocations") for line in order["lines"]):
+			return self._receive_at(order, body)
 		wanted = {x["line_id"]: Decimal(x["quantity_received"]) for x in body.get("lines") or []}
 		if not body.get("lines"):
 			wanted = {l["id"]: Decimal(l["quantity_ordered"]) for l in order["lines"]}
@@ -439,6 +441,99 @@ class FakeKoomyo:
 		)
 		order["closed_short"] = bool(body.get("close_short")) and not complete
 		order["status"] = "received" if complete or body.get("close_short") else "partial"
+		order["updated_at"] = f"2026-10-12T11:0{n}:00Z"
+		return FakeResponse(200, order)
+
+	def _receive_at(self, order, body):
+		"""An order with branch shares is received once for each place (docs: guides/purchase-requests)."""
+		from decimal import Decimal
+
+		places = {
+			(a["destination_type"], a["destination_id"]): a
+			for line in order["lines"]
+			for a in line["allocations"]
+		}
+		kind, place = body.get("destination_type"), body.get("destination_id")
+		if not kind:
+			if len(places) > 1:
+				return error_response(409, "destination_required", "name the destination")
+			kind, place = next(iter(places))
+		if (kind, place) not in places:
+			return error_response(400, "invalid_parameter", "no share goes there")
+		self.receive_calls.append(body)
+		arrived, lines_out = [], []
+		wanted = {x["line_id"]: x for x in body.get("lines") or []}
+		for line in order["lines"]:
+			shares = [
+				a
+				for a in line["allocations"]
+				if (a["destination_type"], a["destination_id"]) == (kind, place)
+			]
+			if not shares:
+				continue
+			have = sum((Decimal(a["received_quantity"]) for a in shares), Decimal(0))
+			expected = sum((Decimal(a["quantity"]) for a in shares), Decimal(0))
+			if line["id"] in wanted:
+				total = Decimal(wanted[line["id"]]["quantity_received"])
+			elif not body.get("lines"):
+				total = expected  # no lines: everything still expected there arrived
+			else:
+				total = have
+			if total < have:
+				return error_response(400, "invalid_parameter", "quantity_received is below what is received")
+			if total > have:
+				room = total - have
+				for a in shares:
+					take = (
+						min(room, Decimal(a["quantity"]) - Decimal(a["received_quantity"]))
+						if a is not shares[-1]
+						else room
+					)
+					a["received_quantity"] = str(Decimal(a["received_quantity"]) + take)
+					if a["destination_type"] == "branch":
+						a["landed_quantity"] = a["received_quantity"]
+					room -= take
+				line["quantity_received"] = str(Decimal(line["quantity_received"]) + (total - have))
+				arrived.append(line["id"])
+				entry = {
+					"line_id": line["id"],
+					"ingredient_id": line["ingredient_id"],
+					"quantity": str(total - have),
+				}
+				for key in ("reason_code", "note"):
+					if wanted.get(line["id"], {}).get(key):
+						entry[key] = wanted[line["id"]][key]
+				lines_out.append(entry)
+		if not arrived and not body.get("close_short"):
+			return error_response(409, "nothing_to_receive")
+		if body.get("close_short"):
+			for line in order["lines"]:
+				for a in line["allocations"]:
+					if (a["destination_type"], a["destination_id"]) == (kind, place) and Decimal(
+						a["received_quantity"]
+					) < Decimal(a["quantity"]):
+						a["closed_short"] = True
+						a["short_reason"] = body.get("reason_code") or "other"
+		n = len(order["receipts"]) + 1
+		order["receipts"].append(
+			{
+				"id": f"{order['id']}-rcpt-{n}",
+				"received_at": "2026-10-12T11:00:00Z",
+				"received_by": body.get("received_by") or "key",
+				"delivery_note": body.get("delivery_note"),
+				"closed_short": bool(body.get("close_short")),
+				"location_type": kind,
+				"location_id": place,
+				"location_name": places[(kind, place)].get("destination_name"),
+				"lines": lines_out,
+			}
+		)
+		done = all(
+			a["closed_short"] or Decimal(a["received_quantity"]) >= Decimal(a["quantity"])
+			for line in order["lines"]
+			for a in line["allocations"]
+		)
+		order["status"] = "received" if done else "partial"
 		order["updated_at"] = f"2026-10-12T11:0{n}:00Z"
 		return FakeResponse(200, order)
 

@@ -345,6 +345,8 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 	order = client.get("/purchase-orders/" + quote(po.koomyo_id, safe=""))
 	if order.get("object") != "purchase_order" or order.get("id") != po.koomyo_id:
 		raise Fatal(_("Koomyo answered GET /purchase-orders/{0} with something else.").format(po.koomyo_id))
+	if has_shares(order):
+		return push_receipt_by_destination(connection, client, po, receipt, order)
 	lines = {line.get("ingredient_id"): line for line in order.get("lines") or [] if line.get("id")}
 
 	# Koomyo takes each line's TOTAL received so far and adds only the difference to stock: this
@@ -394,6 +396,8 @@ def push_purchase_close(event: dict, connection, client: KoomyoClient | None = N
 				po.koomyo_id, order.get("status")
 			)
 		)
+	if has_shares(order):
+		return close_by_destination(connection, client, po, order)
 	# The lines are sent with what Koomyo already holds, so only the closing changes (an empty body would receive everything).
 	body = {
 		"lines": [
@@ -446,9 +450,126 @@ def send_receive(connection, client, po, doc, body: dict, action: str, before: s
 	# The newest delivery on the answer is this one: link it, so the purchase.received event that follows
 	# finds it and books nothing.
 	new = [r.get("id") for r in answer.get("receipts") or [] if r.get("id") and r.get("id") not in before]
-	if new and doc.doctype == "Purchase Receipt" and not doc.koomyo_id:
-		doc.db_set({"koomyo_connection": connection.name, "koomyo_id": new[-1]}, update_modified=False)
+	before.update(new)
+	if new and doc.doctype == "Purchase Receipt":
+		link_delivery(doc, connection, new[-1])
 	return (doc.doctype, doc.name)
+
+
+def link_delivery(receipt, connection, delivery_id: str):
+	"""Remember which Koomyo delivery this Purchase Receipt is. A receipt that spans several places is several
+	deliveries: the first is its Koomyo id, the others are listed beside it, so none is booked twice."""
+	if not receipt.koomyo_id:
+		receipt.db_set(
+			{"koomyo_connection": connection.name, "koomyo_id": delivery_id}, update_modified=False
+		)
+	elif receipt.koomyo_id != delivery_id:
+		known = (receipt.get("koomyo_extra_ids") or "").split()
+		if delivery_id not in known:
+			receipt.db_set("koomyo_extra_ids", " ".join([*known, delivery_id]), update_modified=False)
+
+
+def has_shares(order: dict) -> bool:
+	return any(line.get("allocations") for line in order.get("lines") or [])
+
+
+def destination_of(connection, warehouse: str) -> tuple[str, str]:
+	"""Koomyo's (destination_type, destination_id) for an ERPNext Warehouse, from the Branch Map."""
+	for row in connection.branch_map:
+		if row.warehouse == warehouse:
+			return ("warehouse" if row.location_type == "Warehouse" else "branch", row.koomyo_branch_id)
+	raise NeedsMapping(
+		_(
+			"Warehouse {0} is not on connection {1}'s Branch Map, so Koomyo cannot be told where the goods arrived. Add a row (a branch, or Location Type Warehouse), then press Retry."
+		).format(warehouse, connection.name)
+	)
+
+
+def received_at(order: dict) -> dict[tuple[str, str], dict[str, Decimal]]:
+	"""What Koomyo holds per destination per line: the shares' `received_quantity`, summed."""
+	out: dict[tuple[str, str], dict[str, Decimal]] = {}
+	for line in order.get("lines") or []:
+		for share in line.get("allocations") or []:
+			key = (share.get("destination_type"), share.get("destination_id"))
+			per_line = out.setdefault(key, {})
+			per_line[line["id"]] = per_line.get(line["id"], Decimal(0)) + money(
+				share.get("received_quantity") or "0", "received_quantity"
+			)
+	return out
+
+
+def push_receipt_by_destination(connection, client, po, receipt, order: dict):
+	"""An order with branch shares is received once for each place: one call per destination of this receipt."""
+	lines = {line.get("ingredient_id"): line for line in order.get("lines") or [] if line.get("id")}
+	arrived: dict[tuple[str, str], dict[str, Decimal]] = {}
+	for item in receipt.items:
+		if item.purchase_order != po.name:
+			continue
+		line = lines.get(linked_ingredient(item.item_code, connection))
+		if not line:
+			raise Fatal(
+				_("Item {0} is not on Koomyo purchase order {1}.").format(item.item_code, po.koomyo_id)
+			)
+		place = destination_of(connection, item.warehouse)
+		per_line = arrived.setdefault(place, {})
+		per_line[line["id"]] = per_line.get(line["id"], Decimal(0)) + Decimal(str(flt(item.stock_qty, 6)))
+	before = {r.get("id") for r in order.get("receipts") or []}
+	held = received_at(order)
+	skipped = 0
+	for (kind, place_id), qtys in arrived.items():
+		have = held.get((kind, place_id), {})
+		body = {
+			"destination_type": kind,
+			"destination_id": place_id,
+			"lines": [
+				{"line_id": line_id, "quantity_received": text(have.get(line_id, Decimal(0)) + qty)}
+				for line_id, qty in qtys.items()
+			],
+		}
+		if receipt.get("supplier_delivery_note"):
+			body["delivery_note"] = str(receipt.supplier_delivery_note)[:80]
+		try:
+			send_receive(connection, client, po, receipt, body, f"receive-{place_id}", before)
+		except Skipped:
+			skipped += 1  # nothing new at that place: the other places still go
+	if skipped == len(arrived) and arrived:
+		raise Skipped(
+			_(
+				"Koomyo already holds these quantities for purchase order {0}, so no new delivery was written."
+			).format(po.koomyo_id)
+		)
+	return ("Purchase Receipt", receipt.name)
+
+
+def close_by_destination(connection, client, po, order: dict):
+	"""Closed in ERPNext: finish short every place that still expects goods (the totals so far, plus close_short)."""
+	held = received_at(order)
+	before = {r.get("id") for r in order.get("receipts") or []}
+	open_places: dict[tuple[str, str], dict[str, Decimal]] = {}
+	for line in order.get("lines") or []:
+		for share in line.get("allocations") or []:
+			if share.get("closed_short") or money(
+				share.get("received_quantity") or "0", "received_quantity"
+			) >= money(share.get("quantity") or "0", "quantity"):
+				continue  # nothing still expected there
+			key = (share.get("destination_type"), share.get("destination_id"))
+			open_places.setdefault(key, {})
+	if not open_places:
+		raise Skipped(
+			_("Every share of Koomyo purchase order {0} is received or closed short.").format(po.koomyo_id)
+		)
+	for (kind, place_id), _unused in open_places.items():
+		per_line = held.get((kind, place_id), {})
+		body = {
+			"destination_type": kind,
+			"destination_id": place_id,
+			"lines": [
+				{"line_id": line_id, "quantity_received": text(qty)} for line_id, qty in per_line.items()
+			],
+			"close_short": True,
+		}
+		send_receive(connection, client, po, po, body, f"close-{place_id}", before)
+	return ("Purchase Order", po.name)
 
 
 @handles("erpnext.supplier", switch="sync_purchasing", scopes=WRITE_SCOPES)
