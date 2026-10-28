@@ -900,10 +900,10 @@
   {
    "default": "Koomyo Decides",
    "depends_on": "sync_purchase_requests",
-   "description": "Where a share of a Purchase Order goes when it names no destination: Koomyo Decides sends nothing (Koomyo uses its main warehouse when it has one, else the branches); Warehouse sends shares to the main warehouse, to be distributed to the branches by transfers; Branches sends each share straight to its branch.",
+   "description": "No longer needed: each share of a Purchase Order goes where the row's Warehouse says (a branch's Warehouse: straight to the branch; a Koomyo warehouse's: to that warehouse), which is also where its Purchase Receipt is received. Kept so existing connections load; it is not sent.",
    "fieldname": "deliver_to",
    "fieldtype": "Select",
-   "label": "Deliver Shares To",
+   "label": "Deliver Shares To (not used)",
    "options": "Koomyo Decides\nWarehouse\nBranches"
   },
   {

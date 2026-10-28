@@ -108,9 +108,6 @@ class RequestOrderCase(PurchasingTestCase):
 
 class TestSharesOnTheOrder(RequestOrderCase):
 	def test_two_branches_make_one_line_with_one_share_each(self):
-		self.conn_a.reload()
-		self.conn_a.deliver_to = "Branches"
-		self.conn_a.save()
 		po = self.make_order()
 		self.run_queue()
 		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
@@ -123,7 +120,12 @@ class TestSharesOnTheOrder(RequestOrderCase):
 			[(a["request_line_id"], a["quantity"]) for a in line_body["allocations"]],
 			[(LINE_1, "6"), (LINE_2, "5")],
 		)
-		self.assertEqual(body["deliver_to"], "branches")
+		self.assertNotIn("deliver_to", body, "each share names where it goes")
+		self.assertEqual(
+			[(a["destination_type"], a["destination_id"]) for a in line_body["allocations"]],
+			[("branch", BRANCH_1), ("branch", BRANCH_2)],
+			"the row's Warehouse is the branch's own: straight to the branch",
+		)
 		self.assertNotIn(
 			"branch_id", body, "the shares carry the branches; the order has no place of its own"
 		)
@@ -137,21 +139,51 @@ class TestSharesOnTheOrder(RequestOrderCase):
 			[(BRANCH_1, "branch"), (BRANCH_2, "branch")],
 		)
 
-	def test_deliver_to_follows_the_connection(self):
-		for setting, expected in (("Warehouse", "warehouse"), ("Koomyo Decides", None)):
-			self.fake_a.purchase_orders.clear()
-			self.fake_a.purchase_bodies.clear()
-			for card in self.fake_a.lists["/purchase-requests"]:
-				card["lines"][0].update({"status": "approved", "ordered_quantity": "0.000"})
-			self.conn_a.reload()
-			self.conn_a.deliver_to = setting
-			self.conn_a.save()
-			po = self.make_order()
-			self.run_queue()
-			body = self.sent()[-1]["body"]
-			self.assertEqual(body.get("deliver_to"), expected, setting)
-			frappe.get_doc("Purchase Order", po.name).cancel()
-			frappe.db.commit()
+	def test_a_row_for_a_central_warehouse_sends_that_share_to_the_warehouse(self):
+		rows = self.material_rows()
+		po = self.make_order(submit=False)
+		po.items[
+			0
+		].warehouse = "Finished Goods - _KTA"  # where the test setup maps Koomyo's central warehouse
+		po.save()
+		po.submit()
+		frappe.db.commit()
+		self.run_queue()
+		(call,) = self.sent()
+		places = {
+			a["request_line_id"]: (a["destination_type"], a["destination_id"])
+			for a in call["body"]["lines"][0]["allocations"]
+		}
+		self.assertEqual(places[LINE_1], ("warehouse", "6ed65fb7-3cdb-490f-b0a6-6a4d7096dcc4"))
+		self.assertEqual(places[LINE_2], ("branch", BRANCH_2))
+		self.assertTrue(rows)
+
+	def test_a_row_at_another_branchs_warehouse_is_refused_before_anything_is_sent(self):
+		po = self.make_order(submit=False)
+		po.items[0].warehouse = WAREHOUSE_2  # Johar Town's, for Gulberg's request
+		po.save()
+		po.submit()
+		frappe.db.commit()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual((log.status, log.error_class), ("Failed", "NeedsMapping"))
+		self.assertIn("another branch", log.message)
+		self.assertEqual(self.sent(), [])
+
+	def test_the_receipt_then_goes_to_the_same_place_the_share_was_sent_to(self):
+		from koomyo_erpnext.tests.test_request_receiving import split_receipt
+
+		po = self.make_order()
+		self.run_queue()
+		self.fake_a.writes.clear()
+		split_receipt(po, {"Stores - _KTA": 6})
+		self.run_queue()
+		(call,) = self.writes("/purchase-orders/po-1/receive")
+		self.assertEqual(
+			(call["body"]["destination_type"], call["body"]["destination_id"]), ("branch", BRANCH_1)
+		)
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt"]
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
 
 	def test_rows_of_one_item_with_one_rate_are_one_line_and_two_rates_are_refused(self):
 		self.make_order(rate=[1450, 1500])

@@ -232,11 +232,7 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 		**tax,
 		"external_ref": {"system": connection.ref_system or "erpnext", "external_id": po.name},
 	}
-	if with_shares:
-		deliver_to = {"Warehouse": "warehouse", "Branches": "branches"}.get(connection.get("deliver_to"))
-		if deliver_to:
-			body["deliver_to"] = deliver_to
-	elif row.location_type != "Warehouse":
+	if not with_shares and row.location_type != "Warehouse":
 		body["branch_id"] = row.koomyo_branch_id  # leave out to receive into the main warehouse (docs)
 	try:
 		answer = koomyo_write(
@@ -410,6 +406,26 @@ def tax_fields(po, connection) -> tuple[dict, list[str]]:
 	return fields, residual
 
 
+def share_destination(po, item, connection) -> tuple[str, str]:
+	"""Where a share is delivered: the place of the Purchase Order row's Warehouse on the Branch Map.
+
+	A branch's Warehouse means straight to that branch (which must be the request's own branch: Koomyo
+	delivers a branch share to its own branch), a Koomyo warehouse's means to that warehouse. This is what
+	the Purchase Receipt of the row is received into, so ERPNext and Koomyo agree where the goods go.
+	"""
+	kind, place_id = destination_of(connection, item.warehouse)
+	if kind == "branch":
+		parent = frappe.db.get_value("Material Request Item", item.material_request_item, "parent")
+		wanted = frappe.db.get_value("Material Request", parent, "koomyo_branch")
+		if wanted and wanted != place_id:
+			raise NeedsMapping(
+				_(
+					"Purchase Order {0}: Item {1} is for another branch than Warehouse {2} belongs to. Koomyo delivers a branch's share to that branch itself: use the Warehouse of the request's own branch, or a central Koomyo warehouse's Warehouse, on that row."
+				).format(po.name, item.item_code, item.warehouse)
+			)
+	return kind, place_id
+
+
 def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 	"""One Koomyo line per ingredient. A row that fills a purchase request line becomes a share of its line.
 
@@ -452,7 +468,9 @@ def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 			)
 		line["qty"] += qty
 		if share:
-			line["shares"][share] = line["shares"].get(share, Decimal(0)) + qty
+			place = share_destination(po, item, connection)
+			key = (share, *place)
+			line["shares"][key] = line["shares"].get(key, Decimal(0)) + qty
 	out = []
 	for ingredient_id, line in grouped.items():
 		entry = {
@@ -464,8 +482,13 @@ def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 			entry["discount_percent"] = text(line["discount"])
 		if line["shares"]:
 			entry["allocations"] = [
-				{"request_line_id": request_line, "quantity": text(qty)}
-				for request_line, qty in line["shares"].items()
+				{
+					"request_line_id": request_line,
+					"quantity": text(qty),
+					"destination_type": kind,
+					"destination_id": place_id,
+				}
+				for (request_line, kind, place_id), qty in line["shares"].items()
 			]
 		out.append(entry)
 	return out
