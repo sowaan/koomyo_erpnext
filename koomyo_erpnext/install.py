@@ -13,6 +13,7 @@ KOOMYO_DOCTYPES = (
 	"Address",
 	"Contact",
 	"Purchase Order",
+	"Material Request",
 	"Purchase Receipt",
 	"Landed Cost Voucher",
 	"Stock Entry",

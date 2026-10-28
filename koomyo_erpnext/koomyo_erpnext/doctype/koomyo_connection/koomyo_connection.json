@@ -72,6 +72,8 @@
   "section_purchasing",
   "sync_purchasing",
   "book_koomyo_purchases",
+  "sync_purchase_requests",
+  "deliver_to",
   "section_purchasing_settings",
   "main_warehouse",
   "cb_purchasing",
@@ -121,7 +123,8 @@
   "cb_feed",
   "last_alert_on",
   "section_setup_log",
-  "setup_log"
+  "setup_log",
+  "purchase_request_cursor"
  ],
  "fields": [
   {
@@ -882,6 +885,30 @@
    "fieldname": "sync_complaints",
    "fieldtype": "Check",
    "label": "Sync Complaints"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_purchasing",
+   "description": "Branch purchase requests (submitted in Koomyo) become Material Requests once purchasing has approved lines. A Purchase Order made in ERPNext from such a Material Request is sent to Koomyo with a share for each branch, and each Purchase Receipt is received at its own place. Needs the restaurant's Inventory app and purchase requests feature. In Koomyo, set Settings > Inventory and costs > Purchase requests > Who orders to the external system, so only ERPNext orders, and do not press Send on an order ERPNext made: Send emails the supplier and ERPNext already placed the order.",
+   "fieldname": "sync_purchase_requests",
+   "fieldtype": "Check",
+   "label": "Sync Purchase Requests"
+  },
+  {
+   "default": "Koomyo Decides",
+   "depends_on": "sync_purchase_requests",
+   "description": "Where a share of a Purchase Order goes when it names no destination: Koomyo Decides sends nothing (Koomyo uses its main warehouse when it has one, else the branches); Warehouse sends shares to the main warehouse, to be distributed to the branches by transfers; Branches sends each share straight to its branch.",
+   "fieldname": "deliver_to",
+   "fieldtype": "Select",
+   "label": "Deliver Shares To",
+   "options": "Koomyo Decides\nWarehouse\nBranches"
+  },
+  {
+   "fieldname": "purchase_request_cursor",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Purchase Requests Read Up To",
+   "read_only": 1
   }
  ],
  "links": [],

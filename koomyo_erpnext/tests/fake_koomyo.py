@@ -78,6 +78,7 @@ class FakeKoomyo:
 		self.suppliers: dict[str, dict] = {}
 		self.purchase_orders: dict[str, dict] = {}
 		self.receive_calls: list[dict] = []
+		self.purchase_requests_off = False  # GET /purchase-requests answers 403 feature_not_available
 		self.unsettled_days: set[str] = set()  # GET /stock-usage answers 409 day_not_settled for these
 		self.refs: list[dict] = []
 		self.writes: list[dict] = []  # every write call: method, path, key, body
@@ -139,6 +140,23 @@ class FakeKoomyo:
 			return self._write(method, path, json_body, (headers or {}).get("Idempotency-Key"))
 		if path.startswith("/purchase-orders/") and path[len("/purchase-orders/") :] in self.purchase_orders:
 			return FakeResponse(200, self.purchase_orders[path[len("/purchase-orders/") :]])
+		if path.startswith("/purchase-requests"):
+			if self.purchase_requests_off:
+				return error_response(403, "feature_not_available", "purchase requests are not enabled")
+			if path.startswith("/purchase-requests/"):
+				for card in self.lists.get("/purchase-requests", []):
+					if card["id"] == path.split("/")[2]:
+						return FakeResponse(200, card)
+				return error_response(404, "not_found")
+			if (params or {}).get("system") and (params or {}).get("external_id"):
+				rows = [
+					c
+					for c in self.lists.get("/purchase-requests", [])
+					if (c.get("external_refs") or {}).get(params["system"]) == params["external_id"]
+				]
+				return FakeResponse(
+					200, {"object": "list", "data": rows, "has_more": False, "next_cursor": None}
+				)
 		if path == "/stock-usage":
 			day = (params or {}).get("business_date")
 			if not day:
@@ -182,7 +200,7 @@ class FakeKoomyo:
 		filters = {
 			"business_date": lambda r, v: r.get("business_date") == v,
 			"payment_status": lambda r, v: (r.get("payment") or {}).get("status") == v,
-			"status": lambda r, v: r.get("status") == v,
+			"status": lambda r, v: r.get("status") in v.split(","),
 			"reason": lambda r, v: r.get("reason") == v,
 			"reference_id": lambda r, v: r.get("reference_id") == v,
 			"active": lambda r, v: str(r.get("active", True)).lower() == v,

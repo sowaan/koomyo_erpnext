@@ -25,6 +25,7 @@ SYNC_FIELDS = (
 	"stock_deduction",
 	"sync_purchasing",
 	"book_koomyo_purchases",
+	"sync_purchase_requests",
 	"sync_customers",
 	"sync_complaints",
 )

@@ -321,6 +321,17 @@ class KoomyoConnection(Document):
 			except KoomyoAPIError as e:
 				result["warnings"].append(connection_error_message(e))
 
+		if self.sync_purchase_requests and "purchasing.read" in scopes:
+			try:
+				client.get("/purchase-requests", {"limit": 1})
+			except KoomyoAPIError as e:
+				if e.status == 403 and e.code in ("feature_not_available", "app_not_enabled"):
+					from koomyo_erpnext.sync.purchase_requests import feature_message
+
+					result["warnings"].append(feature_message(e))
+				else:
+					result["warnings"].append(connection_error_message(e))
+
 		if problems:
 			self.status = "Needs Attention"
 			self.status_message = " ".join(problems)

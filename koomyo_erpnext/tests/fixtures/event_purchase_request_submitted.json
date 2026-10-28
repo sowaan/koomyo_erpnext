@@ -1,0 +1,70 @@
+{
+ "api_version": "v1",
+ "branch_id": "90000000-0000-4000-8000-000000000001",
+ "business_date": "2026-10-26",
+ "created": "2026-10-26T09:14:30Z",
+ "currency": "PKR",
+ "data": {
+  "approved_at": null,
+  "approved_by": null,
+  "awaiting_branch_approval": false,
+  "branch_approved_at": null,
+  "branch_approved_by": null,
+  "branch_id": "90000000-0000-4000-8000-000000000001",
+  "branch_name": "Gulberg",
+  "business_date": "2026-10-26",
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "cancelled_by": null,
+  "changes": [
+   "status"
+  ],
+  "created_at": "2026-10-26T09:12:00Z",
+  "created_by": "Sana Malik",
+  "external_refs": {
+   "erpnext": "MAT-REQ-0001"
+  },
+  "id": "5d7a1c62-0b1e-4f0e-9d33-2f6f5a4b8e00",
+  "lines": [
+   {
+    "approved_quantity": null,
+    "closed_short": false,
+    "id": "5d7a1c62-0b1e-4f0e-9d33-2f6f5a4b8e01",
+    "ingredient": {
+     "id": "2bf072f8-6896-44ab-8724-e48946ccc134",
+     "name": "Mozzarella",
+     "unit": "kg"
+    },
+    "needed_by": "2026-11-02",
+    "note": null,
+    "ordered_quantity": "0.000",
+    "orders": [],
+    "quantity": "8.000",
+    "received_quantity": "0.000",
+    "reject_reason": null,
+    "status": "submitted"
+   }
+  ],
+  "needed_by": "2026-11-02",
+  "notes": "Weekend rush",
+  "number": "PR-2026-0012",
+  "object": "purchase_request",
+  "reject_reason": null,
+  "rejected_at": null,
+  "rejected_by": null,
+  "status": "submitted",
+  "submitted_at": "2026-10-26T09:14:30Z",
+  "submitted_by": "Sana Malik",
+  "updated_at": "2026-10-26T09:14:30Z"
+ },
+ "entity": {
+  "id": "5d7a1c62-0b1e-4f0e-9d33-2f6f5a4b8e00",
+  "type": "purchase_request"
+ },
+ "id": "aaaaaa21-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+ "object": "event",
+ "seq": 21,
+ "tenant_id": "bd0c698a-158d-47a0-9a8c-f4e899f2569e",
+ "timezone": "Asia/Karachi",
+ "type": "purchase_request.submitted"
+}

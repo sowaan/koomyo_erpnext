@@ -294,6 +294,7 @@ KOOMYO_DOCTYPES_TO_CLEAN = (
 	"Address",
 	"Contact",
 	"Issue",
+	"Material Request",
 )
 
 

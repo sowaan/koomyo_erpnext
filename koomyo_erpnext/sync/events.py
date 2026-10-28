@@ -586,6 +586,13 @@ def schedule_catch_up():
 			connection_name=name,
 		)
 		frappe.enqueue(
+			"koomyo_erpnext.sync.purchase_requests.sync_purchase_requests",
+			queue="long",
+			job_id=f"koomyo-purchase-request-sync-{frappe.local.site}-{name}",
+			deduplicate=True,
+			connection_name=name,
+		)
+		frappe.enqueue(
 			"koomyo_erpnext.sync.purchase_orders.sync_purchase_orders",
 			queue="long",
 			job_id=f"koomyo-purchase-sync-{frappe.local.site}-{name}",
@@ -760,6 +767,7 @@ from koomyo_erpnext.sync import (
 	customers,
 	order_stock,
 	purchase_orders,
+	purchase_requests,
 	purchasing,
 	refunds,
 	sales,
