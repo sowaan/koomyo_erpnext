@@ -224,10 +224,12 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 	supplier_id = push_supplier_doc(frappe.get_doc("Supplier", po.supplier), connection, client)
 
 	lines = order_lines_for_koomyo(po, connection, shares)
+	tax, residual = tax_fields(po, connection)
 	body = {
 		"supplier_id": supplier_id,
-		"notes": order_notes(po),
+		"notes": order_notes(po, residual),
 		"lines": lines,
+		**tax,
 		"external_ref": {"system": connection.ref_system or "erpnext", "external_id": po.name},
 	}
 	if with_shares:
@@ -264,7 +266,27 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 			"koomyo_branch": body.get("branch_id"),
 		}
 	)
+	compare_totals(po, answer)
 	return ("Purchase Order", po.name)
+
+
+def compare_totals(po, answer: dict):
+	"""Koomyo works out the totals with its own rules: its figure is read, never recomputed, and a difference
+	from ERPNext's own total is said (a few cents are rounding)."""
+	if answer.get("total_ordered") is None:
+		return
+	koomyo = money(answer["total_ordered"], "total_ordered")
+	ours = Decimal(str(flt(po.grand_total, 2)))
+	note = _("Koomyo's total for this order is {0} (ERPNext's is {1}).").format(koomyo, ours)
+	po.add_comment("Comment", note)
+	if abs(koomyo - ours) >= Decimal("1"):
+		from koomyo_erpnext.sync.events import warn
+
+		warn(
+			_(
+				"Koomyo's total for {0} is {1}, ERPNext's is {2}: a difference of more than rounding. Check its tax and charges in Koomyo before sending it."
+			).format(po.name, koomyo, ours)
+		)
 
 
 REFUSALS = {
@@ -293,27 +315,99 @@ def explain_order_refusal(error, po):
 		)
 
 
-def order_notes(po) -> str:
-	"""The order's notes for Koomyo. Its API takes no tax or charges (PurchaseOrderInput has lines, prices and shares
-	only), so the Purchase Taxes and Charges are written into the notes for the person who finishes the draft in
-	Koomyo, and the Event Log says they were not sent as figures."""
+def order_notes(po, residual: list[str] | None = None) -> str:
+	"""The order's notes for Koomyo, with whatever of the ERPNext taxes and charges could not be sent as figures."""
 	base = po.get("remarks") or _("ERPNext {0}").format(po.name)
-	rows = [
-		f"{(row.description or row.account_head or '')[:40]} {flt(row.tax_amount, 2)}"
-		+ (" " + _("(deducted)") if row.get("add_deduct_tax") == "Deduct" else "")
-		for row in po.get("taxes") or []
-		if flt(row.tax_amount)
-	]
-	if not rows:
+	if not residual:
 		return base[:500]
 	from koomyo_erpnext.sync.events import warn
 
 	warn(
 		_(
-			"Koomyo's API takes no tax or charges on an order, so those of {0} were not sent as figures (they are in the order's notes): enter them on the order in Koomyo before sending it. Prices were sent without tax."
-		).format(po.name)
+			"Not everything in the taxes and charges of {0} could be sent as figures ({1}); it is in the order's notes: enter it on the order in Koomyo before sending it."
+		).format(po.name, "; ".join(residual))
 	)
-	return (_("ERPNext taxes and charges: {0}.").format("; ".join(rows)) + " " + base)[:500]
+	return (_("ERPNext, not sent as figures: {0}.").format("; ".join(residual)) + " " + base)[:500]
+
+
+def tax_fields(po, connection) -> tuple[dict, list[str]]:
+	"""The order's tax and charges for POST /purchase-orders, from its Purchase Taxes and Charges.
+
+	Koomyo calculates the totals itself (docs: POST /purchase-orders), so only the inputs go: one order tax (name,
+	rate, exclusive or inclusive, recoverable or not) and the additional charges and withholding. A row is a
+	withholding when its account is the Withholding Tax Account, a tax when it is the Purchase Tax Account or an
+	account of type Tax, else a charge. A charge on the Landed Cost Account is spread over cost as the connection's
+	Charges in Landed Cost says. What cannot be said (a second tax, a document discount, a rate that cannot be
+	worked out) comes back as `residual` text for the notes, never guessed.
+	"""
+	fields: dict = {}
+	charges: list[dict] = []
+	residual: list[str] = []
+	net_total = sum((Decimal(str(flt(i.base_net_amount, 6))) for i in po.items), Decimal(0))
+	if flt(po.get("discount_amount")) or flt(po.get("additional_discount_percentage")):
+		residual.append(_("a discount on the whole order"))
+	for row in po.get("taxes") or []:
+		amount = Decimal(str(flt(row.tax_amount, 6)))
+		if not amount:
+			continue
+		label = (row.description or row.account_head or _("Charge"))[:60]
+		account = row.account_head
+		account_type = frappe.db.get_value("Account", account, "account_type")
+		deduct = row.get("add_deduct_tax") == "Deduct"
+		if account and account == connection.get("purchase_withholding_account"):
+			charges.append(
+				{
+					"label": label,
+					"kind": "amount",
+					"value": text(abs(amount)),
+					"direction": "deduct",
+					"role": "withholding",
+					"taken_of": "total",
+				}
+			)
+		elif not deduct and (account == connection.get("purchase_tax_account") or account_type == "Tax"):
+			if "tax_rate" in fields:
+				residual.append(f"{label} {text(amount)}")
+				continue
+			if row.charge_type == "On Net Total" and flt(row.rate):
+				rate = Decimal(str(flt(row.rate, 6)))
+			elif net_total:
+				rate = (abs(amount) * 100 / net_total).quantize(Decimal("0.0001"))
+			else:
+				residual.append(f"{label} {text(amount)}")
+				continue
+			fields.update(
+				{
+					"tax_name": label[:60],
+					"tax_rate": text(rate),
+					"tax_mode": "inclusive" if row.get("included_in_print_rate") else "exclusive",
+					"tax_recoverable": row.get("category") == "Total",
+				}
+			)
+		else:
+			spread = "none"
+			if account and account == connection.get("purchase_charge_account"):
+				spread = {"None": "none", "By Quantity": "quantity"}.get(
+					connection.get("landed_cost_method"), "value"
+				)
+			elif row.get("category") in ("Valuation and Total", "Valuation"):
+				spread = "value"
+			charges.append(
+				{
+					"label": label,
+					"kind": "amount",
+					"value": text(abs(amount)),
+					"direction": "deduct" if deduct else "add",
+					"spread_over_cost": spread,
+					"role": "charge",
+				}
+			)
+	if len(charges) > 20:
+		residual += [f"{c['label']} {c['value']}" for c in charges[20:]]
+		charges = charges[:20]
+	if charges:
+		fields["charges"] = charges
+	return fields, residual
 
 
 def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
@@ -326,19 +420,31 @@ def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 	grouped: dict[str, dict] = {}
 	for item in po.items:
 		ingredient_id = linked_ingredient(item.item_code, connection)
-		cost = Decimal(str(flt(item.base_net_rate, 6))) / Decimal(str(flt(item.conversion_factor, 9) or 1))
+		factor = Decimal(str(flt(item.conversion_factor, 9) or 1))
+		discount = Decimal(str(flt(item.get("discount_percentage"), 6)))
+		inclusive = any(r.get("included_in_print_rate") for r in po.get("taxes") or [])
+		if discount:  # Koomyo takes the price before the line discount and the percent
+			price = item.get("base_price_list_rate") or item.base_rate
+		else:
+			price = item.base_rate if inclusive else item.base_net_rate
+		cost = Decimal(str(flt(price, 6))) / factor
 		qty = Decimal(str(flt(item.stock_qty, 6)))
 		share = shares.get(item.name)
 		line = grouped.get(ingredient_id)
 		if line is None:
-			grouped[ingredient_id] = line = {"qty": Decimal(0), "cost": cost, "shares": {}}
+			grouped[ingredient_id] = line = {
+				"qty": Decimal(0),
+				"cost": cost,
+				"discount": discount,
+				"shares": {},
+			}
 		elif not share:
 			raise Fatal(
 				_("Purchase Order {0} has Item {1} twice. Koomyo needs one line per ingredient.").format(
 					po.name, item.item_code
 				)
 			)
-		elif line["cost"] != cost:
+		elif (line["cost"], line["discount"]) != (cost, discount):
 			raise Fatal(
 				_(
 					"Purchase Order {0}: the rows of Item {1} have different rates ({2} and {3}). Koomyo takes one price per ingredient: give them one rate."
@@ -354,6 +460,8 @@ def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 			"quantity_ordered": text(line["qty"]),
 			"unit_cost": text(line["cost"]),
 		}
+		if line["discount"]:
+			entry["discount_percent"] = text(line["discount"])
 		if line["shares"]:
 			entry["allocations"] = [
 				{"request_line_id": request_line, "quantity": text(qty)}

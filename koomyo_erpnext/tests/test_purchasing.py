@@ -658,49 +658,201 @@ class TestCancelInErpnext(PurchasingTestCase):
 
 
 class TestTaxAndChargesOutbound(PurchasingTestCase):
-	def test_they_cannot_be_sent_so_they_are_in_the_notes_and_the_log_warns(self):
+	def accounts(self):
 		from koomyo_erpnext.tests.helpers import ensure_account
 
-		tax = ensure_account(COMPANY_A, "_KTA", "Input Tax", "Duties and Taxes", "Tax")
-		freight = ensure_account(COMPANY_A, "_KTA", "Purchase Charges", "Indirect Expenses")
+		self.conn_a.reload()
+		acc = {
+			"tax": ensure_account(COMPANY_A, "_KTA", "Input Tax", "Duties and Taxes", "Tax"),
+			"withholding": ensure_account(
+				COMPANY_A, "_KTA", "Withholding Payable", "Duties and Taxes", "Tax"
+			),
+			"landed": ensure_account(
+				COMPANY_A, "_KTA", "Landed Cost Clearing", "Direct Expenses", "Expenses Included In Valuation"
+			),
+			"charges": ensure_account(COMPANY_A, "_KTA", "Purchase Charges", "Indirect Expenses"),
+		}
+		self.conn_a.update(
+			{
+				"purchase_tax_account": acc["tax"],
+				"purchase_withholding_account": acc["withholding"],
+				"purchase_charge_account": acc["landed"],
+				"purchase_charge_expense_account": acc["charges"],
+			}
+		)
+		self.conn_a.save()
+		return acc
+
+	def taxed_order(self, rows):
 		po = self.make_po(submit=False)
-		po.append(
-			"taxes",
-			{
-				"charge_type": "Actual",
-				"account_head": tax,
-				"description": "Sales tax 18%",
-				"tax_amount": 2610,
-				"add_deduct_tax": "Add",
-			},
+		for row in rows:
+			po.append("taxes", row)
+		po.save()
+		po.submit()
+		frappe.db.commit()
+		return po
+
+	def sent(self):
+		(call,) = [w for w in self.writes("/purchase-orders") if w["path"] == "/purchase-orders"]
+		return call["body"]
+
+	def test_tax_withholding_and_charges_go_as_inputs_and_koomyos_total_is_read(self):
+		acc = self.accounts()
+		po = self.taxed_order(
+			[
+				{
+					"charge_type": "On Net Total",
+					"account_head": acc["tax"],
+					"description": "Sales tax",
+					"rate": 18,
+					"category": "Total",
+					"add_deduct_tax": "Add",
+				},
+				{
+					"charge_type": "Actual",
+					"account_head": acc["landed"],
+					"description": "Freight",
+					"tax_amount": 1000,
+					"category": "Valuation and Total",
+					"add_deduct_tax": "Add",
+				},
+				{
+					"charge_type": "Actual",
+					"account_head": acc["charges"],
+					"description": "Loading",
+					"tax_amount": 200,
+					"category": "Total",
+					"add_deduct_tax": "Add",
+				},
+				{
+					"charge_type": "Actual",
+					"account_head": acc["withholding"],
+					"description": "Withholding",
+					"tax_amount": 145,
+					"category": "Total",
+					"add_deduct_tax": "Deduct",
+				},
+			]
 		)
-		po.append(
-			"taxes",
-			{
-				"charge_type": "Actual",
-				"account_head": freight,
-				"description": "Freight",
-				"tax_amount": 1000,
-				"add_deduct_tax": "Add",
-			},
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		body = self.sent()
+		self.assertEqual(
+			(body["tax_name"], body["tax_rate"], body["tax_mode"], body["tax_recoverable"]),
+			("Sales tax", "18", "exclusive", True),
 		)
+		by_label = {c["label"]: c for c in body["charges"]}
+		self.assertEqual(
+			(
+				by_label["Freight"]["spread_over_cost"],
+				by_label["Freight"]["value"],
+				by_label["Freight"]["direction"],
+			),
+			("value", "1000", "add"),
+		)
+		self.assertEqual(by_label["Loading"]["spread_over_cost"], "none")
+		self.assertEqual(
+			(
+				by_label["Withholding"]["role"],
+				by_label["Withholding"]["direction"],
+				by_label["Withholding"]["value"],
+			),
+			("withholding", "deduct", "145"),
+		)
+		self.assertEqual(body["lines"][0]["unit_cost"], "1450", "the price is without tax")
+		# 14500 + 18% + 1000 + 200 - 145 = 18165: Koomyo's figure is read and noted, not computed here
+		comments = frappe.get_all(
+			"Comment",
+			filters={"reference_doctype": "Purchase Order", "reference_name": po.name},
+			pluck="content",
+		)
+		self.assertTrue([c for c in comments if "Koomyo's total for this order is 18165.00" in c], comments)
+		self.assertNotIn("more than rounding", log.message or "")
+
+	def test_a_tax_that_cannot_be_claimed_back_and_an_inclusive_price(self):
+		acc = self.accounts()
+		self.taxed_order(
+			[
+				{
+					"charge_type": "On Net Total",
+					"account_head": acc["tax"],
+					"description": "GST",
+					"rate": 18,
+					"category": "Valuation and Total",
+					"add_deduct_tax": "Add",
+					"included_in_print_rate": 1,
+				}
+			]
+		)
+		self.run_queue()
+		body = self.sent()
+		self.assertEqual((body["tax_mode"], body["tax_recoverable"]), ("inclusive", False))
+
+	def test_the_connection_decides_how_charges_are_spread(self):
+		acc = self.accounts()
+		self.conn_a.reload()
+		self.conn_a.landed_cost_method = "By Quantity"
+		self.conn_a.save()
+		self.taxed_order(
+			[
+				{
+					"charge_type": "Actual",
+					"account_head": acc["landed"],
+					"description": "Freight",
+					"tax_amount": 1000,
+					"category": "Valuation and Total",
+					"add_deduct_tax": "Add",
+				}
+			]
+		)
+		self.run_queue()
+		self.assertEqual(self.sent()["charges"][0]["spread_over_cost"], "quantity")
+
+	def test_a_line_discount_goes_as_a_percent_on_the_price_before_it(self):
+		po = self.make_po(submit=False)
+		po.items[0].discount_percentage = 10
 		po.save()
 		po.submit()
 		frappe.db.commit()
 		self.run_queue()
+		line = self.sent()["lines"][0]
+		self.assertEqual((line["unit_cost"], line["discount_percent"]), ("1450", "10"))
+
+	def test_what_cannot_be_said_stays_in_the_notes_with_a_warning(self):
+		acc = self.accounts()
+		self.taxed_order(
+			[
+				{
+					"charge_type": "On Net Total",
+					"account_head": acc["tax"],
+					"description": "Sales tax",
+					"rate": 18,
+					"category": "Total",
+					"add_deduct_tax": "Add",
+				},
+				{
+					"charge_type": "On Net Total",
+					"account_head": acc["tax"],
+					"description": "Provincial tax",
+					"rate": 2,
+					"category": "Total",
+					"add_deduct_tax": "Add",
+				},
+			]
+		)
+		self.run_queue()
+		body = self.sent()
+		self.assertEqual(body["tax_rate"], "18")
+		self.assertIn("Provincial tax", body["notes"])
 		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
-		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
-		self.assertIn("takes no tax or charges on an order", log.message)
-		(call,) = [w for w in self.writes("/purchase-orders") if w["path"] == "/purchase-orders"]
-		notes = call["body"]["notes"]
-		self.assertIn("Sales tax 18% 2610", notes)
-		self.assertIn("Freight 1000", notes)
-		self.assertEqual(call["body"]["lines"][0]["unit_cost"], "1450", "the price is without tax")
-		self.assertNotIn("taxes", call["body"])
-		self.assertNotIn("charges", call["body"])
+		self.assertIn("Not everything in the taxes and charges", log.message)
 
 	def test_an_order_without_taxes_sends_its_remarks_and_no_warning(self):
 		self.make_po()
 		self.run_queue()
 		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
 		self.assertEqual((log.status, log.message or ""), ("Done", ""))
+		body = self.sent()
+		for key in ("tax_rate", "tax_name", "charges"):
+			self.assertNotIn(key, body)

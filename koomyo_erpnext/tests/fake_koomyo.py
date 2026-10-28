@@ -281,6 +281,9 @@ class FakeKoomyo:
 			allocated = self._allocations(body)
 			if isinstance(allocated, FakeResponse):
 				return allocated
+			priced = self._price(body)
+			if isinstance(priced, FakeResponse):
+				return priced
 			pid = f"po-{len(self.purchase_orders) + 1}"
 			order = {
 				"id": pid,
@@ -309,6 +312,7 @@ class FakeKoomyo:
 					for i, line in enumerate(body.get("lines") or [])
 				],
 			}
+			order.update(priced)
 			self.purchase_bodies.append(body)
 			self.purchase_orders[pid] = order
 			return FakeResponse(201, order)
@@ -328,6 +332,73 @@ class FakeKoomyo:
 			self.refs.append(ref)
 			return FakeResponse(200, ref)
 		return error_response(404, "not_found")
+
+	def _price(self, body):
+		"""The order's tax, discounts and charges as Koomyo calculates them (simplified), or a 400 for a bad input."""
+		from decimal import ROUND_HALF_UP, Decimal
+
+		def num(value, low=0, high=None):
+			try:
+				number = Decimal(str(value))
+			except Exception:
+				return None
+			if number < low or (high is not None and number > high):
+				return None
+			return number
+
+		bad = lambda why: error_response(400, "invalid_parameter", why)  # noqa: E731
+		cents = Decimal("0.01")
+		rate = num(body.get("tax_rate", 0), 0, 100)
+		if rate is None:
+			return bad("tax_rate")
+		mode = body.get("tax_mode", "exclusive")
+		if mode not in ("exclusive", "inclusive"):
+			return bad("tax_mode")
+		charges = body.get("charges") or []
+		if len(charges) > 20:
+			return bad("charges")
+		items = Decimal(0)
+		for line in body.get("lines") or []:
+			discount = num(line.get("discount_percent", 0), 0, 100)
+			if discount is None or num(line.get("tax_percent", 0), 0, 100) is None:
+				return bad("line")
+			items += Decimal(line["quantity_ordered"]) * Decimal(line["unit_cost"]) * (100 - discount) / 100
+		tax = (items * rate / 100) if mode == "exclusive" else (items - items / (1 + rate / 100))
+		tax = tax.quantize(cents, rounding=ROUND_HALF_UP)
+		out_charges, added, withheld = [], Decimal(0), Decimal(0)
+		for charge in charges:
+			label = charge.get("label")
+			if not isinstance(label, str) or not 1 <= len(label) <= 60:
+				return bad("label")
+			if charge.get("spread_over_cost", "none") not in ("none", "value", "quantity"):
+				return bad("spread_over_cost")
+			if charge.get("kind", "amount") not in ("amount", "percent"):
+				return bad("kind")
+			if charge.get("role", "charge") not in ("charge", "withholding"):
+				return bad("role")
+			value = num(charge.get("value", 0), 0)
+			if value is None:
+				return bad("value")
+			amount = value if charge.get("kind", "amount") == "amount" else items * value / 100
+			amount = amount.quantize(cents, rounding=ROUND_HALF_UP)
+			deduct = charge.get("direction") == "deduct" or charge.get("role") == "withholding"
+			if charge.get("role") == "withholding":
+				withheld += amount
+			else:
+				added += -amount if deduct else amount
+			out_charges.append({**charge, "amount": str(-amount if deduct else amount), "tax_amount": "0.00"})
+		total = items + (tax if mode == "exclusive" else 0) + added - withheld
+		return {
+			"tax_name": body.get("tax_name"),
+			"tax_rate": str(rate),
+			"tax_mode": mode,
+			"tax_recoverable": body.get("tax_recoverable", True),
+			"tax_total": str(tax),
+			"items_without_tax": str(items.quantize(cents)),
+			"withholding_total": str(-withheld),
+			"charges": out_charges,
+			"total_ordered": str(total.quantize(cents, rounding=ROUND_HALF_UP)),
+		}
 
 	def _allocations(self, body):
 		"""Checks the shares of an order the way the docs say (one transaction: a refusal changes nothing)."""
