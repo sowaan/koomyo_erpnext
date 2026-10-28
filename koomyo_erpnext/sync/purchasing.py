@@ -581,14 +581,20 @@ def push_purchase_close(event: dict, connection, client: KoomyoClient | None = N
 	order = client.get("/purchase-orders/" + quote(po.koomyo_id, safe=""))
 	if order.get("object") != "purchase_order" or order.get("id") != po.koomyo_id:
 		raise Fatal(_("Koomyo answered GET /purchase-orders/{0} with something else.").format(po.koomyo_id))
+	if has_shares(order):
+		if order.get("status") not in ("ordered", "partial"):
+			raise Skipped(
+				_("Koomyo purchase order {0} is {1}: nothing left to close short.").format(
+					po.koomyo_id, order.get("status")
+				)
+			)
+		return close_by_destination(connection, client, po, order)
 	if order.get("status") != "partial":
 		raise Skipped(
 			_("Koomyo purchase order {0} is {1}, not partly received: nothing to close short.").format(
 				po.koomyo_id, order.get("status")
 			)
 		)
-	if has_shares(order):
-		return close_by_destination(connection, client, po, order)
 	# The lines are sent with what Koomyo already holds, so only the closing changes (an empty body would receive everything).
 	body = {
 		"lines": [
@@ -749,6 +755,7 @@ def close_by_destination(connection, client, po, order: dict):
 		raise Skipped(
 			_("Every share of Koomyo purchase order {0} is received or closed short.").format(po.koomyo_id)
 		)
+	skipped = 0
 	for (kind, place_id), _unused in open_places.items():
 		per_line = held.get((kind, place_id), {})
 		body = {
@@ -759,7 +766,15 @@ def close_by_destination(connection, client, po, order: dict):
 			],
 			"close_short": True,
 		}
-		send_receive(connection, client, po, po, body, f"close-{place_id}", before)
+		try:
+			send_receive(connection, client, po, po, body, f"close-{place_id}", before)
+		except Skipped:
+			# 409 nothing_to_receive on a close: that place has nothing left to close, so it was closed before.
+			skipped += 1
+	if skipped == len(open_places):
+		raise Skipped(
+			_("Every place of Koomyo purchase order {0} was already closed short.").format(po.koomyo_id)
+		)
 	return ("Purchase Order", po.name)
 
 

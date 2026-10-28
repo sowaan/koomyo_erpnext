@@ -350,3 +350,73 @@ class TestBookingPerDestination(PurchaseOrderCase):
 		log = self.books(closed, "purchase.received")
 		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
 		self.assertEqual(flt(frappe.get_doc("Purchase Receipt", log.reference_name).items[0].qty, 3), 5.5)
+
+
+class TestClosingAPlace(RequestOrderCase):
+	def setUp(self):
+		super().setUp()
+		self.conn_a.reload()
+		self.conn_a.deliver_to = "Branches"
+		self.conn_a.save()
+		self.po = self.make_order()
+		self.run_queue()
+		self.fake_a.writes.clear()
+
+	def closes(self):
+		return [
+			w["body"] for w in self.writes("/purchase-orders/po-1/receive") if w["body"].get("close_short")
+		]
+
+	def test_a_place_where_nothing_arrived_is_closed_with_zero_totals_and_books_no_delivery(self):
+		frappe.get_doc("Purchase Order", self.po.name).update_status("Closed")
+		frappe.db.commit()
+		purchasing.queue_closed_orders(self.conn_a.name)
+		self.run_queue()
+		closes = self.closes()
+		self.assertEqual(sorted(c["destination_id"] for c in closes), sorted([BRANCH_1, BRANCH_2]))
+		for body in closes:
+			self.assertEqual([l["quantity_received"] for l in body["lines"]], ["0"])
+		order = self.fake_a.purchase_orders["po-1"]
+		self.assertEqual(order["status"], "received")
+		self.assertEqual({r["lines"] == [] and r["closed_short"] for r in order["receipts"]}, {True})
+		self.assertEqual(frappe.get_all("Purchase Receipt", filters={"company": self.conn_a.company}), [])
+
+	def test_sending_the_same_close_again_is_safe(self):
+		frappe.get_doc("Purchase Order", self.po.name).update_status("Closed")
+		frappe.db.commit()
+		purchasing.queue_closed_orders(self.conn_a.name)
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order_close"]
+		self.assertEqual(log.status, "Done")
+		# the same close sent again (Koomyo's order status lagging): every place answers nothing_to_receive
+		self.fake_a.purchase_orders["po-1"]["status"] = "partial"
+		purchasing.store_outbound(
+			self.conn_a,
+			"erpnext.purchase_order_close",
+			frappe.get_doc("Purchase Order", self.po.name),
+			action="again",
+		)
+		self.run_queue()
+		again = [
+			l
+			for l in self.outbound()
+			if l.event_type == "erpnext.purchase_order_close" and l.name != log.name
+		]
+		self.assertEqual(len(again), 1)
+		self.assertEqual(again[0].status, "Skipped", again[0].message)
+		self.assertEqual(len(self.fake_a.purchase_orders["po-1"]["receipts"]), 2, "no third closing receipt")
+
+	def test_one_place_closed_and_the_other_still_received(self):
+		split_receipt(self.po, {STORES: 6})
+		self.run_queue()
+		frappe.get_doc("Purchase Order", self.po.name).update_status("Closed")
+		frappe.db.commit()
+		purchasing.queue_closed_orders(self.conn_a.name)
+		self.run_queue()
+		closes = self.closes()
+		self.assertEqual(
+			[c["destination_id"] for c in closes],
+			[BRANCH_2],
+			"Gulberg was complete: only Johar Town is closed",
+		)
+		self.assertEqual(closes[0]["lines"][0]["quantity_received"], "0")
