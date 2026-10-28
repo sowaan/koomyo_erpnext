@@ -291,7 +291,7 @@ class TestSafetyNet(RequestCase):
 		self.assertIn("Inventory app", summary["error"])
 		self.assertIn("feature_not_available", summary["error"])
 
-	def test_test_connection_shows_the_403_plainly(self):
+	def test_test_connection_says_so_when_the_feature_is_off_and_does_not_probe(self):
 		self.fake_a.purchase_requests_off = True
 		with self.koomyo():
 			result = self.conn_a.test_connection()
@@ -299,8 +299,51 @@ class TestSafetyNet(RequestCase):
 			[w for w in result["warnings"] if "purchase requests" in w and "Inventory app" in w],
 			result["warnings"],
 		)
+		self.assertFalse([c for c in self.fake_a.calls if c["path"] == "/purchase-requests"])
+		self.assertEqual(
+			frappe.db.get_value("Koomyo Connection", self.conn_a.name, "purchase_requests_state"),
+			"disabled:-",
+		)
+
+	def test_test_connection_warns_when_koomyo_still_orders_itself(self):
+		self.fake_a.handled_by = "koomyo"
+		with self.koomyo():
+			result = self.conn_a.test_connection()
+		self.assertTrue([w for w in result["warnings"] if "purchasing still orders" in w], result["warnings"])
+		self.assertEqual(result["purchase_requests"], {"enabled": True, "handled_by": "koomyo"})
+
+	def test_no_warning_when_an_external_system_orders(self):
+		with self.koomyo():
+			result = self.conn_a.test_connection()
+		self.assertFalse(
+			[w for w in result["warnings"] if "purchase requests" in w.lower() or "purchasing still" in w]
+		)
+		self.assertEqual(
+			frappe.db.get_value("Koomyo Connection", self.conn_a.name, "purchase_requests_state"),
+			"enabled:external",
+		)
+
+	def test_an_older_koomyo_without_the_field_is_asked_for_one_request(self):
+		self.fake_a.account_purchase_requests = False
+		self.fake_a.purchase_requests_off = True
+		with self.koomyo():
+			result = self.conn_a.test_connection()
+		self.assertTrue([w for w in result["warnings"] if "Inventory app" in w], result["warnings"])
 		calls = [c for c in self.fake_a.calls if c["path"] == "/purchase-requests"]
 		self.assertEqual(calls[0]["params"].get("limit"), 1)
+
+	def test_the_read_checks_again_when_it_was_disabled_and_reads_once_enabled(self):
+		self.fake_a.purchase_requests_off = True
+		with self.koomyo():
+			self.conn_a.test_connection()
+			summary = purchase_requests.sync_purchase_requests(self.conn_a.name)
+		self.assertIn("not enabled", summary["error"])
+		self.assertFalse([c for c in self.fake_a.calls if c["path"] == "/purchase-requests"])
+		self.fake_a.purchase_requests_off = False
+		self.fake_a.lists["/purchase-requests"] = [make_request()]
+		with self.koomyo():
+			summary = purchase_requests.sync_purchase_requests(self.conn_a.name)
+		self.assertEqual(summary["read"], 1)
 
 	def test_test_connection_is_quiet_when_it_works_or_the_switch_is_off(self):
 		self.fake_a.lists["/purchase-requests"] = []

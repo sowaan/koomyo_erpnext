@@ -80,6 +80,8 @@ class FakeKoomyo:
 		self.receive_calls: list[dict] = []
 		self.cancel_calls: list[dict] = []
 		self.purchase_bodies: list[dict] = []  # every POST /purchase-orders body that was accepted
+		self.handled_by = "external"  # who orders purchase requests, as GET /account says
+		self.account_purchase_requests = True  # False plays a Koomyo whose /account has no purchase_requests
 		self.purchase_requests_off = False  # GET /purchase-requests answers 403 feature_not_available
 		self.unsettled_days: set[str] = set()  # GET /stock-usage answers 409 day_not_settled for these
 		self.refs: list[dict] = []
@@ -177,7 +179,13 @@ class FakeKoomyo:
 					return FakeResponse(200, group)
 			return error_response(404, "not_found")
 		if path == "/account":
-			return FakeResponse(200, self.account)
+			account = copy.deepcopy(self.account)
+			if self.account_purchase_requests:
+				account["purchase_requests"] = {
+					"enabled": not self.purchase_requests_off,
+					"handled_by": None if self.purchase_requests_off else self.handled_by,
+				}
+			return FakeResponse(200, account)
 		if path == "/branches":
 			return FakeResponse(
 				200, {"object": "list", "data": self.branches, "has_more": False, "next_cursor": None}
@@ -612,6 +620,16 @@ class FakeKoomyo:
 				lines_out.append(entry)
 		if not arrived and not body.get("close_short"):
 			return error_response(409, "nothing_to_receive")
+		still_open = [
+			a
+			for line in order["lines"]
+			for a in line["allocations"]
+			if (a["destination_type"], a["destination_id"]) == (kind, place)
+			and not a["closed_short"]
+			and Decimal(a["received_quantity"]) < Decimal(a["quantity"])
+		]
+		if not arrived and body.get("close_short") and not still_open:
+			return error_response(409, "nothing_to_receive", "nothing left to close at this destination")
 		if body.get("close_short"):
 			for line in order["lines"]:
 				for a in line["allocations"]:

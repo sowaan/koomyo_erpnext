@@ -322,16 +322,37 @@ class KoomyoConnection(Document):
 			except KoomyoAPIError as e:
 				result["warnings"].append(connection_error_message(e))
 
-		if self.sync_purchase_requests and "purchasing.read" in scopes:
-			try:
-				client.get("/purchase-requests", {"limit": 1})
-			except KoomyoAPIError as e:
-				if e.status == 403 and e.code in ("feature_not_available", "app_not_enabled"):
-					from koomyo_erpnext.sync.purchase_requests import feature_message
+		state = account.get("purchase_requests")
+		if isinstance(state, dict):
+			self.purchase_requests_state = (
+				f"{'enabled' if state.get('enabled') else 'disabled'}:{state.get('handled_by') or '-'}"
+			)
+			result["purchase_requests"] = {
+				"enabled": state.get("enabled"),
+				"handled_by": state.get("handled_by"),
+			}
+		if self.sync_purchase_requests:
+			if isinstance(state, dict) and not state.get("enabled"):
+				from koomyo_erpnext.sync.purchase_requests import not_enabled_message
 
-					result["warnings"].append(feature_message(e))
-				else:
-					result["warnings"].append(connection_error_message(e))
+				result["warnings"].append(not_enabled_message())
+			elif isinstance(state, dict) and state.get("handled_by") == "koomyo":
+				result["warnings"].append(
+					_(
+						"In Koomyo, purchasing still orders what the branches ask for (Settings > Inventory and costs > Purchase requests). Set it to the external system, so only ERPNext orders: otherwise Koomyo's staff and ERPNext both order, and whoever orders a line first wins."
+					)
+				)
+			elif not isinstance(state, dict) and "purchasing.read" in scopes:
+				# A Koomyo that does not say: ask for one request.
+				try:
+					client.get("/purchase-requests", {"limit": 1})
+				except KoomyoAPIError as e:
+					if e.status == 403 and e.code in ("feature_not_available", "app_not_enabled"):
+						from koomyo_erpnext.sync.purchase_requests import feature_message
+
+						result["warnings"].append(feature_message(e))
+					else:
+						result["warnings"].append(connection_error_message(e))
 
 		if problems:
 			self.status = "Needs Attention"

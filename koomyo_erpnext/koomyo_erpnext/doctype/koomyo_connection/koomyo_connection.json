@@ -126,7 +126,8 @@
   "last_alert_on",
   "section_setup_log",
   "setup_log",
-  "purchase_request_cursor"
+  "purchase_request_cursor",
+  "purchase_requests_state"
  ],
  "fields": [
   {
@@ -926,6 +927,14 @@
    "fieldtype": "Link",
    "label": "Default Mode of Payment",
    "options": "Mode of Payment"
+  },
+  {
+   "description": "From GET /account at the last Test Connection: enabled or not, and who orders (koomyo or external).",
+   "fieldname": "purchase_requests_state",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Purchase Requests State",
+   "read_only": 1
   }
  ],
  "links": [],

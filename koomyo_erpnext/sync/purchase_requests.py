@@ -305,6 +305,18 @@ def sync_purchase_requests(connection_name: str, client: KoomyoClient | None = N
 		return summary
 	since = connection.purchase_request_cursor or f"{connection.start_from_date}T00:00:00Z"
 	client = client or KoomyoClient.for_connection(connection)
+	if (connection.purchase_requests_state or "").startswith("disabled"):
+		# Not enabled at the last Test Connection: ask GET /account again, and read requests only if it is now.
+		state = client.get_account().get("purchase_requests")
+		if isinstance(state, dict) and not state.get("enabled"):
+			summary["error"] = not_enabled_message()
+			return summary
+		if isinstance(state, dict):
+			connection.db_set(
+				"purchase_requests_state",
+				f"enabled:{state.get('handled_by') or '-'}",
+				update_modified=False,
+			)
 	newest = connection.purchase_request_cursor
 	try:
 		for card in client.iter_list("/purchase-requests", {"updated_since": since}):
@@ -337,6 +349,12 @@ def sync_purchase_requests(connection_name: str, client: KoomyoClient | None = N
 	if summary["queued"]:
 		enqueue_processing(connection_name)
 	return summary
+
+
+def not_enabled_message() -> str:
+	return _(
+		"This restaurant cannot use purchase requests: it needs Koomyo's Inventory app and the purchase requests feature (GET /account says purchase requests are not enabled). Ask the restaurant to switch them on, or switch Sync Purchase Requests off."
+	)
 
 
 def feature_message(error) -> str:
