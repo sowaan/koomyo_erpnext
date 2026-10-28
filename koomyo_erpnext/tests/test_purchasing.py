@@ -590,3 +590,52 @@ class TestCancelInErpnext(PurchasingTestCase):
 		frappe.db.commit()
 		self.run_queue()
 		self.assertEqual([l for l in self.outbound() if l.event_type == "erpnext.purchase_order_cancel"], [])
+
+
+class TestTaxAndChargesOutbound(PurchasingTestCase):
+	def test_they_cannot_be_sent_so_they_are_in_the_notes_and_the_log_warns(self):
+		from koomyo_erpnext.tests.helpers import ensure_account
+
+		tax = ensure_account(COMPANY_A, "_KTA", "Input Tax", "Duties and Taxes", "Tax")
+		freight = ensure_account(COMPANY_A, "_KTA", "Purchase Charges", "Indirect Expenses")
+		po = self.make_po(submit=False)
+		po.append(
+			"taxes",
+			{
+				"charge_type": "Actual",
+				"account_head": tax,
+				"description": "Sales tax 18%",
+				"tax_amount": 2610,
+				"add_deduct_tax": "Add",
+			},
+		)
+		po.append(
+			"taxes",
+			{
+				"charge_type": "Actual",
+				"account_head": freight,
+				"description": "Freight",
+				"tax_amount": 1000,
+				"add_deduct_tax": "Add",
+			},
+		)
+		po.save()
+		po.submit()
+		frappe.db.commit()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.assertIn("takes no tax or charges on an order", log.message)
+		(call,) = [w for w in self.writes("/purchase-orders") if w["path"] == "/purchase-orders"]
+		notes = call["body"]["notes"]
+		self.assertIn("Sales tax 18% 2610", notes)
+		self.assertIn("Freight 1000", notes)
+		self.assertEqual(call["body"]["lines"][0]["unit_cost"], "1450", "the price is without tax")
+		self.assertNotIn("taxes", call["body"])
+		self.assertNotIn("charges", call["body"])
+
+	def test_an_order_without_taxes_sends_its_remarks_and_no_warning(self):
+		self.make_po()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual((log.status, log.message or ""), ("Done", ""))

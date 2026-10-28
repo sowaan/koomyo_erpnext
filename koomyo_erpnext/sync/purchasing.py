@@ -236,7 +236,7 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 	lines = order_lines_for_koomyo(po, connection, shares)
 	body = {
 		"supplier_id": supplier_id,
-		"notes": (po.get("remarks") or _("ERPNext {0}").format(po.name))[:500],
+		"notes": order_notes(po),
 		"lines": lines,
 		"external_ref": {"system": connection.ref_system or "erpnext", "external_id": po.name},
 	}
@@ -301,6 +301,29 @@ def explain_order_refusal(error, po):
 				"Koomyo refused Purchase Order {0}: {1}. Check that its quantities match the Material Request rows (a share must be for the request line's own ingredient and branch)."
 			).format(po.name, error.message)
 		)
+
+
+def order_notes(po) -> str:
+	"""The order's notes for Koomyo. Its API takes no tax or charges (PurchaseOrderInput has lines, prices and shares
+	only), so the Purchase Taxes and Charges are written into the notes for the person who finishes the draft in
+	Koomyo, and the Event Log says they were not sent as figures."""
+	base = po.get("remarks") or _("ERPNext {0}").format(po.name)
+	rows = [
+		f"{(row.description or row.account_head or '')[:40]} {flt(row.tax_amount, 2)}"
+		+ (" " + _("(deducted)") if row.get("add_deduct_tax") == "Deduct" else "")
+		for row in po.get("taxes") or []
+		if flt(row.tax_amount)
+	]
+	if not rows:
+		return base[:500]
+	from koomyo_erpnext.sync.events import warn
+
+	warn(
+		_(
+			"Koomyo's API takes no tax or charges on an order, so those of {0} were not sent as figures (they are in the order's notes): enter them on the order in Koomyo before sending it. Prices were sent without tax."
+		).format(po.name)
+	)
+	return (_("ERPNext taxes and charges: {0}.").format("; ".join(rows)) + " " + base)[:500]
 
 
 def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
