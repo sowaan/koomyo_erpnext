@@ -271,6 +271,7 @@ def load_ingredient(connection, client, record: dict) -> str:
 	changes = {
 		"item_name": (record.get("name") or record["id"])[:140],
 		"disabled": 0 if record.get("active", True) else 1,
+		"koomyo_kind": record.get("kind") or "food",
 	}
 	if all(item.get(k) == v for k, v in changes.items()):
 		return "unchanged"

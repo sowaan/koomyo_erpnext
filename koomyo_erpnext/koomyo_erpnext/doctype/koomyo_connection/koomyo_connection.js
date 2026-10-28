@@ -21,6 +21,7 @@ frappe.ui.form.on("Koomyo Connection", {
 			"cogs_account",
 			"stock_adjustment_account",
 			"transfer_loss_account",
+			"supplies_expense_account",
 		]) {
 			frm.set_query(field, company_filter);
 		}

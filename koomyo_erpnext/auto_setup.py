@@ -107,6 +107,13 @@ ACCOUNT_DEFAULTS = {
 		["Indirect Expenses", "Direct Expenses"],
 		"Purchase Charges",
 	),
+	"supplies_expense_account": (
+		["Supplies Expense", "Operating Supplies", "Cleaning Supplies", "Office Supplies"],
+		"",
+		"Expense",
+		["Indirect Expenses", "Direct Expenses"],
+		"Operating Supplies",
+	),
 	"transfer_loss_account": (
 		["Stock Transfer Loss", "Transfer Loss", "Stock Loss"],
 		"",

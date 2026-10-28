@@ -363,6 +363,7 @@ def process_event(log_name: str):
 	frappe.db.savepoint("koomyo_event")
 	dry_run = bool(connection.dry_run)
 	user = frappe.session.user
+	frappe.local.koomyo_warnings = []
 	try:
 		# Booking is the app's own work, not the work of whoever queued the job (a Koomyo Manager who pressed
 		# Retry, or Guest for a webhook): ERPNext's permission checks on the documents it makes, changes and
@@ -428,7 +429,9 @@ def process_event(log_name: str):
 	else:
 		log.dry_run = 0
 		reference = result if isinstance(result, tuple | list) and len(result) == 2 else (None, None)
-		_finish(log, "Done", reference=reference)
+		_finish(
+			log, "Done", reference=reference, message=" ".join(getattr(frappe.local, "koomyo_warnings", []))
+		)
 	finally:
 		frappe.set_user(user)
 		# Messages ERPNext printed while building documents mean nothing to a background job.
@@ -528,6 +531,11 @@ def _fail_retryable(log, message: str):
 		message=message,
 		next_retry_on=add_to_date(now_datetime(), minutes=wait),
 	)
+
+
+def warn(text: str):
+	"""Something the booking did that a person should see: shown on the Event Log row when it is Done."""
+	frappe.local.koomyo_warnings = [*getattr(frappe.local, "koomyo_warnings", []), text]
 
 
 def _finish(log, status, *, error_class="", message="", error="", reference=(None, None), next_retry_on=None):

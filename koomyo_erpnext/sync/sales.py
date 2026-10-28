@@ -350,6 +350,11 @@ def make_payment_entry(
 	pe.mode_of_payment = row.mode_of_payment
 	pe.cost_center = invoice.cost_center
 	stamp(pe, connection, koomyo_id, invoice.koomyo_branch)
+	if row.get("is_default"):
+		pe.custom_remarks = 1  # else ERPNext writes its own remarks over this
+		pe.remarks = _(
+			"Koomyo payment method {0!r} was not in the Payment Map: booked to the Default Mode of Payment."
+		).format(method)
 
 	fee_percent = Decimal(str(row.fee_percent or 0))
 	if fee_percent and not is_refund:

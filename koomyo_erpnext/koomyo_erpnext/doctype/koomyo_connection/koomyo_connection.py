@@ -174,6 +174,7 @@ class KoomyoConnection(Document):
 			"cogs_account",
 			"stock_adjustment_account",
 			"transfer_loss_account",
+			"supplies_expense_account",
 		):
 			self.check_account_company(self.get(fieldname), _(self.meta.get_label(fieldname)))
 		for fieldname in ("main_warehouse", "transit_warehouse"):

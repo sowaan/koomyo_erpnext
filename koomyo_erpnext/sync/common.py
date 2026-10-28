@@ -92,10 +92,44 @@ def payment_row(connection, method: str | None):
 			if flt(row.fee_percent):
 				check_company(connection, "Account", row.fee_account, f"Payment Map row {row.idx}")
 			return row
-	raise NeedsMapping(
+	return default_payment_row(connection, method)
+
+
+def default_payment_row(connection, method: str | None):
+	"""A method that is not in the Payment Map: the connection's Default Mode of Payment, with a warning.
+
+	New payment method codes can appear at any time (an online card method, say), so a list is never assumed.
+	Without a Default Mode of Payment the order fails with the row to add, as before.
+	"""
+	mode = connection.get("default_payment_mode")
+	account = (
+		frappe.db.get_value(
+			"Mode of Payment Account", {"parent": mode, "company": connection.company}, "default_account"
+		)
+		if mode
+		else None
+	)
+	if not (mode and account):
+		raise NeedsMapping(
+			_(
+				"Koomyo payment method {0!r} is not mapped. Add a Payment Map row for it on connection {1} (or set a Default Mode of Payment that has a default account for the Company), then press Retry."
+			).format(method, connection.name)
+		)
+	from koomyo_erpnext.sync.events import warn
+
+	warn(
 		_(
-			"Koomyo payment method {0!r} is not mapped. Add a Payment Map row for it on connection {1}, then press Retry."
-		).format(method, connection.name)
+			"Payment method {0!r} is not in the Payment Map: booked to the Default Mode of Payment {1}. Add a Payment Map row for it."
+		).format(method, mode)
+	)
+	return frappe._dict(
+		koomyo_method=method,
+		mode_of_payment=mode,
+		account=account,
+		fee_percent=0,
+		fee_account=None,
+		idx=0,
+		is_default=1,
 	)
 
 

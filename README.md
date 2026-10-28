@@ -14,8 +14,9 @@ Koomyo is a restaurant POS. This app is the ERPNext side of its public integrati
 | Customer | Customer (name, phone and email only) |
 | Purchase order (created, updated, cancelled, received) | Purchase Order and one Purchase Receipt per delivery, with tax and landed cost |
 | Supplier card | Supplier, Address, Contact and Payment Terms Template |
+| Purchase request (branches ask, purchasing approves) | Material Request, once lines are approved |
 | Complaint | Issue (no customer name or phone) |
-| ← Purchase Order, Purchase Receipt (one delivery each), Supplier, ingredient cost | Written to Koomyo from ERPNext |
+| ← Purchase Order (one share per branch request line), Purchase Receipt (one delivery per place), Supplier, ingredient cost, the Material Request's name | Written to Koomyo from ERPNext |
 
 ### Versions
 
@@ -62,6 +63,7 @@ In **Settings > Integrations > API keys**, create one key for this ERPNext conne
 | Shifts | `shifts.read` |
 | Stock | `stock.read` (also warehouses and daily usage), `refs.write` |
 | Purchasing | `purchasing.read`, `purchasing.write`, `suppliers.write`, `ingredients.write` |
+| Purchase requests | `purchasing.read` (requests and orders), `purchasing.write` (orders with shares, receive), `refs.write` (links); no new scope. Use the "ERP sync" key preset in Koomyo. |
 | Customers | `customers.read`, `refs.write` |
 | Complaints | `complaints.read` |
 
@@ -100,6 +102,17 @@ Every map row must belong to the connection's Company; this is checked when you 
 
 **Suppliers.** With Book Orders Made in Koomyo on, `supplier.created` and `supplier.updated` bring Koomyo's whole supplier card into ERPNext: the Supplier (name, Tax ID from `tax_number`, website, default currency, disabled when not active, payment terms as a shared Payment Terms Template: cash on delivery, payment in advance, or net N days), one Billing Address (when the card has a first address line, a city and a country ERPNext knows; otherwise it says what is missing and makes none), one Contact (name, phones, WhatsApp, email), and a plain "Koomyo card" text on the Supplier for what ERPNext has no field for (code, second tax number and status, credit limit, lead time, minimum order, delivery days, tags, preferred, rating, notes). Bank details are not in Koomyo's API. A supplier made in ERPNext stays ERPNext's: Koomyo's echo of it changes nothing, and a Koomyo supplier whose name already exists in ERPNext is made as "<name> (<connection>)", never merged. A purchase order makes its supplier from the whole card (`GET /suppliers/{id}`) when it can be read.
 
+**Purchase requests (Koomyo) and consolidated orders (ERPNext).** A branch asks for ingredients in Koomyo; purchasing approves, rejects or changes quantities there (staff only: the API has no call for it, so ERPNext reads the decisions); ERPNext orders.
+- **Material Request.** Each submitted request becomes one Material Request (type Purchase) when purchasing has approved lines: only lines whose own status is approved (or later), at `approved_quantity`, never the quantity the branch asked for, for the branch's Warehouse. A change of what is approved rebuilds it while nothing was ordered from it; after that the event fails with a message for a person. A request rejected or cancelled in Koomyo cancels it (or fails the same way if ERPNext already ordered from it). Its name is written back to Koomyo (`refs`), so Koomyo can find it.
+- **Order it.** Make a Purchase Order from one or several branches' Material Requests (one supplier, one row per request line; rows of one Item need one rate). When Sync Purchasing is on, it is sent with one share per request line (`allocations`), summed into one line per ingredient. **Deliver Shares To** says where a share goes when it names no place: Koomyo Decides, Warehouse (to be distributed to the branches by Koomyo transfers) or Branches (straight to each branch). Koomyo checks everything in one transaction with the admin's own rules, and a refusal creates nothing: a line that is not approved, more than purchasing approved (if Koomyo's own staff also order, whoever orders a line first wins), or a restaurant without the feature. The event then fails with the reason and **Retry** sends it again once it is fixed. If staff edit or cancel the order in Koomyo, it comes back as `purchase.updated` or `purchase.cancelled` and the quantity returns to the request.
+- **Receiving per place.** Each Purchase Receipt of such an order goes to Koomyo as one delivery per destination (the Warehouse is looked up on the Branch Map: a branch row, or Location Type Warehouse), with the line's total at that place so far; a receipt that spans two places is two deliveries. A Purchase Order closed in ERPNext after part arrived is finished short at every place still waiting. Deliveries Koomyo receives become one Purchase Receipt each, into the Warehouse of the place they landed at (a share for the warehouse lands in its Warehouse, a branch share in the branch's). Goods held in a warehouse reach the branches by Koomyo transfers that staff make (Distribute to branches); they arrive as `transfer.sent` and `transfer.received` and become Material Transfers through the Transit Warehouse, as above.
+- **ERP mode: tell the restaurant.** In Koomyo, **Settings > Inventory and costs > Purchase requests > Who orders what the branches ask for** must be the external system, so only ERPNext orders (Koomyo then hides and refuses its own Create orders). The setting is not readable through the API, so the app cannot check it. And an order ERPNext makes is a **draft in Koomyo: do not press Send on it there**, because Send emails the supplier and ERPNext already placed the order.
+- Test Connection calls `GET /purchase-requests?limit=1` when Sync Purchase Requests is on, and says plainly if the restaurant lacks the Inventory app or the purchase requests feature (403 `feature_not_available` or `app_not_enabled`).
+
+**Supplies and low stock.** Koomyo's ingredients now have a kind: food, packaging or **supply** (soap, gloves, bin liners, uniforms). Supplies are an expense and never part of food cost: what an employee takes (`supply_issue`) is booked from stock to the **Supplies Expense Account** (Stock section), not to Cost of Goods Sold or Stock Adjustment. They use the same purchase orders, receiving, transfers and counts, and the Item keeps its kind. `stock.low` (an ingredient at a place fell to its low stock level) is shown in the Event Log and books nothing. An open stock count that staff delete never reaches ERPNext (nothing had moved stock); a closed one cannot be deleted.
+
+**Payment methods.** Koomyo can add payment method codes at any time (for example an online card). A method that is not in the Payment Map fails with the row to add, unless the connection has a **Default Mode of Payment** (with a default account for the Company): then the sale or refund is booked to it, the Payment Entry says so, and the Event Log row shows a warning to add a Payment Map row.
+
 ### 4. Switch the syncs on
 
 | Switch | What it books | Settings it needs |
@@ -111,6 +124,7 @@ Every map row must belong to the connection's Company; this is checked when you 
 | **Sync Purchasing** | Purchase Orders and Purchase Receipts for a mapped Warehouse go to Koomyo, with their Supplier. Each Purchase Receipt is one delivery sent with the line totals so far, with its delivery note, so an order can arrive in several; a Purchase Order closed in ERPNext after part arrived is finished short in Koomyo; ingredient cost changes go to Koomyo; an order received in Koomyo becomes a Purchase Receipt. | Ingredients must be Items linked to Koomyo, which the stock sync creates. |
 | **Book Orders Made in Koomyo** (under Sync Purchasing) | An order made in the Koomyo admin becomes a Supplier (if new) and a submitted Purchase Order once it is **ordered** (a draft creates nothing); each delivery becomes its own Purchase Receipt; an edit before any delivery rebuilds the order; a cancel cancels it (or, if goods were already received, fails with a message for a person). The safety net `GET /purchase-orders?updated_since=` runs every 5 minutes through the same code. | Main Warehouse, Supplier Group; for orders with tax or charges also the Purchase Taxes and Charges accounts below |
 | **Sync Customers** | Koomyo customers become Customers. | Customer Group, Territory, and the webhook's customer data switch on in Koomyo. |
+| **Sync Purchase Requests** (under Sync Purchasing) | Koomyo purchase requests become Material Requests once purchasing has approved lines, at the approved quantity, for the branch's Warehouse. A Purchase Order made in ERPNext from those Material Requests is sent to Koomyo with a share for each request line, and each Purchase Receipt is received at its own place. See Purchase requests below. | Branch Map rows for the branches, **Deliver Shares To**; the restaurant needs Koomyo's Inventory app and purchase requests feature. |
 | **Sync Complaints** | Koomyo complaints (`complaint.created`, `complaint.updated`) become Issues: ticket number and summary, status, priority, category, order number, resolution and its cost. The customer's name and phone are never copied. | The key's `complaints.read` scope and a restaurant with the Complaints app. |
 
 Then tick **Enabled**.
@@ -200,6 +214,7 @@ Set **Alert Email** in **Koomyo Settings**. A connection with a revoked key, an 
 | Needs Re-sync | Koomyo reported a feed gap. The re-sync backfill is running or needs you (see Feed gap above). |
 | Failed: "Discount Map" or "Discount Accounting" | Add the Discount Map row for that source, or switch on Selling Settings > Enable Discount Accounting for Selling, then Retry. |
 | A transfer or purchase order fails naming a Koomyo warehouse id | Run Set Up From Koomyo again (it reads the warehouse list), or add a Branch Map row of Location Type Warehouse. |
+| Failed: "Koomyo will not take Purchase Order ..." | A request line is not approved, or the order takes more than purchasing approved, or the restaurant lacks the feature: the message says which. Nothing was created in Koomyo; fix it and Retry. |
 | Failed: "purchase order ... already fully received or closed short" | Koomyo has nothing more to receive for that order; adjust the stock in Koomyo. |
 
 What the Koomyo API does not provide yet, and the choices made where the docs leave room, are in [docs/API_GAPS.md](docs/API_GAPS.md).

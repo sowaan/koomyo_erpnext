@@ -29,6 +29,7 @@
   "payment_map",
   "section_tax_map",
   "tax_map",
+  "default_payment_mode",
   "tab_syncs",
   "section_syncs",
   "sync_sales",
@@ -64,6 +65,7 @@
   "cogs_account",
   "stock_adjustment_account",
   "transfer_loss_account",
+  "supplies_expense_account",
   "transit_warehouse",
   "section_stock_maps",
   "uom_map",
@@ -909,6 +911,21 @@
    "hidden": 1,
    "label": "Purchase Requests Read Up To",
    "read_only": 1
+  },
+  {
+   "depends_on": "sync_stock",
+   "description": "Supplies (soap, gloves, bin liners, uniforms) are an expense, never food cost. What an employee takes (stock movement supply_issue) is booked to this account, not to Cost of Goods Sold or Stock Adjustment.",
+   "fieldname": "supplies_expense_account",
+   "fieldtype": "Link",
+   "label": "Supplies Expense Account",
+   "options": "Account"
+  },
+  {
+   "description": "A payment method Koomyo sends that is not in the Payment Map (a new one, such as an online card) is booked to this Mode of Payment and its default account for the Company, and the Event Log says so. Leave empty to have such an order fail with the Payment Map row to add (the default).",
+   "fieldname": "default_payment_mode",
+   "fieldtype": "Link",
+   "label": "Default Mode of Payment",
+   "options": "Mode of Payment"
   }
  ],
  "links": [],

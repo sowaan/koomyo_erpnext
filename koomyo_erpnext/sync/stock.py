@@ -186,7 +186,11 @@ def on_stock_adjusted(event: dict, connection):
 	change = money(movement.get("quantity_change"), "quantity_change")
 	if not change:
 		raise Skipped(_("The adjustment did not change the quantity."))
-	adjustment = account_setting(connection, "stock_adjustment_account", _("Stock Adjustment Account"))
+	if movement.get("reason") == "supply_issue":
+		# Supplies are an expense, never food cost and not a stock correction (docs: Stock movement reasons).
+		adjustment = account_setting(connection, "supplies_expense_account", _("Supplies Expense Account"))
+	else:
+		adjustment = account_setting(connection, "stock_adjustment_account", _("Stock Adjustment Account"))
 	purpose = "Material Receipt" if change > 0 else "Material Issue"
 	entry = new_stock_entry(connection, purpose, movement, movement["id"], event.get("branch_id"))
 	entry.remarks = _("Koomyo stock adjustment: {0}").format(movement.get("reason") or "-")
@@ -212,6 +216,27 @@ def on_stock_adjusted(event: dict, connection):
 			branch=branch,
 		)
 	return submit_entry(entry, "")
+
+
+@handles("stock.low", switch="sync_stock", scopes=("stock.read",))
+def on_stock_low(event: dict, connection):
+	"""An ingredient at a place fell to its low stock level: shown in the Event Log, nothing is booked.
+
+	ERPNext keeps its own reorder levels; Koomyo's alert is only worth seeing (docs: events/stock#stocklow).
+	"""
+	level = event["data"]
+	ingredient = level.get("ingredient") or {}
+	place = level.get("location") or {}
+	raise Skipped(
+		_(
+			"Low stock: {0} at {1} is {2} (Koomyo's low stock level is {3}). It books nothing in ERPNext."
+		).format(
+			ingredient.get("name") or ingredient.get("id"),
+			place.get("name") or place.get("id"),
+			level.get("quantity"),
+			level.get("low_stock_threshold"),
+		)
+	)
 
 
 @handles("stock_count.closed", switch="sync_stock", scopes=STOCK_SCOPES)
@@ -446,6 +471,7 @@ def ingredient_item(
 		uom=uom,
 		is_purchase_item=1,
 	)
+	frappe.db.set_value("Item", code, "koomyo_kind", ingredient.get("kind") or "food")
 	cost = money(ingredient.get("cost_per_unit") or "0", "cost_per_unit")
 	if cost:
 		frappe.db.set_value("Item", code, "valuation_rate", flt(str(cost), 6))
