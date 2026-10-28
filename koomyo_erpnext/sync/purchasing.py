@@ -64,6 +64,10 @@ def on_purchase_order_submit(doc, method=None):
 	if doc.get("koomyo_connection"):
 		return  # made from a Koomyo order: Koomyo already has it
 	connection, _row = connection_for_warehouse(doc.company, po_warehouse(doc))
+	if not connection:
+		# An order made from Koomyo purchase requests goes to several branches' Warehouses: its connection is the
+		# one the Material Requests came from.
+		connection = request_connection(doc)
 	if connection:
 		store_outbound(connection, "erpnext.purchase_order", doc)
 
@@ -134,6 +138,35 @@ def on_item_update(doc, method=None):
 		store_outbound(connection, "erpnext.item_cost", doc)
 
 
+def request_connection(po):
+	"""The enabled connection whose purchase requests (Material Requests) this Purchase Order is made from."""
+	names = {
+		frappe.db.get_value("Material Request", row.material_request, "koomyo_connection")
+		for row in po.items
+		if row.get("material_request")
+	} - {None}
+	if len(names) != 1:
+		return None
+	connection = frappe.get_cached_doc("Koomyo Connection", names.pop())
+	if connection.enabled and connection.sync_purchasing and connection.sync_purchase_requests:
+		return connection
+	return None
+
+
+def request_line_of(item, connection) -> str | None:
+	"""The Koomyo purchase request line a Purchase Order row fills, from its Material Request row."""
+	if not item.get("material_request_item"):
+		return None
+	row = frappe.db.get_value(
+		"Material Request Item", item.material_request_item, ["koomyo_line_id", "parent"], as_dict=True
+	)
+	if not row or not row.koomyo_line_id:
+		return None
+	if frappe.db.get_value("Material Request", row.parent, "koomyo_connection") != connection.name:
+		return None
+	return row.koomyo_line_id
+
+
 def po_warehouse(doc) -> str | None:
 	warehouses = {row.warehouse for row in doc.items if row.warehouse} or (
 		{doc.set_warehouse} if doc.set_warehouse else set()
@@ -151,59 +184,68 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 		raise Skipped(_("Purchase Order {0} is not submitted any more.").format(po.name))
 	if po.koomyo_id:
 		return ("Purchase Order", po.name)
-	warehouses = {row.warehouse for row in po.items}
-	if len(warehouses) != 1:
-		raise Fatal(
-			_(
-				"Purchase Order {0} goes to {1} warehouses. Koomyo takes one place per order: split it."
-			).format(po.name, len(warehouses))
-		)
-	_connection, row = connection_for_warehouse(po.company, warehouses.pop())
-	if not row:
-		raise NeedsMapping(
-			_("The Warehouse of Purchase Order {0} is not on connection {1}'s Branch Map.").format(
-				po.name, connection.name
+	shares = {item.name: request_line_of(item, connection) for item in po.items}
+	with_shares = any(shares.values())
+	row = None
+	if with_shares:
+		missing = [item.item_code for item in po.items if not shares[item.name]]
+		if missing:
+			raise Fatal(
+				_(
+					"Purchase Order {0} fills Koomyo purchase requests, but row(s) {1} come from no Koomyo Material Request. Koomyo needs every row of such an order to fill a request line: split the order."
+				).format(po.name, ", ".join(sorted(set(missing))))
 			)
-		)
+	else:
+		warehouses = {row.warehouse for row in po.items}
+		if len(warehouses) != 1:
+			raise Fatal(
+				_(
+					"Purchase Order {0} goes to {1} warehouses. Koomyo takes one place per order: split it."
+				).format(po.name, len(warehouses))
+			)
+		_connection, row = connection_for_warehouse(po.company, warehouses.pop())
+		if not row:
+			raise NeedsMapping(
+				_("The Warehouse of Purchase Order {0} is not on connection {1}'s Branch Map.").format(
+					po.name, connection.name
+				)
+			)
 
 	client = client or KoomyoClient.for_connection(connection)
 	supplier_id = push_supplier_doc(frappe.get_doc("Supplier", po.supplier), connection, client)
 
-	lines, seen = [], set()
-	for item in po.items:
-		ingredient_id = linked_ingredient(item.item_code, connection)
-		if ingredient_id in seen:
-			raise Fatal(
-				_("Purchase Order {0} has Item {1} twice. Koomyo needs one line per ingredient.").format(
-					po.name, item.item_code
-				)
-			)
-		seen.add(ingredient_id)
-		cost = Decimal(str(flt(item.base_net_rate, 6))) / Decimal(str(flt(item.conversion_factor, 9) or 1))
-		lines.append(
-			{
-				"ingredient_id": ingredient_id,
-				"quantity_ordered": text(item.stock_qty),
-				"unit_cost": text(cost),
-			}
-		)
-
+	lines = order_lines_for_koomyo(po, connection, shares)
 	body = {
 		"supplier_id": supplier_id,
 		"notes": (po.get("remarks") or _("ERPNext {0}").format(po.name))[:500],
 		"lines": lines,
 		"external_ref": {"system": connection.ref_system or "erpnext", "external_id": po.name},
 	}
-	if row.location_type != "Warehouse":
+	if with_shares:
+		deliver_to = {"Warehouse": "warehouse", "Branches": "branches"}.get(connection.get("deliver_to"))
+		if deliver_to:
+			body["deliver_to"] = deliver_to
+	elif row.location_type != "Warehouse":
 		body["branch_id"] = row.koomyo_branch_id  # leave out to receive into the main warehouse (docs)
-	answer = koomyo_write(
-		connection,
-		client,
-		"POST",
-		"/purchase-orders",
-		body,
-		idempotency_key("Purchase Order", po.name, po.modified, "po"),
-	)
+	try:
+		answer = koomyo_write(
+			connection,
+			client,
+			"POST",
+			"/purchase-orders",
+			body,
+			# A retry after a refusal gets its own key: Koomyo may answer the same key with the first (refused)
+			# answer again. The external_ref still makes the order unique for good.
+			idempotency_key(
+				"Purchase Order",
+				po.name,
+				po.modified,
+				"po" if event.get("attempt", 1) <= 1 else f"po-{event['attempt']}",
+			),
+		)
+	except KoomyoAPIError as e:
+		explain_order_refusal(e, po)
+		raise
 	if answer.get("object") != "purchase_order" or not answer.get("id"):
 		raise Fatal(_("Koomyo answered the purchase order with something else."))
 	po.db_set(
@@ -214,6 +256,79 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 		}
 	)
 	return ("Purchase Order", po.name)
+
+
+REFUSALS = {
+	"request_line_not_orderable": _(
+		"Koomyo will not take Purchase Order {0}: a purchase request line it fills is not approved (or is not orderable). Nothing was created in Koomyo. Wait until purchasing approves it, then press Retry."
+	),
+	"request_quantity_exceeded": _(
+		"Koomyo will not take Purchase Order {0}: it orders more than purchasing approved for a request line, less what other orders already hold (if Koomyo's own staff also order, whoever orders a line first wins: ask them to set Purchase requests to the external system). Nothing was created in Koomyo."
+	),
+	"feature_not_available": _(
+		"Koomyo will not take Purchase Order {0} with request shares: the restaurant needs Koomyo's purchase requests feature. Nothing was created in Koomyo."
+	),
+}
+
+
+def explain_order_refusal(error, po):
+	"""A refusal creates nothing in Koomyo; say what to do (never retried by itself)."""
+	message = REFUSALS.get(error.code)
+	if message:
+		raise Fatal(message.format(po.name) + " (" + error.message + ")")
+	if error.code == "invalid_parameter" and any(row.get("material_request_item") for row in po.items):
+		raise Fatal(
+			_(
+				"Koomyo refused Purchase Order {0}: {1}. Check that its quantities match the Material Request rows (a share must be for the request line's own ingredient and branch)."
+			).format(po.name, error.message)
+		)
+
+
+def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
+	"""One Koomyo line per ingredient. A row that fills a purchase request line becomes a share of its line.
+
+	Koomyo checks that a line's shares add up to its quantity, so the rows of one Item (made from several
+	branches' Material Requests) are summed and each request line keeps its own share. One price per
+	ingredient: rows of one Item with different rates cannot be one line.
+	"""
+	grouped: dict[str, dict] = {}
+	for item in po.items:
+		ingredient_id = linked_ingredient(item.item_code, connection)
+		cost = Decimal(str(flt(item.base_net_rate, 6))) / Decimal(str(flt(item.conversion_factor, 9) or 1))
+		qty = Decimal(str(flt(item.stock_qty, 6)))
+		share = shares.get(item.name)
+		line = grouped.get(ingredient_id)
+		if line is None:
+			grouped[ingredient_id] = line = {"qty": Decimal(0), "cost": cost, "shares": {}}
+		elif not share:
+			raise Fatal(
+				_("Purchase Order {0} has Item {1} twice. Koomyo needs one line per ingredient.").format(
+					po.name, item.item_code
+				)
+			)
+		elif line["cost"] != cost:
+			raise Fatal(
+				_(
+					"Purchase Order {0}: the rows of Item {1} have different rates ({2} and {3}). Koomyo takes one price per ingredient: give them one rate."
+				).format(po.name, item.item_code, text(line["cost"]), text(cost))
+			)
+		line["qty"] += qty
+		if share:
+			line["shares"][share] = line["shares"].get(share, Decimal(0)) + qty
+	out = []
+	for ingredient_id, line in grouped.items():
+		entry = {
+			"ingredient_id": ingredient_id,
+			"quantity_ordered": text(line["qty"]),
+			"unit_cost": text(line["cost"]),
+		}
+		if line["shares"]:
+			entry["allocations"] = [
+				{"request_line_id": request_line, "quantity": text(qty)}
+				for request_line, qty in line["shares"].items()
+			]
+		out.append(entry)
+	return out
 
 
 @handles("erpnext.purchase_receipt", switch="sync_purchasing", scopes=WRITE_SCOPES)

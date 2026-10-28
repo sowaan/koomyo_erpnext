@@ -358,6 +358,8 @@ def process_event(log_name: str):
 	frappe.db.commit()
 
 	event = json.loads(log.payload)
+	# A handler that must not replay a refusal changes its idempotency key on every retry.
+	event["attempt"] = int(event.get("retries") or 0) * 1000 + (log.attempts or 1)
 	frappe.db.savepoint("koomyo_event")
 	dry_run = bool(connection.dry_run)
 	user = frappe.session.user
@@ -557,6 +559,12 @@ def reset_for_retry(log) -> bool:
 	log.error = ""
 	log.next_retry_on = None
 	log.attempts = 0
+	try:  # counts the times a person pressed Retry: a handler can give each its own idempotency key
+		payload = json.loads(log.payload)
+		payload["retries"] = int(payload.get("retries") or 0) + 1
+		log.payload = json.dumps(payload, indent=1, sort_keys=True)
+	except (TypeError, ValueError):
+		pass
 	log.save(ignore_permissions=True)
 	return True
 

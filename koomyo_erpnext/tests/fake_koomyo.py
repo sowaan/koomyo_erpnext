@@ -78,6 +78,7 @@ class FakeKoomyo:
 		self.suppliers: dict[str, dict] = {}
 		self.purchase_orders: dict[str, dict] = {}
 		self.receive_calls: list[dict] = []
+		self.purchase_bodies: list[dict] = []  # every POST /purchase-orders body that was accepted
 		self.purchase_requests_off = False  # GET /purchase-requests answers 403 feature_not_available
 		self.unsettled_days: set[str] = set()  # GET /stock-usage answers 409 day_not_settled for these
 		self.refs: list[dict] = []
@@ -276,6 +277,9 @@ class FakeKoomyo:
 					return FakeResponse(200, order)
 			if body.get("supplier_id") not in self.suppliers:
 				return error_response(400, "invalid_parameter", "supplier_id")
+			allocated = self._allocations(body)
+			if isinstance(allocated, FakeResponse):
+				return allocated
 			pid = f"po-{len(self.purchase_orders) + 1}"
 			order = {
 				"id": pid,
@@ -299,10 +303,12 @@ class FakeKoomyo:
 						"quantity_ordered": line["quantity_ordered"],
 						"quantity_received": "0",
 						"unit_cost": line["unit_cost"],
+						"allocations": allocated[i],
 					}
 					for i, line in enumerate(body.get("lines") or [])
 				],
 			}
+			self.purchase_bodies.append(body)
 			self.purchase_orders[pid] = order
 			return FakeResponse(201, order)
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):
@@ -319,6 +325,73 @@ class FakeKoomyo:
 			self.refs.append(ref)
 			return FakeResponse(200, ref)
 		return error_response(404, "not_found")
+
+	def _allocations(self, body):
+		"""Checks the shares of an order the way the docs say (one transaction: a refusal changes nothing)."""
+		from decimal import Decimal
+
+		requests = self.lists.get("/purchase-requests", [])
+		by_line = {l["id"]: (card, l) for card in requests for l in card["lines"]}
+		out, taken = [], {}
+		for index, line in enumerate(body.get("lines") or []):
+			shares = line.get("allocations") or []
+			made = []
+			if shares:
+				if self.purchase_requests_off:
+					return error_response(403, "feature_not_available", "purchase requests are not enabled")
+				if sum(Decimal(s["quantity"]) for s in shares) != Decimal(line["quantity_ordered"]):
+					return error_response(
+						400, "invalid_parameter", "the shares do not add up to quantity_ordered"
+					)
+			for number, share in enumerate(shares):
+				card, request_line = by_line.get(share.get("request_line_id"), (None, None))
+				if not request_line:
+					return error_response(400, "invalid_parameter", "unknown request line")
+				if request_line["ingredient"]["id"] != line["ingredient_id"]:
+					return error_response(400, "invalid_parameter", "request line of another ingredient")
+				if request_line["status"] not in ("approved", "ordered"):
+					return error_response(
+						409, "request_line_not_orderable", "the request line is not approved"
+					)
+				room = Decimal(request_line["approved_quantity"]) - Decimal(request_line["ordered_quantity"])
+				room -= taken.get(request_line["id"], Decimal(0))
+				if Decimal(share["quantity"]) > room:
+					return error_response(409, "request_quantity_exceeded", "more than approved")
+				taken[request_line["id"]] = taken.get(request_line["id"], Decimal(0)) + Decimal(
+					share["quantity"]
+				)
+				kind = share.get("destination_type") or (
+					"warehouse" if body.get("deliver_to") == "warehouse" else "branch"
+				)
+				warehouse = next((w for w in self.lists.get("/warehouses", []) if w.get("is_main")), None)
+				made.append(
+					{
+						"id": f"alloc-{index}-{number}",
+						"branch_id": card["branch_id"],
+						"branch_name": card["branch_name"],
+						"quantity": share["quantity"],
+						"destination_type": kind,
+						"destination_id": (share.get("destination_id") or (warehouse or {}).get("id"))
+						if kind == "warehouse"
+						else card["branch_id"],
+						"request_line_id": request_line["id"],
+						"request_id": card["id"],
+						"request_number": card.get("number"),
+						"received_quantity": "0",
+						"landed_quantity": "0",
+						"distributed_quantity": "0",
+						"lost_quantity": "0",
+						"closed_short": False,
+					}
+				)
+			out.append(made)
+		# nothing is refused any more: the request lines take the quantities
+		for line_id, qty in taken.items():
+			request_line = by_line[line_id][1]
+			request_line["ordered_quantity"] = str(Decimal(request_line["ordered_quantity"]) + qty)
+			if Decimal(request_line["ordered_quantity"]) >= Decimal(request_line["approved_quantity"]):
+				request_line["status"] = "ordered"
+		return out
 
 	def _receive(self, order_id, body):
 		"""POST /purchase-orders/{id}/receive: one delivery; lines carry the line's TOTAL so far."""
