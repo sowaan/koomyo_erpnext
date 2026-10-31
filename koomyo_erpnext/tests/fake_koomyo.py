@@ -80,6 +80,8 @@ class FakeKoomyo:
 		self.receive_calls: list[dict] = []
 		self.cancel_calls: list[dict] = []
 		self.mark_calls: list[dict] = []
+		self.patch_calls: list[dict] = []
+		self.stale_once = False  # the next PATCH finds the order changed (409 stale_version)
 		self.places_incomplete = False  # mark-ordered answers 409 delivery_places_incomplete
 		self.purchase_bodies: list[dict] = []  # every POST /purchase-orders body that was accepted
 		self.handled_by = "external"  # who orders purchase requests, as GET /account says
@@ -326,6 +328,8 @@ class FakeKoomyo:
 			self.purchase_bodies.append(body)
 			self.purchase_orders[pid] = order
 			return FakeResponse(201, order)
+		if method == "PATCH" and path.startswith("/purchase-orders/") and path.count("/") == 2:
+			return self._patch_order(path.split("/")[2], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/mark-ordered"):
 			order = self.purchase_orders.get(path.split("/")[2])
 			if not order:
@@ -493,6 +497,82 @@ class FakeKoomyo:
 			if Decimal(request_line["ordered_quantity"]) >= Decimal(request_line["approved_quantity"]):
 				request_line["status"] = "ordered"
 		return out
+
+	def _patch_order(self, order_id, body):
+		"""PATCH /purchase-orders/{id} (docs: guides/stock-purchasing, Edit, reverse and return a purchase order)."""
+		from decimal import Decimal
+
+		order = self.purchase_orders.get(order_id)
+		if not order:
+			return error_response(404, "not_found")
+		if order["status"] in ("received", "cancelled"):
+			return error_response(409, "po_locked", "locked")
+		if self.stale_once:
+			self.stale_once = False
+			order["updated_at"] = "2026-10-30T09:59:00Z"  # someone changed it meanwhile
+		sent = body.get("updated_at")
+		if sent and sent != order["updated_at"]:
+			return error_response(409, "stale_version", "the order changed")
+		if order["status"] == "partial" and set(body) - {"notes", "expected_date", "updated_at"}:
+			return error_response(409, "partially_received", "only notes and expected date")
+		if "lines" in body:
+			by_id = {l["id"]: l for l in order["lines"]}
+			for line in body["lines"]:
+				if line.get("id") and line["id"] not in by_id:
+					return error_response(400, "invalid_parameter", "unknown line id")
+			# the request lines get back what the order held, then the new shares are checked as on create
+			requests = self.lists.get("/purchase-requests", [])
+			by_request = {l["id"]: l for card in requests for l in card["lines"]}
+			held = {}
+			for line in order["lines"]:
+				for share in line.get("allocations") or []:
+					held[share["request_line_id"]] = held.get(share["request_line_id"], Decimal(0)) + Decimal(
+						share["quantity"]
+					)
+			for request_line_id, qty in held.items():
+				if request_line_id in by_request:
+					by_request[request_line_id]["ordered_quantity"] = str(
+						Decimal(by_request[request_line_id]["ordered_quantity"]) - qty
+					)
+					if by_request[request_line_id]["status"] == "ordered":
+						by_request[request_line_id]["status"] = "approved"
+			allocated = self._allocations(body)
+			priced = None
+			if not isinstance(allocated, FakeResponse):
+				priced = self._price({**body, "tax_rate": body.get("tax_rate", 0)})
+			refused = (
+				allocated
+				if isinstance(allocated, FakeResponse)
+				else priced
+				if isinstance(priced, FakeResponse)
+				else None
+			)
+			if refused is not None:
+				for request_line_id, qty in held.items():  # a refusal changes nothing
+					if request_line_id in by_request:
+						by_request[request_line_id]["ordered_quantity"] = str(
+							Decimal(by_request[request_line_id]["ordered_quantity"]) + qty
+						)
+						by_request[request_line_id]["status"] = "ordered"
+				return refused
+			order["lines"] = [
+				{
+					"id": line.get("id") or f"{order['id']}-line-new-{len(self.patch_calls)}-{i}",
+					"ingredient_id": line["ingredient_id"],
+					"quantity_ordered": str(line["quantity_ordered"]),
+					"quantity_received": by_id.get(line.get("id"), {}).get("quantity_received", "0"),
+					"unit_cost": str(line["unit_cost"]),
+					"allocations": allocated[i],
+				}
+				for i, line in enumerate(body["lines"])
+			]
+			order.update(priced)
+		for key in ("notes", "expected_date", "reference"):
+			if key in body:
+				order[key] = body[key] or None
+		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
+		self.patch_calls.append(body)
+		return FakeResponse(200, order)
 
 	def _cancel(self, order_id, body):
 		"""POST /purchase-orders/{id}/cancel (docs: a draft or ordered order; the quantities go back to the requests)."""

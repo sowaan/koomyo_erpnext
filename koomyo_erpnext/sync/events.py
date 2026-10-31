@@ -782,6 +782,7 @@ from koomyo_erpnext.sync import (
 	complaints,
 	customers,
 	order_stock,
+	purchase_edits,
 	purchase_orders,
 	purchase_requests,
 	purchasing,
