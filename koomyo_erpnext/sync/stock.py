@@ -111,6 +111,39 @@ def on_usage_daily(event: dict, connection):
 	return result
 
 
+def made_in_erpnext(connection, record: dict) -> str | None:
+	"""The ERPNext document a Koomyo record was made from, when ERPNext sent it (sync/stock_out.py).
+
+	Koomyo echoes what ERPNext sent as events. The record carries our `external_ref` (the document's name,
+	with `#row` for a row), or a row of ours already holds its id (or the id of the record behind it).
+	"""
+	name = ((record.get("external_refs") or {}).get(connection.ref_system or "erpnext") or "").split("#")[0]
+	for doctype in ("Stock Entry", "Stock Reconciliation"):
+		if name and frappe.db.exists(doctype, {"name": name, "company": connection.company}):
+			return name
+	for found in (record.get("id"), record.get("reference_id")):
+		if found:
+			rows = frappe.get_all(
+				"Stock Entry Detail",
+				filters={"koomyo_line_id": ("like", f"%{found}%")},
+				pluck="parent",
+				limit=1,
+			)
+			if rows and frappe.db.get_value("Stock Entry", rows[0], "koomyo_connection") == connection.name:
+				return rows[0]
+	return None
+
+
+def skip_if_made_in_erpnext(connection, record: dict):
+	name = made_in_erpnext(connection, record)
+	if name:
+		raise Skipped(
+			_("{0} was sent to Koomyo from ERPNext, so ERPNext already holds it. Nothing was booked.").format(
+				name
+			)
+		)
+
+
 @handles("waste.recorded", switch="sync_stock", scopes=STOCK_SCOPES)
 def on_waste_recorded(event: dict, connection):
 	"""One Material Issue from the waste's `lines`: the ingredients it took out of stock.
@@ -126,6 +159,7 @@ def on_waste_recorded(event: dict, connection):
 	existing = find_existing("Stock Entry", connection, waste["id"])
 	if existing:
 		return ("Stock Entry", existing)
+	skip_if_made_in_erpnext(connection, waste)
 	check_opening_date(connection, waste)
 	lines = [line for line in waste.get("lines") or [] if line.get("ingredient_id")]
 	ingredient = waste.get("ingredient")
@@ -181,6 +215,7 @@ def on_stock_adjusted(event: dict, connection):
 	existing = find_existing("Stock Entry", connection, movement["id"])
 	if existing:
 		return ("Stock Entry", existing)
+	skip_if_made_in_erpnext(connection, movement)
 	check_opening_date(connection, movement)
 	warehouse, branch = location_warehouse(connection, movement.get("location"), event.get("branch_id"))
 	change = money(movement.get("quantity_change"), "quantity_change")
@@ -249,6 +284,7 @@ def on_stock_count_closed(event: dict, connection):
 		return ("Stock Reconciliation", existing)
 	if count.get("status") != "closed":
 		raise Skipped(_("Stock count {0} is still open.").format(count["id"]))
+	skip_if_made_in_erpnext(connection, count)
 	check_opening_date(connection, count)
 	branch = branch_row(connection, count.get("branch_id"))
 	if not branch.warehouse:

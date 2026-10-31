@@ -68,6 +68,7 @@
   "supplies_expense_account",
   "transit_warehouse",
   "push_stock_transfers",
+  "push_stock_changes",
   "section_stock_maps",
   "uom_map",
   "cb_stock_maps",
@@ -887,6 +888,14 @@
    "fieldname": "push_stock_transfers",
    "fieldtype": "Check",
    "label": "Send Stock Transfers to Koomyo"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_stock",
+   "description": "Stock Entries (Material Issue or Receipt) you mark Send To Koomyo As, and Stock Reconciliations you mark as a count, are also recorded in Koomyo (needs the stock.write scope). Nothing is sent unless you mark it, and never sales: Koomyo takes sales off stock itself.",
+   "fieldname": "push_stock_changes",
+   "fieldtype": "Check",
+   "label": "Send Stock Changes to Koomyo"
   },
   {
    "fieldname": "section_complaints",

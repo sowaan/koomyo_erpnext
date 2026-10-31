@@ -146,7 +146,9 @@ class TestOneStep(TransfersOutCase):
 
 	def test_a_receive_that_fails_is_resumed_without_a_second_transfer(self):
 		self.make_entry(CENTRAL, STORES, 4)
-		self.fake_a.scripted["/stock-transfers/tr-1/receive"] = [error_response(400, "invalid_parameter", "try later")]
+		self.fake_a.scripted["/stock-transfers/tr-1/receive"] = [
+			error_response(400, "invalid_parameter", "try later")
+		]
 		self.run_queue()
 		(log,) = self.outbound_logs("erpnext.stock_transfer")
 		self.assertNotEqual(log.status, "Done")

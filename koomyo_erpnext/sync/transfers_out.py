@@ -108,7 +108,9 @@ def on_stock_entry_submit(doc, method=None):
 
 def on_stock_entry_cancel(doc, method=None):
 	"""A Stock Entry that was sent to Koomyo is cancelled in ERPNext (not one Koomyo cancelled itself)."""
-	if doc.flags.get("from_koomyo") or not doc.get("koomyo_sent") or not doc.get("koomyo_connection"):
+	if doc.get("purpose") != "Material Transfer" or doc.flags.get("from_koomyo"):
+		return
+	if not doc.get("koomyo_sent") or not doc.get("koomyo_connection"):
 		return
 	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
 	if connection.enabled and connection.sync_stock and connection.get(SWITCH):

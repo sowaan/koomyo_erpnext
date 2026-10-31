@@ -303,8 +303,18 @@ doc_events = {
 		"on_cancel": "koomyo_erpnext.sync.purchase_edits.on_purchase_receipt_cancel",
 	},
 	"Stock Entry": {
-		"on_submit": "koomyo_erpnext.sync.transfers_out.on_stock_entry_submit",
-		"on_cancel": "koomyo_erpnext.sync.transfers_out.on_stock_entry_cancel",
+		"on_submit": [
+			"koomyo_erpnext.sync.transfers_out.on_stock_entry_submit",
+			"koomyo_erpnext.sync.stock_out.on_stock_change_submit",
+		],
+		"on_cancel": [
+			"koomyo_erpnext.sync.transfers_out.on_stock_entry_cancel",
+			"koomyo_erpnext.sync.stock_out.on_stock_change_cancel",
+		],
+	},
+	"Stock Reconciliation": {
+		"on_submit": "koomyo_erpnext.sync.stock_out.on_count_submit",
+		"on_cancel": "koomyo_erpnext.sync.stock_out.on_stock_change_cancel",
 	},
 	"Supplier": {"on_update": "koomyo_erpnext.sync.purchasing.on_supplier_update"},
 	"Item": {"on_update": "koomyo_erpnext.sync.purchasing.on_item_update"},

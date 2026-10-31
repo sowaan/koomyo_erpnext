@@ -85,6 +85,11 @@ class FakeKoomyo:
 		self.restate_calls: list[dict] = []
 		self.return_calls: list[dict] = []
 		self.close_calls: list[dict] = []
+		self.stock_records: dict[
+			str, dict
+		] = {}  # adjustments, waste, supply issues and counts made through POST
+		self.stock_calls: list[tuple] = []  # (path, body) of each accepted stock write
+		self.supplies_on = True  # False plays a Koomyo whose Supplies switch is off
 		self.transfers: dict[str, dict] = {}  # stock transfers made through POST /stock-transfers
 		self.transfer_calls: list[tuple] = []  # (action, body) of each accepted transfer call
 		self.destination_required = False
@@ -159,7 +164,11 @@ class FakeKoomyo:
 			return self._write(method, path, json_body, (headers or {}).get("Idempotency-Key"))
 		if path.startswith("/purchase-orders/") and path[len("/purchase-orders/") :] in self.purchase_orders:
 			return FakeResponse(200, self.purchase_orders[path[len("/purchase-orders/") :]])
-		if path.startswith("/stock-transfers/") and path.count("/") == 2 and path.split("/")[2] in self.transfers:
+		if (
+			path.startswith("/stock-transfers/")
+			and path.count("/") == 2
+			and path.split("/")[2] in self.transfers
+		):
 			return FakeResponse(200, self.transfers[path.split("/")[2]])
 		if path.startswith("/purchase-requests"):
 			if self.purchase_requests_off:
@@ -374,6 +383,10 @@ class FakeKoomyo:
 			return self._cancel(path.split("/")[2], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):
 			return self._receive(path.split("/")[2], body or {})
+		if path in ("/stock-adjustments", "/waste", "/supply-issues", "/stock-counts") and method == "POST":
+			return self._stock_create(path, body or {})
+		if path.startswith(("/supply-issues/", "/stock-counts/")) and method in ("POST", "PUT"):
+			return self._stock_action(path, body or {})
 		if path == "/stock-transfers" and method == "POST":
 			return self._transfer_create(body or {})
 		if path.startswith("/stock-transfers/"):
@@ -605,6 +618,167 @@ class FakeKoomyo:
 		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
 		self.patch_calls.append(body)
 		return FakeResponse(200, order)
+
+	def _find_ref(self, store, ref):
+		for found in store.values():
+			if ref and found.get("external_refs", {}).get(ref["system"]) == ref["external_id"]:
+				return found
+		return None
+
+	def _stock_create(self, path, body):
+		"""POST /stock-adjustments, /waste, /supply-issues, /stock-counts (the docs' rules, simplified)."""
+		from decimal import Decimal
+
+		bad = lambda why: error_response(400, "invalid_parameter", why)  # noqa: E731
+		place = body.get("place") or {}
+		if path != "/stock-counts" and (
+			place.get("type") not in ("branch", "warehouse") or not place.get("id")
+		):
+			return bad("place is required")
+		ref = body.get("external_ref")
+		n = len(self.stock_records) + 1
+		if path == "/stock-adjustments":
+			found = self._find_ref(self.stock_records, ref)
+			if found:
+				return FakeResponse(200, found)
+			if body.get("ingredient_id") not in self.ingredients:
+				return bad("unknown ingredient")
+			try:
+				qty = Decimal(str(body.get("quantity")))
+			except Exception:
+				return bad("quantity")
+			if qty == 0 or qty != qty.quantize(Decimal("0.0001")):
+				return bad("quantity: never 0, up to 4 decimals")
+			reason = body.get("reason")
+			if not isinstance(reason, str) or not 1 <= len(reason) <= 100:
+				return bad("reason is required")
+			if reason in ("order_deduction", "po_received", "supply_issue"):
+				return error_response(400, "invalid_reason", "that code is written by the system")
+			record = {
+				"id": f"mv-{n}",
+				"object": "stock_movement",
+				"ingredient_id": body["ingredient_id"],
+				"quantity_change": str(qty),
+				"reason": reason,
+				"location": {**place, "name": None},
+				"note": body.get("note"),
+				"below_zero": self.below_zero,
+				"external_refs": {ref["system"]: ref["external_id"]} if ref else {},
+			}
+			self.stock_records[record["id"]] = record
+			self.stock_calls.append((path, body))
+			return FakeResponse(201, record)
+		if path == "/waste":
+			if body.get("reason") not in ("staff_meal", "comp", "tasting", "spoilage", "other"):
+				return bad("reason")
+			lines = body.get("lines") or []
+			if not 1 <= len(lines) <= 50:
+				return bad("lines: 1 to 50")
+			made = []
+			for line in lines:
+				found = self._find_ref(self.stock_records, line.get("external_ref"))
+				if found:
+					made.append(found)
+					continue
+				ingredient = self.ingredients.get(line.get("ingredient_id"))
+				if not ingredient:
+					return bad("unknown ingredient")
+				if ingredient.get("kind") == "supply":
+					return error_response(400, "supply_not_allowed", "use POST /supply-issues")
+			if made and len(made) == len(lines):
+				return FakeResponse(200, made[0] if len(made) == 1 else {"object": "list", "data": made})
+			for line in lines:
+				lref = line.get("external_ref")
+				record = {
+					"id": f"waste-{len(self.stock_records) + 1}",
+					"object": "waste",
+					"reason": body["reason"],
+					"quantity": str(line["quantity"]),
+					"ingredient": {"id": line["ingredient_id"]},
+					"location": {**place, "name": None},
+					"external_refs": {lref["system"]: lref["external_id"]} if lref else {},
+				}
+				self.stock_records[record["id"]] = record
+				made.append(record)
+			self.stock_calls.append((path, body))
+			return FakeResponse(201, made[0] if len(made) == 1 else {"object": "list", "data": made})
+		if path == "/supply-issues":
+			if not self.supplies_on:
+				return error_response(403, "feature_not_available", "Supplies is switched off")
+			found = self._find_ref(self.stock_records, ref)
+			if found:
+				return FakeResponse(200, found)
+			ingredient = self.ingredients.get(body.get("ingredient_id"))
+			if not ingredient or ingredient.get("kind") != "supply":
+				return bad("not a supply")
+			if body.get("reason") not in ("used", "damaged", "lost", "expired"):
+				return bad("reason")
+			record = {
+				"id": f"sup-{n}",
+				"object": "supply_issue",
+				"entry_kind": "issue",
+				"quantity": str(body["quantity"]),
+				"reason": body["reason"],
+				"undone": False,
+				"external_refs": {ref["system"]: ref["external_id"]} if ref else {},
+				"below_zero": self.below_zero,
+			}
+			self.stock_records[record["id"]] = record
+			self.stock_calls.append((path, body))
+			return FakeResponse(201, record)
+		# /stock-counts
+		found = self._find_ref(self.stock_records, ref)
+		if found:
+			return FakeResponse(200, found)
+		record = {
+			"id": f"count-{n}",
+			"object": "stock_count",
+			"status": "open",
+			"place": place,
+			"notes": body.get("notes"),
+			"lines": [
+				{"ingredient_id": i, "ingredient": v["name"], "expected_qty": "0", "counted_qty": None}
+				for i, v in self.ingredients.items()
+			],
+			"external_refs": {ref["system"]: ref["external_id"]} if ref else {},
+		}
+		self.stock_records[record["id"]] = record
+		self.stock_calls.append((path, body))
+		return FakeResponse(201, record)
+
+	def _stock_action(self, path, body):
+		parts = path.split("/")
+		record = self.stock_records.get(parts[2])
+		if not record:
+			return error_response(404, "not_found")
+		action = parts[3] if len(parts) > 3 else ""
+		if parts[1] == "supply-issues" and action == "undo":
+			if record["undone"]:
+				return error_response(409, "already_undone", "already undone")
+			record["undone"] = True
+			record["reversal_id"] = f"{record['id']}-undo"
+			self.stock_calls.append((path, body))
+			return FakeResponse(200, record)
+		if parts[1] == "stock-counts":
+			if action == "lines":
+				if record["status"] == "closed":
+					return error_response(409, "count_closed", "closed counts are locked")
+				known = {l["ingredient_id"] for l in record["lines"]}
+				if any(l["ingredient_id"] not in known for l in body.get("lines") or []):
+					return error_response(404, "line_not_found", "not on the count")
+				for sent in body["lines"]:
+					for line in record["lines"]:
+						if line["ingredient_id"] == sent["ingredient_id"]:
+							line["counted_qty"] = str(sent["counted_quantity"])
+				self.stock_calls.append((path, body))
+				return FakeResponse(200, record)
+			if action == "close":
+				if record["status"] == "closed":
+					return error_response(409, "already_closed", "closed")
+				record["status"] = "closed"
+				self.stock_calls.append((path, body))
+				return FakeResponse(200, record)
+		return error_response(404, "not_found")
 
 	def _transfer_create(self, body):
 		"""POST /stock-transfers: sent at once (the stock leaves the source) unless `draft`."""
