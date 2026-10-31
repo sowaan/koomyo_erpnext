@@ -792,4 +792,5 @@ from koomyo_erpnext.sync import (
 	stock,
 	suppliers,
 	transfers,
+	transfers_out,
 )

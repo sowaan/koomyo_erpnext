@@ -67,6 +67,7 @@
   "transfer_loss_account",
   "supplies_expense_account",
   "transit_warehouse",
+  "push_stock_transfers",
   "section_stock_maps",
   "uom_map",
   "cb_stock_maps",
@@ -878,6 +879,14 @@
    "fieldtype": "Link",
    "label": "Transit Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_stock",
+   "description": "A Material Transfer made in ERPNext between warehouses on the Branch Map is also made in Koomyo (needs the transfers.write scope). A plain one is sent and received at once; with a Transit Warehouse, the first Receive at Warehouse makes it, because ERPNext only knows the destination then.",
+   "fieldname": "push_stock_transfers",
+   "fieldtype": "Check",
+   "label": "Send Stock Transfers to Koomyo"
   },
   {
    "fieldname": "section_complaints",

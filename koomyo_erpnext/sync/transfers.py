@@ -70,6 +70,7 @@ def on_transfer_step(event: dict, connection):
 def on_transfer_completed(event: dict, connection):
 	transfer = event["data"]
 	check_transfer(transfer)
+	adopt_erpnext_entries(transfer, connection)
 	if transit_warehouse(connection):
 		return reconcile(transfer, connection, event["type"])
 	return book_transfer(transfer, connection)
@@ -94,6 +95,60 @@ def key(transfer: dict, *parts: str) -> str:
 	return ":".join(("transfer", transfer["id"], *parts))
 
 
+def erpnext_made(transfer: dict, connection):
+	"""The Stock Entry ERPNext made this transfer from. Koomyo echoes our `external_ref` and `reference` (the
+	entry's name), so what ERPNext already moved is never booked again from Koomyo's events."""
+	name = (transfer.get("external_refs") or {}).get(connection.ref_system or "erpnext") or transfer.get(
+		"reference"
+	)
+	if not name or not isinstance(name, str):
+		return None
+	return frappe.db.get_value(
+		"Stock Entry",
+		{"name": name, "company": connection.company, "purpose": "Material Transfer"},
+		["name", "add_to_transit", "koomyo_connection", "koomyo_id"],
+		as_dict=True,
+	)
+
+
+def adopt_erpnext_entries(transfer: dict, connection):
+	"""Give the ERPNext entry the key this module looks for, if our own sync has not stamped it yet (an event
+	can arrive before the answer to the call that made the transfer)."""
+	entry = erpnext_made(transfer, connection)
+	if entry and not entry.koomyo_connection:
+		koomyo_id = key(transfer, "send") if entry.add_to_transit else transfer["id"]
+		frappe.db.set_value(
+			"Stock Entry",
+			entry.name,
+			{"koomyo_connection": connection.name, "koomyo_id": koomyo_id, "koomyo_sent": 1},
+			update_modified=False,
+		)
+
+
+def adopt_by_note(item: dict, connection, koomyo_id: str) -> bool:
+	"""A delivery or resolution whose note says `ERPNext <Stock Entry>` is that entry: stamp it, book nothing."""
+	note = item.get("note") or ""
+	if not note.startswith("ERPNext "):
+		return False
+	name = note[len("ERPNext ") :].strip()
+	entry = frappe.db.get_value(
+		"Stock Entry",
+		{"name": name, "company": connection.company, "purpose": "Material Transfer"},
+		["name", "koomyo_connection"],
+		as_dict=True,
+	)
+	if not entry:
+		return False
+	if not entry.koomyo_connection:
+		frappe.db.set_value(
+			"Stock Entry",
+			name,
+			{"koomyo_connection": connection.name, "koomyo_id": koomyo_id, "koomyo_sent": 1},
+			update_modified=False,
+		)
+	return True
+
+
 def legacy_entry(transfer: dict, connection):
 	"""An entry made before transfers were posted in steps (one entry, keyed by the transfer id)."""
 	return find_existing("Stock Entry", connection, transfer["id"]) or find_existing(
@@ -102,6 +157,7 @@ def legacy_entry(transfer: dict, connection):
 
 
 def reconcile(transfer: dict, connection, event_type: str):
+	adopt_erpnext_entries(transfer, connection)
 	legacy = legacy_entry(transfer, connection)
 	if legacy:
 		return ("Stock Entry", legacy)
@@ -218,6 +274,7 @@ def cancel_send(transfer: dict, connection):
 			).format(transfer.get("number") or transfer["id"], ", ".join(against), name)
 		)
 	entry.flags.ignore_permissions = True  # the app cancels what Koomyo cancelled, whoever queued the job
+	entry.flags.from_koomyo = True  # so the cancel is not sent back to Koomyo
 	entry.cancel()
 	entry.add_comment(
 		"Comment", _("Cancelled in Koomyo. Reason: {0}").format(transfer.get("cancel_reason") or "-")
@@ -331,7 +388,7 @@ def receive_from_transit(
 
 def book_receipt(transfer, connection, places, send_name, receipt) -> tuple | None:
 	koomyo_id = key(transfer, "recv", receipt["id"])
-	if find_existing("Stock Entry", connection, koomyo_id):
+	if find_existing("Stock Entry", connection, koomyo_id) or adopt_by_note(receipt, connection, koomyo_id):
 		return None
 	wanted: dict[str, float] = {}
 	for line in receipt.get("lines") or []:
@@ -353,7 +410,9 @@ def book_receipt(transfer, connection, places, send_name, receipt) -> tuple | No
 
 def book_resolution(transfer, connection, places, send_name, resolution) -> tuple | None:
 	koomyo_id = key(transfer, "res", resolution["id"])
-	if find_existing("Stock Entry", connection, koomyo_id):
+	if find_existing("Stock Entry", connection, koomyo_id) or adopt_by_note(
+		resolution, connection, koomyo_id
+	):
 		return None
 	quantity = money(resolution.get("quantity"), "quantity")
 	if quantity <= 0:

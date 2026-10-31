@@ -85,6 +85,8 @@ class FakeKoomyo:
 		self.restate_calls: list[dict] = []
 		self.return_calls: list[dict] = []
 		self.close_calls: list[dict] = []
+		self.transfers: dict[str, dict] = {}  # stock transfers made through POST /stock-transfers
+		self.transfer_calls: list[tuple] = []  # (action, body) of each accepted transfer call
 		self.destination_required = False
 		self.cost_rule = "ask"  # the restaurant's ingredient cost rule: ask, auto or off
 		self.distributed: set[str] = set()  # delivery ids part of which went on by transfer
@@ -157,6 +159,8 @@ class FakeKoomyo:
 			return self._write(method, path, json_body, (headers or {}).get("Idempotency-Key"))
 		if path.startswith("/purchase-orders/") and path[len("/purchase-orders/") :] in self.purchase_orders:
 			return FakeResponse(200, self.purchase_orders[path[len("/purchase-orders/") :]])
+		if path.startswith("/stock-transfers/") and path.count("/") == 2 and path.split("/")[2] in self.transfers:
+			return FakeResponse(200, self.transfers[path.split("/")[2]])
 		if path.startswith("/purchase-requests"):
 			if self.purchase_requests_off:
 				return error_response(403, "feature_not_available", "purchase requests are not enabled")
@@ -370,6 +374,15 @@ class FakeKoomyo:
 			return self._cancel(path.split("/")[2], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):
 			return self._receive(path.split("/")[2], body or {})
+		if path == "/stock-transfers" and method == "POST":
+			return self._transfer_create(body or {})
+		if path.startswith("/stock-transfers/"):
+			parts = path.split("/")
+			if method == "GET" and len(parts) == 3:
+				found = self.transfers.get(parts[2])
+				return FakeResponse(200, found) if found else error_response(404, "not_found")
+			if method == "POST" and len(parts) == 4:
+				return self._transfer_action(parts[2], parts[3], body or {})
 		if method == "PATCH" and path.startswith("/ingredients/"):
 			ingredient = self.ingredients.get(path.split("/")[2])
 			if not ingredient:
@@ -592,6 +605,194 @@ class FakeKoomyo:
 		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
 		self.patch_calls.append(body)
 		return FakeResponse(200, order)
+
+	def _transfer_create(self, body):
+		"""POST /stock-transfers: sent at once (the stock leaves the source) unless `draft`."""
+		from decimal import Decimal
+
+		for end in ("from", "to"):
+			place = body.get(end) or {}
+			if place.get("type") not in ("branch", "warehouse") or not place.get("id"):
+				return error_response(400, "invalid_parameter", f"{end} is required")
+		if body["from"] == body["to"]:
+			return error_response(400, "invalid_parameter", "from and to are the same place")
+		if not body.get("lines"):
+			return error_response(400, "invalid_parameter", "lines are required")
+		ref = body.get("external_ref")
+		if ref:
+			for found in self.transfers.values():
+				if found["external_refs"].get(ref["system"]) == ref["external_id"]:
+					return FakeResponse(200, found)
+		reference = body.get("reference")
+		if reference and any(
+			(t.get("reference") or "").lower() == reference.lower() for t in self.transfers.values()
+		):
+			return error_response(409, "reference_in_use", "that reference is used")
+		merged: dict[str, Decimal] = {}
+		for line in body["lines"]:
+			qty = Decimal(str(line["quantity"]))
+			if qty <= 0 or qty != qty.quantize(Decimal("0.001")):
+				return error_response(
+					400, "invalid_parameter", "quantity: above zero, three decimals at most"
+				)
+			if line["ingredient_id"] not in self.ingredients:
+				return error_response(400, "invalid_parameter", "unknown ingredient")
+			merged[line["ingredient_id"]] = merged.get(line["ingredient_id"], Decimal(0)) + qty
+		n = len(self.transfers) + 1
+		tid = f"tr-{n}"
+		draft = bool(body.get("draft"))
+		transfer = {
+			"id": tid,
+			"object": "stock_transfer",
+			"number": f"TR-FAKE-{n:04d}",
+			"status": "draft" if draft else "in_transit",
+			"currency": "PKR",
+			"from": {**body["from"], "name": None},
+			"to": {**body["to"], "name": None},
+			"reference": reference,
+			"expected_date": body.get("expected_date"),
+			"closed_short": False,
+			"notes": body.get("notes"),
+			"created_at": "2026-10-30T10:00:00Z",
+			"sent_at": None if draft else "2026-10-30T10:00:00Z",
+			"received_at": None,
+			"cancel_reason": None,
+			"business_date": "2026-10-30",
+			"lines": [
+				{
+					"id": f"{tid}-line-{i}",
+					"ingredient_id": ing,
+					"ingredient": self.ingredients[ing]["name"],
+					"unit": self.ingredients[ing]["unit"],
+					"quantity_sent": "0.000" if draft else str(qty),
+					"quantity_planned": str(qty),
+					"quantity_received": "0.000",
+					"quantity_returned": "0.000",
+					"quantity_lost": "0.000",
+					"quantity_open": "0.000" if draft else str(qty),
+					"unit_cost": self.ingredients[ing]["cost_per_unit"],
+					"note": None,
+				}
+				for i, (ing, qty) in enumerate(merged.items())
+			],
+			"receipts": [],
+			"resolutions": [],
+			"external_refs": {ref["system"]: ref["external_id"]} if ref else {},
+			"updated_at": "2026-10-30T10:00:00Z",
+		}
+		self.transfers[tid] = transfer
+		self.transfer_calls.append(("create", body))
+		return FakeResponse(201, transfer)
+
+	def _transfer_action(self, tid, action, body):
+		from decimal import Decimal
+
+		transfer = self.transfers.get(tid)
+		if not transfer:
+			return error_response(404, "not_found")
+		D = Decimal
+		lines = {l["id"]: l for l in transfer["lines"]}
+
+		def settle():
+			for l in transfer["lines"]:
+				l["quantity_open"] = str(
+					D(l["quantity_sent"])
+					- D(l["quantity_received"])
+					- D(l["quantity_returned"])
+					- D(l["quantity_lost"])
+				)
+			done = all(D(l["quantity_open"]) == 0 for l in transfer["lines"])
+			got = any(D(l["quantity_received"]) > 0 for l in transfer["lines"])
+			transfer["status"] = "received" if done else ("partial" if got else "in_transit")
+			transfer["updated_at"] = f"2026-10-30T10:{len(self.transfer_calls):02d}:00Z"
+
+		if action == "cancel":
+			reason = body.get("reason")
+			if not isinstance(reason, str) or not 1 <= len(reason) <= 200:
+				return error_response(400, "invalid_parameter", "reason is required, 1 to 200 characters")
+			if transfer["status"] == "cancelled":
+				return error_response(409, "transfer_locked", "already cancelled")
+			if transfer["status"] in ("partial", "received") or any(
+				D(l["quantity_received"]) > 0 for l in transfer["lines"]
+			):
+				return error_response(409, "transfer_partially_received", "resolve the rest instead")
+			transfer["status"] = "cancelled"
+			transfer["cancel_reason"] = reason
+		elif action == "receive":
+			if transfer["status"] == "draft":
+				return error_response(409, "transfer_not_sent", "a draft cannot be received")
+			if transfer["status"] in ("received", "cancelled"):
+				return error_response(409, "transfer_locked", "finished")
+			rows = []
+			for item in body.get("lines") or []:
+				line = lines.get(item["line_id"])
+				if not line:
+					return error_response(400, "invalid_parameter", "that line is not on this transfer")
+				qty = D(str(item["quantity"]))
+				if qty <= 0 or qty > D(line["quantity_open"]):
+					return error_response(409, "exceeds_in_transit", "more than is on its way")
+				rows.append((line, qty))
+			if not rows:
+				return error_response(400, "invalid_parameter", "lines are required")
+			for line, qty in rows:
+				line["quantity_received"] = str(D(line["quantity_received"]) + qty)
+			transfer["receipts"].append(
+				{
+					"id": f"{tid}-rcpt-{len(transfer['receipts']) + 1}",
+					"received_at": "2026-10-30T11:00:00Z",
+					"note": body.get("note"),
+					"lines": [
+						{
+							"line_id": l["id"],
+							"ingredient_id": l["ingredient_id"],
+							"ingredient": l["ingredient"],
+							"unit": l["unit"],
+							"quantity": str(q),
+							"unit_cost": l["unit_cost"],
+						}
+						for l, q in rows
+					],
+				}
+			)
+		elif action == "resolve":
+			if transfer["status"] in ("draft", "cancelled"):
+				return error_response(409, "transfer_not_sent", "nothing to resolve")
+			for item in body.get("resolutions") or []:
+				line = lines.get(item["line_id"])
+				if not line:
+					return error_response(400, "invalid_parameter", "that line is not on this transfer")
+				kind = item["kind"]
+				if kind == "lost" and not item.get("reason_code"):
+					return error_response(400, "invalid_parameter", "reason_code is required for lost")
+				qty = D(str(item.get("quantity") or 0)) or D(line["quantity_open"])
+				if kind == "still_expected":
+					continue
+				if qty > D(line["quantity_open"]):
+					return error_response(409, "exceeds_in_transit", "more than is still open")
+				key = "quantity_returned" if kind == "returned" else "quantity_lost"
+				line[key] = str(D(line[key]) + qty)
+				transfer["resolutions"].append(
+					{
+						"id": f"{tid}-res-{len(transfer['resolutions']) + 1}",
+						"line_id": line["id"],
+						"ingredient_id": line["ingredient_id"],
+						"ingredient": line["ingredient"],
+						"unit": line["unit"],
+						"kind": kind,
+						"quantity": str(qty),
+						"unit_cost": line["unit_cost"],
+						"value": str(qty * D(line["unit_cost"])),
+						"reason_code": item.get("reason_code"),
+						"note": item.get("note"),
+						"resolved_at": "2026-10-30T12:00:00Z",
+					}
+				)
+		else:
+			return error_response(404, "not_found")
+		self.transfer_calls.append((action, body))
+		if transfer["status"] != "cancelled":
+			settle()
+		return FakeResponse(200, transfer)
 
 	def _close_short(self, order_id, body):
 		"""POST /purchase-orders/{id}/close-short: no stock, no lines; ends what is still expected at ONE place."""
