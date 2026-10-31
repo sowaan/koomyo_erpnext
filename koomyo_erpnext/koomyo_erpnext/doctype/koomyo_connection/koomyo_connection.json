@@ -77,6 +77,7 @@
   "sync_purchase_requests",
   "deliver_to",
   "mark_orders_ordered",
+  "restate_costs_from_invoices",
   "section_purchasing_settings",
   "main_warehouse",
   "cb_purchasing",
@@ -944,6 +945,14 @@
    "fieldname": "mark_orders_ordered",
    "fieldtype": "Check",
    "label": "Mark Sent Orders as Ordered"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_purchasing",
+   "description": "When a Purchase Invoice charges a different price than the Purchase Receipt it is made from, correct the unit cost of that delivery in Koomyo (quantities are never changed). Koomyo then applies the restaurant's own ingredient cost rule. Switch on only if prices are corrected by the supplier's invoice.",
+   "fieldname": "restate_costs_from_invoices",
+   "fieldtype": "Check",
+   "label": "Send Invoice Price Differences"
   }
  ],
  "links": [],

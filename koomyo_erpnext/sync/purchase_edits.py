@@ -9,10 +9,12 @@ Every call here starts from the ERPNext document and the order as Koomyo shows i
 for Koomyo: totals come back from it. A refusal says what to do and nothing is forced.
 """
 
+from decimal import Decimal
 from urllib.parse import quote
 
 import frappe
 from frappe import _
+from frappe.utils import flt
 
 from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, Skipped
@@ -21,10 +23,12 @@ from koomyo_erpnext.sync.events import handles, idempotency_key, koomyo_write, s
 from koomyo_erpnext.sync.purchasing import (
 	WRITE_SCOPES,
 	compare_totals,
+	linked_ingredient,
 	order_lines_for_koomyo,
 	order_notes,
 	request_line_of,
 	tax_fields,
+	text,
 )
 
 
@@ -334,3 +338,141 @@ def explain_reverse_refusal(error, connection, order: dict, delivery_id: str, re
 		)
 	if error.code == "stale_version":
 		raise Fatal(_("Koomyo order changed while the delivery was being reversed: press Retry."))
+
+
+# ------------------------------------------------------------------ 3. price differences on the invoice
+
+
+def item_cost(item, inclusive: bool) -> Decimal:
+	"""The unit cost of a row in the ingredient's own unit (same rule as the order's unit_cost)."""
+	factor = Decimal(str(flt(item.conversion_factor, 9) or 1))
+	price = item.base_rate if inclusive else item.base_net_rate
+	return Decimal(str(flt(price, 6))) / factor
+
+
+def price_differences(invoice) -> dict[str, dict[str, Decimal]]:
+	"""{Purchase Receipt: {Item: invoiced unit cost}} for rows whose invoiced price differs from the receipt's."""
+	inclusive = any(r.get("included_in_print_rate") for r in invoice.get("taxes") or [])
+	out: dict[str, dict[str, Decimal]] = {}
+	for row in invoice.items:
+		if not (row.get("purchase_receipt") and row.get("pr_detail")):
+			continue
+		received = frappe.db.get_value(
+			"Purchase Receipt Item",
+			row.pr_detail,
+			["base_rate", "base_net_rate", "conversion_factor"],
+			as_dict=True,
+		)
+		if not received:
+			continue
+		was = item_cost(frappe._dict(received), inclusive)
+		now = item_cost(row, inclusive)
+		if was != now:
+			out.setdefault(row.purchase_receipt, {})[row.item_code] = now
+	return out
+
+
+def on_purchase_invoice_submit(doc, method=None):
+	"""A Purchase Invoice that charges another price than the Purchase Receipt it covers: restate that delivery's cost."""
+	if doc.get("is_return"):
+		return
+	differences = price_differences(doc)
+	for receipt_name in differences:
+		receipt = frappe.db.get_value(
+			"Purchase Receipt", receipt_name, ["koomyo_connection", "koomyo_sent"], as_dict=True
+		)
+		if not receipt or not receipt.koomyo_connection or not receipt.koomyo_sent:
+			continue
+		connection = frappe.get_cached_doc("Koomyo Connection", receipt.koomyo_connection)
+		if (
+			connection.enabled
+			and connection.sync_purchasing
+			and connection.get("restate_costs_from_invoices")
+		):
+			store_outbound(connection, "erpnext.purchase_invoice_restate", doc)
+			return
+
+
+@handles("erpnext.purchase_invoice_restate", switch="sync_purchasing", scopes=WRITE_SCOPES)
+def push_cost_restate(event: dict, connection, client: KoomyoClient | None = None):
+	"""POST /purchase-orders/{id}/receipts/{receipt_id}/restate-costs: only the unit cost of the listed lines."""
+	invoice = frappe.get_doc("Purchase Invoice", event["data"]["name"])
+	if invoice.docstatus != 1:
+		raise Skipped(_("Purchase Invoice {0} is not submitted any more.").format(invoice.name))
+	if not connection.get("restate_costs_from_invoices"):
+		raise Skipped(_("Sending invoice price differences is switched off."))
+	client = client or KoomyoClient.for_connection(connection)
+	sent = 0
+	for receipt_name, costs in price_differences(invoice).items():
+		receipt = frappe.get_doc("Purchase Receipt", receipt_name)
+		if receipt.get("koomyo_connection") != connection.name or not receipt.get("koomyo_sent"):
+			continue
+		order_name = next((i.purchase_order for i in receipt.items if i.purchase_order), None)
+		po = frappe.get_doc("Purchase Order", order_name) if order_name else None
+		if not po or po.koomyo_connection != connection.name or not po.koomyo_id:
+			continue
+		sent += restate_receipt(connection, client, po, receipt, invoice, costs, event)
+	if not sent:
+		raise Skipped(_("Koomyo already holds these unit costs, or the receipt was not sent by this app."))
+	return ("Purchase Invoice", invoice.name)
+
+
+def restate_receipt(connection, client, po, receipt, invoice, costs: dict, event: dict) -> int:
+	from koomyo_erpnext.sync.events import warn
+
+	count = 0
+	for delivery_id in koomyo_deliveries(receipt):
+		for attempt in (1, 2):
+			order = read_order(client, po)
+			entry = next((r for r in order.get("receipts") or [] if r.get("id") == delivery_id), None)
+			if not entry:
+				raise Fatal(_("Koomyo has no delivery {0} on order {1}.").format(delivery_id, po.koomyo_id))
+			if entry.get("reversed_at"):
+				raise Fatal(
+					_(
+						"The delivery of Purchase Receipt {0} is reversed in Koomyo, which cannot restate it. Make the receipt again, then the invoice."
+					).format(receipt.name)
+				)
+			by_ingredient = {l.get("ingredient_id"): l.get("line_id") for l in entry.get("lines") or []}
+			lines = []
+			for item_code, cost in costs.items():
+				line_id = by_ingredient.get(linked_ingredient(item_code, connection))
+				if line_id:
+					lines.append({"line_id": line_id, "unit_cost": text(cost)})
+			if not lines:
+				break
+			try:
+				answer = koomyo_write(
+					connection,
+					client,
+					"POST",
+					f"{order_path(po)}/receipts/{quote(delivery_id, safe='')}/restate-costs",
+					{
+						"reason": _("Supplier invoice {0}").format(invoice.get("bill_no") or invoice.name)[
+							:300
+						],
+						"lines": lines,
+						"updated_at": order.get("updated_at"),
+					},
+					retry_key(event, invoice, f"restate-{delivery_id}-{order.get('updated_at')}"),
+				)
+			except KoomyoAPIError as e:
+				if e.code == "stale_version" and attempt == 1:
+					continue
+				if e.code == "receipt_reversed":
+					raise Fatal(
+						_(
+							"The delivery of Purchase Receipt {0} is reversed in Koomyo, which cannot restate it."
+						).format(receipt.name)
+					)
+				raise
+			count += 1
+			rule = answer.get("cost_rule") or {}
+			if rule.get("mode") == "ask" and rule.get("suggested"):
+				warn(
+					_(
+						"Koomyo's ingredient cost rule is 'ask': it made a cost suggestion for {0} ingredient(s) that a person accepts in Koomyo."
+					).format(len(rule["suggested"]))
+				)
+			break
+	return count

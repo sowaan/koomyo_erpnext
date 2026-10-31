@@ -82,6 +82,8 @@ class FakeKoomyo:
 		self.mark_calls: list[dict] = []
 		self.patch_calls: list[dict] = []
 		self.reverse_calls: list[dict] = []
+		self.restate_calls: list[dict] = []
+		self.cost_rule = "ask"  # the restaurant's ingredient cost rule: ask, auto or off
 		self.distributed: set[str] = set()  # delivery ids part of which went on by transfer
 		self.returned: set[str] = set()  # delivery ids part of which went back to the supplier
 		self.below_zero = False
@@ -351,6 +353,9 @@ class FakeKoomyo:
 			if (body or {}).get("expected_date"):
 				order["expected_date"] = body["expected_date"]
 			return FakeResponse(200, order)
+		if method == "POST" and "/receipts/" in path and path.endswith("/restate-costs"):
+			parts = path.split("/")
+			return self._restate(parts[2], parts[4], body or {})
 		if method == "POST" and "/receipts/" in path and path.endswith("/reverse"):
 			parts = path.split("/")
 			return self._reverse(parts[2], parts[4], body or {})
@@ -580,6 +585,51 @@ class FakeKoomyo:
 		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
 		self.patch_calls.append(body)
 		return FakeResponse(200, order)
+
+	def _restate(self, order_id, receipt_id, body):
+		"""POST .../receipts/{receipt_id}/restate-costs: the unit cost of listed lines of one delivery, nothing else."""
+		order = self.purchase_orders.get(order_id)
+		if not order:
+			return error_response(404, "not_found")
+		reason = body.get("reason")
+		if not isinstance(reason, str) or not 1 <= len(reason) <= 300:
+			return error_response(400, "invalid_parameter", "reason is required, 1 to 300 characters")
+		if not body.get("lines"):
+			return error_response(400, "invalid_parameter", "lines are required")
+		entry = next((r for r in order["receipts"] if r["id"] == receipt_id), None)
+		if not entry:
+			return error_response(404, "not_found")
+		if entry.get("reversed_at"):
+			return error_response(409, "receipt_reversed", "a reversed delivery cannot be restated")
+		if self.stale_once:
+			self.stale_once = False
+			order["updated_at"] = "2026-10-30T09:59:00Z"  # someone changed it meanwhile
+		sent = body.get("updated_at")
+		if sent and sent != order["updated_at"]:
+			return error_response(409, "stale_version", "the order changed")
+		restated = []
+		for change in body["lines"]:
+			done = next((l for l in entry["lines"] if l["line_id"] == change["line_id"]), None)
+			if not done:
+				return error_response(400, "invalid_parameter", "that line is not on this delivery")
+			before = entry.setdefault("costs", {}).get(change["line_id"]) or next(
+				l["unit_cost"] for l in order["lines"] if l["id"] == change["line_id"]
+			)
+			entry["costs"][change["line_id"]] = change["unit_cost"]
+			restated.append(
+				{
+					"line_id": change["line_id"],
+					"ingredient_id": done["ingredient_id"],
+					"unit_cost_before": before,
+					"unit_cost_after": change["unit_cost"],
+				}
+			)
+		self.restate_calls.append({"receipt_id": receipt_id, **body})
+		order["updated_at"] = f"2026-10-30T13:{len(self.restate_calls):02d}:00Z"
+		rule = {"mode": self.cost_rule, "applied": [], "suggested": []}
+		ids = [r["ingredient_id"] for r in restated]
+		rule["applied" if self.cost_rule == "auto" else "suggested"] = ids if self.cost_rule != "off" else []
+		return FakeResponse(200, {**order, "restated": restated, "cost_rule": rule})
 
 	def _reverse(self, order_id, receipt_id, body):
 		"""POST .../receipts/{receipt_id}/reverse: only the latest un-reversed delivery, with a reason."""
