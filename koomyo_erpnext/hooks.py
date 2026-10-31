@@ -317,7 +317,14 @@ doc_events = {
 		"on_cancel": "koomyo_erpnext.sync.stock_out.on_stock_change_cancel",
 	},
 	"Supplier": {"on_update": "koomyo_erpnext.sync.purchasing.on_supplier_update"},
-	"Item": {"on_update": "koomyo_erpnext.sync.purchasing.on_item_update"},
+	"Item": {
+		"on_update": [
+			"koomyo_erpnext.sync.purchasing.on_item_update",
+			"koomyo_erpnext.sync.ingredients_out.on_item_update",
+		],
+		"on_trash": "koomyo_erpnext.sync.ingredients_out.on_item_trash",
+	},
+	"Warehouse": {"on_update": "koomyo_erpnext.sync.ingredients_out.on_warehouse_update"},
 }
 
 # A nudge to the setup wizard while the site has no Koomyo connection.

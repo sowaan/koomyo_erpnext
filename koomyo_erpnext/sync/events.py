@@ -547,6 +547,9 @@ def _finish(log, status, *, error_class="", message="", error="", reference=(Non
 	log.processed_on = now_datetime()
 	if reference and reference[0]:
 		log.reference_doctype, log.reference_name = reference
+	log.flags.ignore_links = (
+		True  # a row can name a document that was deleted since (an Item deleted in ERPNext)
+	)
 	log.save(ignore_permissions=True)
 
 
@@ -781,6 +784,7 @@ def _short_text(value, length: int = 140):
 from koomyo_erpnext.sync import (
 	complaints,
 	customers,
+	ingredients_out,
 	order_stock,
 	purchase_edits,
 	purchase_orders,

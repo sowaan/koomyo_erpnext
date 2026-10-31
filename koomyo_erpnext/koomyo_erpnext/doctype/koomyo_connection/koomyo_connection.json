@@ -69,6 +69,7 @@
   "transit_warehouse",
   "push_stock_transfers",
   "push_stock_changes",
+  "push_ingredients",
   "section_stock_maps",
   "uom_map",
   "cb_stock_maps",
@@ -896,6 +897,14 @@
    "fieldname": "push_stock_changes",
    "fieldtype": "Check",
    "label": "Send Stock Changes to Koomyo"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_stock",
+   "description": "Items you mark Send To Koomyo As become ingredients in Koomyo, and a linked Item's name, unit, disabled flag, default supplier and reorder levels follow; a Warehouse you mark becomes a Koomyo warehouse. Deleting a linked Item deletes the ingredient in Koomyo, or switches it off when it is in use (needs the ingredients.write scope).",
+   "fieldname": "push_ingredients",
+   "fieldtype": "Check",
+   "label": "Send Items and Warehouses to Koomyo"
   },
   {
    "fieldname": "section_complaints",

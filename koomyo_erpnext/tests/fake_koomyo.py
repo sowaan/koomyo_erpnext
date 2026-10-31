@@ -23,6 +23,12 @@ def load_fixture(name: str):
 		return json.load(fh)
 
 
+def _decimal(value):
+	from decimal import Decimal
+
+	return Decimal(str(value))
+
+
 class FakeResponse:
 	def __init__(self, status_code=200, body=None, headers=None, raw_text=None):
 		self.status_code = status_code
@@ -89,6 +95,8 @@ class FakeKoomyo:
 			str, dict
 		] = {}  # adjustments, waste, supply issues and counts made through POST
 		self.stock_calls: list[tuple] = []  # (path, body) of each accepted stock write
+		self.warehouse_records: dict[str, dict] = {}  # warehouses made through POST /warehouses
+		self.branch_limited_key = False  # True plays a key limited to one branch (403 place_not_allowed)
 		self.supplies_on = True  # False plays a Koomyo whose Supplies switch is off
 		self.transfers: dict[str, dict] = {}  # stock transfers made through POST /stock-transfers
 		self.transfer_calls: list[tuple] = []  # (action, body) of each accepted transfer call
@@ -160,7 +168,7 @@ class FakeKoomyo:
 			raise requests.ConnectionError("fake koomyo is down")
 		if self.scripted.get(path):
 			return self.scripted[path].pop(0)
-		if method in ("POST", "PATCH", "PUT"):
+		if method in ("POST", "PATCH", "PUT", "DELETE"):
 			return self._write(method, path, json_body, (headers or {}).get("Idempotency-Key"))
 		if path.startswith("/purchase-orders/") and path[len("/purchase-orders/") :] in self.purchase_orders:
 			return FakeResponse(200, self.purchase_orders[path[len("/purchase-orders/") :]])
@@ -396,6 +404,10 @@ class FakeKoomyo:
 				return FakeResponse(200, found) if found else error_response(404, "not_found")
 			if method == "POST" and len(parts) == 4:
 				return self._transfer_action(parts[2], parts[3], body or {})
+		if path.startswith("/ingredients") or path.startswith("/warehouses"):
+			answer = self._ingredient_or_warehouse(method, path, body)
+			if answer is not None:
+				return answer
 		if method == "PATCH" and path.startswith("/ingredients/"):
 			ingredient = self.ingredients.get(path.split("/")[2])
 			if not ingredient:
@@ -618,6 +630,126 @@ class FakeKoomyo:
 		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
 		self.patch_calls.append(body)
 		return FakeResponse(200, order)
+
+	def _ingredient_or_warehouse(self, method, path, body):
+		"""POST/PATCH/DELETE /ingredients, PUT .../default-supplier and .../low-stock-levels, POST/PATCH /warehouses."""
+		bad = lambda why: error_response(400, "invalid_parameter", why)  # noqa: E731
+		parts = path.split("/")
+		units = ("kg", "g", "L", "ml", "pcs")
+		if path == "/ingredients" and method == "POST":
+			ref = body.get("external_ref")
+			for found in self.ingredients.values():
+				if ref and found.get("external_refs", {}).get(ref["system"]) == ref["external_id"]:
+					return FakeResponse(200, found)
+			if not body.get("name") or body.get("unit") not in units:
+				return bad("name and a unit from GET /units are required")
+			if any(i["name"].lower() == body["name"].lower() for i in self.ingredients.values()):
+				return error_response(409, "name_in_use", "that name is used")
+			if body.get("kind") == "supply" and not self.supplies_on:
+				return error_response(403, "feature_not_available", "Supplies is switched off")
+			iid = f"ing-new-{len(self.ingredients) + 1}"
+			record = self.add_ingredient(iid, body["name"], body["unit"], str(body.get("cost_per_unit", "0")))
+			record.update(
+				{
+					"kind": body.get("kind", "food"),
+					"active": body.get("active", True),
+					"default_supplier_id": None,
+					"low_stock_levels": [],
+					"external_refs": {ref["system"]: ref["external_id"]} if ref else {},
+				}
+			)
+			self.stock_calls.append((path, body))
+			return FakeResponse(201, record)
+		if parts[1] == "ingredients" and len(parts) >= 3:
+			ingredient = self.ingredients.get(parts[2])
+			if not ingredient:
+				return error_response(404, "not_found")
+			if method == "DELETE":
+				if ingredient.get("_in_use"):
+					return FakeResponse(
+						409,
+						{"error": {"code": "in_use", "message": "a recipe uses it", "deactivate": True}},
+					)
+				del self.ingredients[parts[2]]
+				self.stock_calls.append((path, body))
+				return FakeResponse(200, {"id": parts[2], "object": "ingredient", "deleted": True})
+			if method == "PATCH":
+				if "name" in body and any(
+					i["name"].lower() == body["name"].lower() and i["id"] != parts[2]
+					for i in self.ingredients.values()
+				):
+					return error_response(409, "name_in_use", "that name is used")
+				if "unit" in body:
+					if body["unit"] not in units:
+						return bad("unit")
+					if ingredient.get("_in_use") and body["unit"] != ingredient["unit"]:
+						return error_response(409, "unit_in_use", "counted in the old unit")
+				for field in ("name", "unit", "active", "kind", "cost_per_unit"):
+					if field in body:
+						ingredient[field] = body[field]
+				self.stock_calls.append((path, body))
+				return FakeResponse(200, ingredient)
+			if method == "PUT" and path.endswith("/default-supplier"):
+				if body.get("supplier_id") and body["supplier_id"] not in self.suppliers:
+					return error_response(404, "not_found")
+				supplier = self.suppliers.get(body.get("supplier_id") or "")
+				if supplier and supplier.get("active") is False:
+					return error_response(409, "supplier_inactive", "switched off")
+				ingredient["default_supplier_id"] = body.get("supplier_id")
+				self.stock_calls.append((path, body))
+				return FakeResponse(200, ingredient)
+			if method == "PUT" and path.endswith("/low-stock-levels"):
+				for entry in body.get("levels") or []:
+					entry_place = entry["place"]
+					rows = [
+						r
+						for r in ingredient.setdefault("low_stock_levels", [])
+						if r["place"]["id"] != entry_place["id"]
+					]
+					if _decimal(entry["level"]) > 0:
+						rows.append({"place": {**entry_place, "name": None}, "level": str(entry["level"])})
+					ingredient["low_stock_levels"] = rows
+				self.stock_calls.append((path, body))
+				return FakeResponse(200, ingredient)
+		if path == "/warehouses" and method == "POST":
+			ref = body.get("external_ref")
+			for found in self.warehouse_records.values():
+				if ref and found["external_refs"].get(ref["system"]) == ref["external_id"]:
+					return FakeResponse(200, found)
+			if not body.get("name") or len(body["name"]) > 100:
+				return bad("name")
+			if self.branch_limited_key:
+				return error_response(403, "place_not_allowed", "limited to a branch")
+			if any(w["name"].lower() == body["name"].lower() for w in self.warehouse_records.values()):
+				return error_response(409, "name_in_use", "that name is used")
+			wid = f"wh-new-{len(self.warehouse_records) + 1}"
+			record = {
+				"id": wid,
+				"object": "warehouse",
+				"name": body["name"],
+				"address": body.get("address"),
+				"active": True,
+				"is_main": False,
+				"external_refs": {ref["system"]: ref["external_id"]} if ref else {},
+			}
+			self.warehouse_records[wid] = record
+			self.stock_calls.append((path, body))
+			return FakeResponse(201, record)
+		if parts[1] == "warehouses" and len(parts) == 3 and method == "PATCH":
+			record = self.warehouse_records.get(parts[2])
+			if not record:
+				return error_response(404, "not_found")
+			if body.get("active") is False:
+				if record.get("is_main"):
+					return error_response(409, "main_warehouse", "never")
+				if record.get("holds_stock"):
+					return error_response(409, "warehouse_has_stock", "still holds stock")
+			for field in ("name", "address", "active"):
+				if field in body:
+					record[field] = body[field]
+			self.stock_calls.append((path, body))
+			return FakeResponse(200, record)
+		return None
 
 	def _find_ref(self, store, ref):
 		for found in store.values():
