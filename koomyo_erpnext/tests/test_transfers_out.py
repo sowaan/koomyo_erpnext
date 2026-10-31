@@ -158,6 +158,17 @@ class TestOneStep(TransfersOutCase):
 		self.assertEqual(len(self.transfers()), 1)
 		self.assertEqual(self.transfers()[0]["status"], "received")
 
+	def test_an_id_koomyo_does_not_know_as_an_ingredient_names_the_item(self):
+		from koomyo_erpnext.tests.test_stock import MOZZARELLA as ING
+
+		del self.fake_a.ingredients[ING]  # as when the Item is linked to a menu item's id
+		self.make_entry(CENTRAL, STORES, 4)
+		self.run_queue()
+		(log,) = self.outbound_logs("erpnext.stock_transfer")
+		self.assertEqual(log.status, "Failed")
+		self.assertIn("probably a menu item", log.message)
+		self.assertEqual(self.transfers(), [])
+
 	def test_switched_off_sends_nothing(self):
 		self.conn_a.reload()
 		self.conn_a.push_stock_transfers = 0

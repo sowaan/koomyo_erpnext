@@ -192,6 +192,8 @@ def create_transfer(connection, client, sent_entry, from_place, to_place, lines,
 			),
 		)
 	except KoomyoAPIError as e:
+		if e.code == "invalid_parameter" and "ingredient" in (e.message or "").lower():
+			raise Fatal(not_an_ingredient(connection, sent_entry))
 		if e.code == "reference_in_use":
 			raise Fatal(
 				_(
@@ -202,6 +204,18 @@ def create_transfer(connection, client, sent_entry, from_place, to_place, lines,
 	if answer.get("object") != "stock_transfer" or not answer.get("id"):
 		raise Fatal(_("Koomyo answered the transfer with something else."))
 	return answer
+
+
+def not_an_ingredient(connection, doc) -> str:
+	"""Koomyo does not know an Item's id as an ingredient: say which Item (often a menu item's id)."""
+	bad = [
+		f"{r.item_code} ({frappe.db.get_value('Item', r.item_code, 'item_name')})"
+		for r in doc.items
+		if not frappe.db.get_value("Item", r.item_code, "koomyo_kind")
+	] or [r.item_code for r in doc.items]
+	return _(
+		"Koomyo does not know the Koomyo id of {0} as an ingredient (on {1}). The Item is probably a menu item, not an ingredient. Use the Item made from the ingredient, or link it. Nothing was changed in Koomyo."
+	).format(", ".join(bad), doc.name)
 
 
 def line_ids(transfer: dict) -> dict[str, str]:
