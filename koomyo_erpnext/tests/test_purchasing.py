@@ -119,6 +119,10 @@ class PurchasingTestCase(StockTestCase):
 	def writes(self, path_prefix):
 		return [w for w in self.fake_a.writes if w["path"].startswith(path_prefix)]
 
+	def created(self, path):
+		"""The calls to exactly this path (POST /purchase-orders creates; /purchase-orders/{id}/... are other calls)."""
+		return [w for w in self.fake_a.writes if w["path"] == path]
+
 
 class TestPurchaseOrders(PurchasingTestCase):
 	def test_po_goes_to_koomyo_with_supplier(self):
@@ -130,7 +134,7 @@ class TestPurchaseOrders(PurchasingTestCase):
 		self.assertEqual(
 			supplier_call["body"]["external_ref"], {"system": "erpnext", "external_id": "_Koomyo Dairy"}
 		)
-		(po_call,) = self.writes("/purchase-orders")
+		(po_call,) = self.created("/purchase-orders")
 		self.assertEqual(po_call["body"]["branch_id"], BRANCH)
 		self.assertEqual(
 			po_call["body"]["lines"],
@@ -173,7 +177,7 @@ class TestPurchaseOrders(PurchasingTestCase):
 		po.submit()
 		frappe.db.commit()
 		self.run_queue()
-		(po_call,) = self.writes("/purchase-orders")
+		(po_call,) = self.created("/purchase-orders")
 		self.assertEqual(
 			po_call["body"]["lines"][0],
 			{"ingredient_id": MOZZARELLA, "quantity_ordered": "2.5", "unit_cost": "1450"},
@@ -182,7 +186,7 @@ class TestPurchaseOrders(PurchasingTestCase):
 	def test_central_warehouse_order_has_no_branch(self):
 		self.make_po(warehouse="Finished Goods - _KTA")
 		self.run_queue()
-		(po_call,) = self.writes("/purchase-orders")
+		(po_call,) = self.created("/purchase-orders")
 		self.assertNotIn("branch_id", po_call["body"])
 
 	def test_order_for_other_warehouse_is_not_sent(self):
@@ -207,7 +211,7 @@ class TestPurchaseOrders(PurchasingTestCase):
 		(log,) = self.outbound()
 		self.assertEqual(log.error_class, "NeedsMapping")
 		self.assertIn("_KTEST-NAPKINS", log.message)
-		self.assertEqual(self.writes("/purchase-orders"), [])
+		self.assertEqual(self.created("/purchase-orders"), [])
 
 	def test_koomyo_down_then_retry_is_a_replay(self):
 		self.fake_a.scripted["/purchase-orders"] = [error_response(500, "internal_error") for _ in range(4)]
@@ -522,7 +526,7 @@ class TestReadOnly(PurchasingTestCase):
 		retry([log.name])
 		self.run_queue()
 		self.assertEqual(frappe.db.get_value("Koomyo Event Log", log.name, "status"), "Done")
-		self.assertEqual(len(self.writes("/purchase-orders")), 1)
+		self.assertEqual(len(self.created("/purchase-orders")), 1)
 
 	def test_reading_still_works_and_no_reference_is_written_back(self):
 		self.set_access("Read Only")
@@ -858,3 +862,80 @@ class TestTaxAndChargesOutbound(PurchasingTestCase):
 		body = self.sent()
 		for key in ("tax_rate", "tax_name", "charges"):
 			self.assertNotIn(key, body)
+
+
+class TestMarkOrdered(PurchasingTestCase):
+	def order_logs(self):
+		return [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+
+	def test_a_sent_order_is_marked_ordered_with_the_expected_date_and_nothing_is_emailed(self):
+		po = self.make_po()
+		self.run_queue()
+		(log,) = self.order_logs()
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		order = self.fake_a.purchase_orders["po-1"]
+		self.assertEqual(order["status"], "ordered")
+		(call,) = self.fake_a.mark_calls
+		self.assertEqual(
+			call["expected_date"], str(frappe.db.get_value("Purchase Order", po.name, "schedule_date"))
+		)
+		self.assertTrue(call["updated_at"])
+		self.assertEqual(
+			[w for w in self.fake_a.writes if w["path"].endswith("/send")], [], "never the send call"
+		)
+
+	def test_switched_off_the_order_stays_a_draft(self):
+		self.conn_a.reload()
+		self.conn_a.mark_orders_ordered = 0
+		self.conn_a.save()
+		self.make_po()
+		self.run_queue()
+		self.assertEqual(self.fake_a.purchase_orders["po-1"]["status"], "draft")
+		self.assertEqual(self.fake_a.mark_calls, [])
+
+	def test_incomplete_shares_fail_after_the_order_exists_and_a_retry_marks_it(self):
+		from koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koomyo_event_log import retry
+
+		po = self.make_po()
+		self.fake_a.places_incomplete = True
+		self.run_queue()
+		(log,) = self.order_logs()
+		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
+		self.assertIn("cannot be marked ordered", log.message)
+		self.assertEqual(self.fake_a.purchase_orders["po-1"]["status"], "draft")
+		self.fake_a.places_incomplete = False
+		retry([log.name])
+		self.run_queue()
+		self.assertEqual(frappe.db.get_value("Koomyo Event Log", log.name, "status"), "Done")
+		self.assertEqual(self.fake_a.purchase_orders["po-1"]["status"], "ordered")
+		self.assertEqual(len(self.fake_a.purchase_orders), 1, "never a second order")
+		self.assertTrue(po)
+
+	def test_an_order_that_changed_meanwhile_is_read_again_once(self):
+		self.make_po()
+		self.run_queue()
+		order = self.fake_a.purchase_orders["po-1"]
+		order["status"] = "draft"
+		order["updated_at"] = "2026-10-13T08:00:00Z"
+		from koomyo_erpnext.sync import purchasing
+
+		po = frappe.get_doc("Purchase Order", frappe.db.get_value("Purchase Order", {"koomyo_id": "po-1"}))
+		with self.koomyo():
+			purchasing.ensure_ordered(
+				self.conn_a,
+				KoomyoClient.for_connection(self.conn_a),
+				po,
+				{"status": "draft", "updated_at": "2026-10-12T00:00:00Z"},
+			)
+		self.assertEqual(order["status"], "ordered", "stale_version, then the fresh read was used")
+
+	def test_an_order_already_ordered_is_left_alone(self):
+		self.make_po()
+		self.run_queue()
+		self.assertEqual(len(self.fake_a.mark_calls), 1)
+		from koomyo_erpnext.sync import purchasing
+
+		po = frappe.get_doc("Purchase Order", frappe.db.get_value("Purchase Order", {"koomyo_id": "po-1"}))
+		with self.koomyo():
+			purchasing.ensure_ordered(self.conn_a, KoomyoClient.for_connection(self.conn_a), po)
+		self.assertEqual(len(self.fake_a.mark_calls), 1)

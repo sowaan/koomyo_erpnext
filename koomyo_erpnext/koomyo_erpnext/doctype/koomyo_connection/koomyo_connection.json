@@ -76,6 +76,7 @@
   "book_koomyo_purchases",
   "sync_purchase_requests",
   "deliver_to",
+  "mark_orders_ordered",
   "section_purchasing_settings",
   "main_warehouse",
   "cb_purchasing",
@@ -935,6 +936,14 @@
    "hidden": 1,
    "label": "Purchase Requests State",
    "read_only": 1
+  },
+  {
+   "default": "1",
+   "depends_on": "sync_purchasing",
+   "description": "An order ERPNext sends is created as a draft in Koomyo. ERPNext already placed it with the supplier, so Koomyo is told to mark it ordered (nothing is emailed: do not press Send there). Switch off to leave orders as drafts.",
+   "fieldname": "mark_orders_ordered",
+   "fieldtype": "Check",
+   "label": "Mark Sent Orders as Ordered"
   }
  ],
  "links": [],

@@ -79,6 +79,8 @@ class FakeKoomyo:
 		self.purchase_orders: dict[str, dict] = {}
 		self.receive_calls: list[dict] = []
 		self.cancel_calls: list[dict] = []
+		self.mark_calls: list[dict] = []
+		self.places_incomplete = False  # mark-ordered answers 409 delivery_places_incomplete
 		self.purchase_bodies: list[dict] = []  # every POST /purchase-orders body that was accepted
 		self.handled_by = "external"  # who orders purchase requests, as GET /account says
 		self.account_purchase_requests = True  # False plays a Koomyo whose /account has no purchase_requests
@@ -296,7 +298,7 @@ class FakeKoomyo:
 			order = {
 				"id": pid,
 				"object": "purchase_order",
-				"status": "ordered",
+				"status": "draft",
 				"_ref": ref_key(body),
 				"supplier": {"id": body["supplier_id"], "name": self.suppliers[body["supplier_id"]]["name"]},
 				"branch_id": body.get("branch_id"),
@@ -324,6 +326,23 @@ class FakeKoomyo:
 			self.purchase_bodies.append(body)
 			self.purchase_orders[pid] = order
 			return FakeResponse(201, order)
+		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/mark-ordered"):
+			order = self.purchase_orders.get(path.split("/")[2])
+			if not order:
+				return error_response(404, "not_found")
+			if order["status"] != "draft":
+				return error_response(409, "not_a_draft", "only a draft can be marked")
+			sent = (body or {}).get("updated_at")
+			if sent and sent != order["updated_at"]:
+				return error_response(409, "stale_version", "the order changed")
+			if self.places_incomplete:
+				return error_response(409, "delivery_places_incomplete", "the shares are incomplete")
+			self.mark_calls.append(body or {})
+			order["status"] = "ordered"
+			order["updated_at"] = "2026-10-12T10:30:00Z"
+			if (body or {}).get("expected_date"):
+				order["expected_date"] = body["expected_date"]
+			return FakeResponse(200, order)
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/cancel"):
 			return self._cancel(path.split("/")[2], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):

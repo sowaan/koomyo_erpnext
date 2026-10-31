@@ -192,6 +192,8 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 	if po.docstatus != 1:
 		raise Skipped(_("Purchase Order {0} is not submitted any more.").format(po.name))
 	if po.koomyo_id:
+		# Sent before: only make sure it is not left a draft (a Retry after a failed mark).
+		ensure_ordered(connection, client or KoomyoClient.for_connection(connection), po)
 		return ("Purchase Order", po.name)
 	shares = {item.name: request_line_of(item, connection) for item in po.items}
 	with_shares = any(shares.values())
@@ -263,7 +265,52 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 		}
 	)
 	compare_totals(po, answer)
+	ensure_ordered(connection, client, po, answer)
 	return ("Purchase Order", po.name)
+
+
+def ensure_ordered(connection, client, po, order: dict | None = None):
+	"""POST /purchase-orders/{id}/mark-ordered: a draft becomes ordered, without emailing the supplier.
+
+	ERPNext placed the order itself, and a draft in Koomyo is a plan staff may edit or send (Send would email
+	the supplier again). 409 not_a_draft is fine (it is ordered or further on); 409 stale_version re-reads the
+	order once; 409 delivery_places_incomplete means the shares do not add up or have no place.
+	"""
+	if not connection.get("mark_orders_ordered"):
+		return
+	path = f"/purchase-orders/{quote(po.koomyo_id, safe='')}"
+	for attempt in (1, 2):
+		order = order or client.get(path)
+		if order.get("status") != "draft":
+			return
+		body = {"updated_at": order["updated_at"]} if order.get("updated_at") else {}
+		if po.get("schedule_date"):
+			body["expected_date"] = str(po.schedule_date)
+		try:
+			koomyo_write(
+				connection,
+				client,
+				"POST",
+				path + "/mark-ordered",
+				body,
+				idempotency_key(
+					"Purchase Order", po.name, po.modified, f"mark-ordered-{order.get('updated_at')}"
+				),
+			)
+			return
+		except KoomyoAPIError as e:
+			if e.code == "not_a_draft":
+				return
+			if e.code == "stale_version" and attempt == 1:
+				order = None  # changed meanwhile: read it again and repeat on that
+				continue
+			if e.code == "delivery_places_incomplete":
+				raise Fatal(
+					_(
+						"Koomyo purchase order {0} (from {1}) was created but cannot be marked ordered: the shares of its lines do not add up or a share has no place. Fix it in Koomyo, then press Retry."
+					).format(po.koomyo_id, po.name)
+				)
+			raise
 
 
 def compare_totals(po, answer: dict):
