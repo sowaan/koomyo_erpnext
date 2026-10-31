@@ -294,7 +294,10 @@ doc_events = {
 		"on_cancel": "koomyo_erpnext.sync.purchasing.on_purchase_order_cancel",
 		"on_update_after_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_order_update",
 	},
-	"Purchase Receipt": {"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_receipt_submit"},
+	"Purchase Receipt": {
+		"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_receipt_submit",
+		"on_cancel": "koomyo_erpnext.sync.purchase_edits.on_purchase_receipt_cancel",
+	},
 	"Supplier": {"on_update": "koomyo_erpnext.sync.purchasing.on_supplier_update"},
 	"Item": {"on_update": "koomyo_erpnext.sync.purchasing.on_item_update"},
 }

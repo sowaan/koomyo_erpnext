@@ -726,6 +726,9 @@ def send_receive(connection, client, po, doc, body: dict, action: str, before: s
 def link_delivery(receipt, connection, delivery_id: str):
 	"""Remember which Koomyo delivery this Purchase Receipt is. A receipt that spans several places is several
 	deliveries: the first is its Koomyo id, the others are listed beside it, so none is booked twice."""
+	receipt.db_set(
+		"koomyo_sent", 1, update_modified=False
+	)  # sent from ERPNext: only these are reversed there
 	if not receipt.koomyo_id:
 		receipt.db_set(
 			{"koomyo_connection": connection.name, "koomyo_id": delivery_id}, update_modified=False

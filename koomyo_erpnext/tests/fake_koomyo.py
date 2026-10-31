@@ -81,6 +81,10 @@ class FakeKoomyo:
 		self.cancel_calls: list[dict] = []
 		self.mark_calls: list[dict] = []
 		self.patch_calls: list[dict] = []
+		self.reverse_calls: list[dict] = []
+		self.distributed: set[str] = set()  # delivery ids part of which went on by transfer
+		self.returned: set[str] = set()  # delivery ids part of which went back to the supplier
+		self.below_zero = False
 		self.stale_once = False  # the next PATCH finds the order changed (409 stale_version)
 		self.places_incomplete = False  # mark-ordered answers 409 delivery_places_incomplete
 		self.purchase_bodies: list[dict] = []  # every POST /purchase-orders body that was accepted
@@ -347,6 +351,9 @@ class FakeKoomyo:
 			if (body or {}).get("expected_date"):
 				order["expected_date"] = body["expected_date"]
 			return FakeResponse(200, order)
+		if method == "POST" and "/receipts/" in path and path.endswith("/reverse"):
+			parts = path.split("/")
+			return self._reverse(parts[2], parts[4], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/cancel"):
 			return self._cancel(path.split("/")[2], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/receive"):
@@ -573,6 +580,58 @@ class FakeKoomyo:
 		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
 		self.patch_calls.append(body)
 		return FakeResponse(200, order)
+
+	def _reverse(self, order_id, receipt_id, body):
+		"""POST .../receipts/{receipt_id}/reverse: only the latest un-reversed delivery, with a reason."""
+		from decimal import Decimal
+
+		order = self.purchase_orders.get(order_id)
+		if not order:
+			return error_response(404, "not_found")
+		reason = body.get("reason")
+		if not isinstance(reason, str) or not 1 <= len(reason) <= 300:
+			return error_response(400, "invalid_parameter", "reason is required, 1 to 300 characters")
+		entry = next((r for r in order["receipts"] if r["id"] == receipt_id), None)
+		if not entry:
+			return error_response(404, "not_found")
+		if entry.get("reversed_at"):
+			return error_response(409, "already_reversed", "already reversed")
+		live = [r for r in order["receipts"] if not r.get("reversed_at")]
+		if live[-1]["id"] != receipt_id:
+			return error_response(409, "not_latest_receipt", "reverse the newer one first")
+		if receipt_id in self.distributed:
+			return error_response(409, "receipt_distributed", "cancel or resolve the transfers first")
+		if receipt_id in self.returned:
+			return error_response(409, "receipt_returned", "part went back to the supplier")
+		sent = body.get("updated_at")
+		if sent and sent != order["updated_at"]:
+			return error_response(409, "stale_version", "the order changed")
+		self.reverse_calls.append({"receipt_id": receipt_id, **body})
+		for item in entry["lines"]:
+			for line in order["lines"]:
+				if line["id"] == item["line_id"]:
+					line["quantity_received"] = str(
+						Decimal(line["quantity_received"]) - Decimal(item["quantity"])
+					)
+					for share in line.get("allocations") or []:
+						if (share["destination_type"], share["destination_id"]) == (
+							entry.get("location_type"),
+							entry.get("location_id"),
+						):
+							share["received_quantity"] = str(
+								max(
+									Decimal(share["received_quantity"]) - Decimal(item["quantity"]),
+									Decimal(0),
+								)
+							)
+							share["landed_quantity"] = share["received_quantity"]
+		entry["reversed_at"] = "2026-10-30T12:00:00Z"
+		entry["reverse_reason"] = reason
+		live_left = [r for r in order["receipts"] if not r.get("reversed_at")]
+		order["status"] = "partial" if live_left else "ordered"
+		order["closed_short"] = False
+		order["updated_at"] = f"2026-10-30T12:{len(self.reverse_calls):02d}:00Z"
+		return FakeResponse(200, {**order, "below_zero": self.below_zero})
 
 	def _cancel(self, order_id, body):
 		"""POST /purchase-orders/{id}/cancel (docs: a draft or ordered order; the quantities go back to the requests)."""

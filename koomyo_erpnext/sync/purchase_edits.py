@@ -197,3 +197,140 @@ def explain_edit_refusal(error, po):
 				"Koomyo refused the edit of Purchase Order {0}: {1}. Check that every row still fills its request line and the shares add up to the line."
 			).format(po.name, error.message)
 		)
+
+
+# ------------------------------------------------------------------ 2. cancel a receipt
+
+
+def koomyo_deliveries(receipt) -> list[str]:
+	"""The Koomyo deliveries a Purchase Receipt sent from ERPNext is (one, or several when it spans places)."""
+	return [i for i in [receipt.get("koomyo_id"), *(receipt.get("koomyo_extra_ids") or "").split()] if i]
+
+
+def on_purchase_receipt_cancel(doc, method=None):
+	"""A Purchase Receipt that ERPNext sent to Koomyo as a delivery was cancelled: reverse the delivery there.
+
+	Only receipts this app sent (`koomyo_sent`): a receipt made from a delivery Koomyo made stays Koomyo's to
+	reverse. Koomyo reverses only the latest delivery of an order.
+	"""
+	if not doc.get("koomyo_connection") or not doc.get("koomyo_sent") or not koomyo_deliveries(doc):
+		return
+	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
+	if connection.enabled and connection.sync_purchasing:
+		store_outbound(connection, "erpnext.purchase_receipt_reverse", doc)
+
+
+@handles("erpnext.purchase_receipt_reverse", switch="sync_purchasing", scopes=WRITE_SCOPES)
+def push_receipt_reverse(event: dict, connection, client: KoomyoClient | None = None):
+	"""POST /purchase-orders/{id}/receipts/{receipt_id}/reverse, latest delivery first, with the reason."""
+	receipt = frappe.get_doc("Purchase Receipt", event["data"]["name"])
+	if receipt.docstatus != 2:
+		raise Skipped(_("Purchase Receipt {0} is not cancelled any more.").format(receipt.name))
+	ids = koomyo_deliveries(receipt)
+	if not ids or not receipt.get("koomyo_sent"):
+		raise Skipped(_("Purchase Receipt {0} was not sent to Koomyo by this app.").format(receipt.name))
+	order_name = next((i.purchase_order for i in receipt.items if i.purchase_order), None)
+	po = frappe.get_doc("Purchase Order", order_name) if order_name else None
+	if not po or po.koomyo_connection != connection.name or not po.koomyo_id:
+		raise Skipped(_("Purchase Receipt {0} is not for an order sent to Koomyo.").format(receipt.name))
+	client = client or KoomyoClient.for_connection(connection)
+	done = 0
+	for delivery_id in newest_first(ids, read_order(client, po)):
+		done += reverse_delivery(connection, client, po, receipt, delivery_id, event)
+	if not done:
+		raise Skipped(
+			_("The delivery of Purchase Receipt {0} is already reversed in Koomyo.").format(receipt.name)
+		)
+	return ("Purchase Receipt", receipt.name)
+
+
+def newest_first(ids: list[str], order: dict) -> list[str]:
+	position = {r.get("id"): n for n, r in enumerate(order.get("receipts") or [])}
+	return sorted(ids, key=lambda i: position.get(i, -1), reverse=True)
+
+
+def reverse_delivery(connection, client, po, receipt, delivery_id: str, event: dict) -> int:
+	reason = _("Cancelled in ERPNext ({0})").format(receipt.name)[:300]
+	for attempt in (1, 2):
+		order = read_order(client, po)
+		entry = next((r for r in order.get("receipts") or [] if r.get("id") == delivery_id), None)
+		if entry and entry.get("reversed_at"):
+			return 0
+		try:
+			answer = koomyo_write(
+				connection,
+				client,
+				"POST",
+				f"{order_path(po)}/receipts/{quote(delivery_id, safe='')}/reverse",
+				{"reason": reason, "updated_at": order.get("updated_at")},
+				retry_key(event, receipt, f"reverse-{delivery_id}-{order.get('updated_at')}"),
+			)
+			break
+		except KoomyoAPIError as e:
+			if e.code == "already_reversed":
+				return 0
+			if e.code == "stale_version" and attempt == 1:
+				continue
+			explain_reverse_refusal(e, connection, order, delivery_id, receipt)
+			raise
+	if answer.get("below_zero"):
+		from koomyo_erpnext.sync.events import warn
+
+		warn(
+			_("Koomyo reversed the delivery, but the goods were already used, so stock there is below zero.")
+		)
+	return 1
+
+
+def newer_deliveries(connection, order: dict, delivery_id: str) -> str:
+	"""Which newer deliveries must be reversed first, by ERPNext Purchase Receipt where there is one."""
+	receipts = order.get("receipts") or []
+	ids = [r.get("id") for r in receipts]
+	if delivery_id not in ids:
+		return ""
+	names = []
+	for entry in receipts[ids.index(delivery_id) + 1 :]:
+		if entry.get("reversed_at"):
+			continue
+		found = frappe.db.get_value(
+			"Purchase Receipt",
+			{"koomyo_connection": connection.name, "docstatus": 1, "koomyo_id": entry["id"]},
+		) or frappe.db.get_value(
+			"Purchase Receipt",
+			{
+				"koomyo_connection": connection.name,
+				"docstatus": 1,
+				"koomyo_extra_ids": ("like", f"%{entry['id']}%"),
+			},
+		)
+		names.append(
+			found
+			or _("the delivery at {0} on {1} (made in Koomyo)").format(
+				entry.get("location_name") or _("its place"), str(entry.get("received_at"))[:10]
+			)
+		)
+	return ", ".join(names)
+
+
+def explain_reverse_refusal(error, connection, order: dict, delivery_id: str, receipt):
+	if error.code == "not_latest_receipt":
+		newer = newer_deliveries(connection, order, delivery_id)
+		raise Fatal(
+			_(
+				"Purchase Receipt {0} is cancelled in ERPNext, but Koomyo reverses only the latest delivery of an order and later ones depend on this one. Cancel the newer receipt(s) first: {1}. Then press Retry."
+			).format(receipt.name, newer or _("(see the order's deliveries in Koomyo)"))
+		)
+	if error.code == "receipt_distributed":
+		raise Fatal(
+			_(
+				"Purchase Receipt {0} is cancelled in ERPNext, but part of that delivery already went on to branches by a transfer, so Koomyo cannot reverse it. Cancel or resolve those transfers first (in ERPNext the Stock Entries, in Koomyo the transfers), then press Retry."
+			).format(receipt.name)
+		)
+	if error.code == "receipt_returned":
+		raise Fatal(
+			_(
+				"Purchase Receipt {0} is cancelled in ERPNext, but part of that delivery was sent back to the supplier (a return), so Koomyo cannot reverse it. Take the return out first, or adjust the stock in Koomyo by hand."
+			).format(receipt.name)
+		)
+	if error.code == "stale_version":
+		raise Fatal(_("Koomyo order changed while the delivery was being reversed: press Retry."))
