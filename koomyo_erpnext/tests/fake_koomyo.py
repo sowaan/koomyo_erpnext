@@ -83,6 +83,8 @@ class FakeKoomyo:
 		self.patch_calls: list[dict] = []
 		self.reverse_calls: list[dict] = []
 		self.restate_calls: list[dict] = []
+		self.return_calls: list[dict] = []
+		self.destination_required = False
 		self.cost_rule = "ask"  # the restaurant's ingredient cost rule: ask, auto or off
 		self.distributed: set[str] = set()  # delivery ids part of which went on by transfer
 		self.returned: set[str] = set()  # delivery ids part of which went back to the supplier
@@ -353,6 +355,8 @@ class FakeKoomyo:
 			if (body or {}).get("expected_date"):
 				order["expected_date"] = body["expected_date"]
 			return FakeResponse(200, order)
+		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/returns"):
+			return self._returns(path.split("/")[2], body or {})
 		if method == "POST" and "/receipts/" in path and path.endswith("/restate-costs"):
 			parts = path.split("/")
 			return self._restate(parts[2], parts[4], body or {})
@@ -585,6 +589,55 @@ class FakeKoomyo:
 		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
 		self.patch_calls.append(body)
 		return FakeResponse(200, order)
+
+	def _returns(self, order_id, body):
+		"""POST /purchase-orders/{id}/returns: goods back to the supplier, never more than arrived, less returned."""
+		from decimal import Decimal
+
+		order = self.purchase_orders.get(order_id)
+		if not order:
+			return error_response(404, "not_found")
+		if body.get("reason_code") not in ("damaged", "wrong_item", "quality", "other"):
+			return error_response(400, "invalid_parameter", "reason_code is required")
+		if len(body.get("note") or "") > 200:
+			return error_response(400, "invalid_parameter", "note is at most 200 characters")
+		if not body.get("lines"):
+			return error_response(400, "invalid_parameter", "lines are required")
+		places = {(r.get("location_type"), r.get("location_id")) for r in order["receipts"]}
+		if (len(places) > 1 or self.destination_required) and not body.get("destination_id"):
+			return error_response(409, "destination_required", "say where the goods go back from")
+		sent = body.get("updated_at")
+		if sent and sent != order["updated_at"]:
+			return error_response(409, "stale_version", "the order changed")
+		if self.stale_once:
+			self.stale_once = False
+			order["updated_at"] = "2026-10-30T09:59:00Z"
+			return error_response(409, "stale_version", "the order changed")
+		rows = []
+		for item in body["lines"]:
+			line = next((l for l in order["lines"] if l["id"] == item["line_id"]), None)
+			if not line:
+				return error_response(400, "invalid_parameter", "that line is not on this order")
+			qty = Decimal(str(item["quantity"]))
+			room = Decimal(line["quantity_received"]) - Decimal(line.get("returned_quantity") or "0")
+			if qty <= 0 or qty > room:
+				return error_response(409, "return_exceeds_received", "more than arrived")
+			rows.append((line, qty))
+		for line, qty in rows:
+			line["returned_quantity"] = str(Decimal(line.get("returned_quantity") or "0") + qty)
+		self.return_calls.append(body)
+		order.setdefault("returns", []).append(
+			{
+				"id": f"{order_id}-ret-{len(order['returns']) + 1}",
+				"reason_code": body["reason_code"],
+				"note": body.get("note"),
+				"lines": [
+					{"line_id": l["id"], "quantity": str(q), "unit_cost": l["unit_cost"]} for l, q in rows
+				],
+			}
+		)
+		order["updated_at"] = f"2026-10-30T14:{len(self.return_calls):02d}:00Z"
+		return FakeResponse(200, {**order, "below_zero": self.below_zero})
 
 	def _restate(self, order_id, receipt_id, body):
 		"""POST .../receipts/{receipt_id}/restate-costs: the unit cost of listed lines of one delivery, nothing else."""

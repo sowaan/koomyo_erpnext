@@ -82,6 +82,8 @@ def on_purchase_order_cancel(doc, method=None):
 
 
 def on_purchase_receipt_submit(doc, method=None):
+	if doc.get("is_return"):
+		return  # goods sent back to the supplier: sync/purchase_edits.py
 	if doc.get("koomyo_connection"):
 		return  # made from a Koomyo receipt: Koomyo already has it
 	orders = {row.purchase_order for row in doc.items if row.purchase_order}

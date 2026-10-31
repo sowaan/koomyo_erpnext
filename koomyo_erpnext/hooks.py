@@ -296,7 +296,10 @@ doc_events = {
 	},
 	"Purchase Invoice": {"on_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_invoice_submit"},
 	"Purchase Receipt": {
-		"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_receipt_submit",
+		"on_submit": [
+			"koomyo_erpnext.sync.purchasing.on_purchase_receipt_submit",
+			"koomyo_erpnext.sync.purchase_edits.on_purchase_return_submit",
+		],
 		"on_cancel": "koomyo_erpnext.sync.purchase_edits.on_purchase_receipt_cancel",
 	},
 	"Supplier": {"on_update": "koomyo_erpnext.sync.purchasing.on_supplier_update"},

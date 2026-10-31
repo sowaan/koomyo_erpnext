@@ -217,6 +217,15 @@ def on_purchase_receipt_cancel(doc, method=None):
 	Only receipts this app sent (`koomyo_sent`): a receipt made from a delivery Koomyo made stays Koomyo's to
 	reverse. Koomyo reverses only the latest delivery of an order.
 	"""
+	if doc.get("is_return"):
+		if doc.get("koomyo_sent"):
+			doc.add_comment(
+				"Comment",
+				_(
+					"Cancelled in ERPNext. Koomyo has no call to undo a return, so the goods stay returned there: correct its stock by hand."
+				),
+			)
+		return
 	if not doc.get("koomyo_connection") or not doc.get("koomyo_sent") or not koomyo_deliveries(doc):
 		return
 	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
@@ -476,3 +485,120 @@ def restate_receipt(connection, client, po, receipt, invoice, costs: dict, event
 				)
 			break
 	return count
+
+
+# ------------------------------------------------------------------ 4. goods sent back to the supplier
+
+RETURN_REASONS = {"Damaged": "damaged", "Wrong item": "wrong_item", "Quality": "quality"}
+
+
+def on_purchase_return_submit(doc, method=None):
+	"""A Purchase Return (Purchase Receipt with is_return) against a receipt this app sent: tell Koomyo."""
+	if not doc.get("is_return") or not doc.get("return_against"):
+		return
+	original = frappe.db.get_value(
+		"Purchase Receipt", doc.return_against, ["koomyo_connection", "koomyo_sent"], as_dict=True
+	)
+	if not original or not original.koomyo_connection or not original.koomyo_sent:
+		return  # a delivery Koomyo made stays Koomyo's: record the return there
+	connection = frappe.get_cached_doc("Koomyo Connection", original.koomyo_connection)
+	if connection.enabled and connection.sync_purchasing:
+		store_outbound(connection, "erpnext.purchase_return", doc)
+
+
+@handles("erpnext.purchase_return", switch="sync_purchasing", scopes=WRITE_SCOPES)
+def push_purchase_return(event: dict, connection, client: KoomyoClient | None = None):
+	"""POST /purchase-orders/{id}/returns: what goes back per order line, from the place it arrived at."""
+	doc = frappe.get_doc("Purchase Receipt", event["data"]["name"])
+	if doc.docstatus != 1 or not doc.is_return:
+		raise Skipped(_("{0} is not a submitted return any more.").format(doc.name))
+	if doc.get("koomyo_sent"):
+		raise Skipped(_("Return {0} is already in Koomyo.").format(doc.name))
+	order_name = next((i.purchase_order for i in doc.items if i.purchase_order), None)
+	po = frappe.get_doc("Purchase Order", order_name) if order_name else None
+	if not po or po.koomyo_connection != connection.name or not po.koomyo_id:
+		raise Skipped(_("Return {0} is not for an order sent to Koomyo.").format(doc.name))
+	client = client or KoomyoClient.for_connection(connection)
+	for attempt in (1, 2):
+		order = read_order(client, po)
+		body = return_body(connection, doc, po, order)
+		try:
+			answer = koomyo_write(
+				connection,
+				client,
+				"POST",
+				f"{order_path(po)}/returns",
+				body,
+				retry_key(event, doc, f"return-{order.get('updated_at')}"),
+			)
+			break
+		except KoomyoAPIError as e:
+			if e.code == "stale_version" and attempt == 1:
+				continue
+			explain_return_refusal(e, doc)
+			raise
+	known = {r.get("id") for r in order.get("returns") or []}
+	made = [r for r in answer.get("returns") or [] if r.get("id") not in known]
+	if made:
+		doc.db_set("koomyo_connection", connection.name, update_modified=False)
+		doc.db_set("koomyo_id", made[-1]["id"], update_modified=False)
+	doc.db_set("koomyo_sent", 1, update_modified=False)
+	if answer.get("below_zero"):
+		from koomyo_erpnext.sync.events import warn
+
+		warn(_("Koomyo took the goods back, but they were already used, so stock there is below zero."))
+	return ("Purchase Receipt", doc.name)
+
+
+def return_body(connection, doc, po, order: dict) -> dict:
+	from koomyo_erpnext.sync.purchasing import destination_of
+
+	lines_by_ingredient = {l.get("ingredient_id"): l.get("id") for l in order.get("lines") or []}
+	back: dict[str, Decimal] = {}
+	places = set()
+	for item in doc.items:
+		if item.purchase_order != po.name:
+			continue
+		line_id = lines_by_ingredient.get(linked_ingredient(item.item_code, connection))
+		if not line_id:
+			raise Fatal(
+				_("Item {0} is not on Koomyo purchase order {1}.").format(item.item_code, po.koomyo_id)
+			)
+		back[line_id] = back.get(line_id, Decimal(0)) + abs(Decimal(str(flt(item.stock_qty, 6))))
+		places.add(destination_of(connection, item.warehouse))
+	if not back:
+		raise Skipped(_("Return {0} has no row of order {1}.").format(doc.name, po.name))
+	body = {
+		"reason_code": RETURN_REASONS.get(doc.get("koomyo_return_reason") or "", "other"),
+		"note": _("ERPNext return {0}").format(doc.name)[:200],
+		"lines": [{"line_id": line_id, "quantity": text(qty)} for line_id, qty in back.items()],
+		"updated_at": order.get("updated_at"),
+	}
+	if len(places) > 1:
+		raise Fatal(
+			_(
+				"Return {0} sends goods back from several warehouses at once. Koomyo takes one place per return: make one return for each warehouse."
+			).format(doc.name)
+		)
+	received_at = {(r.get("location_type"), r.get("location_id")) for r in order.get("receipts") or []}
+	if len(received_at) > 1:  # the docs: needed when the order was received at more than one place
+		kind, place_id = next(iter(places))
+		body.update({"destination_type": kind, "destination_id": place_id})
+	return body
+
+
+def explain_return_refusal(error, doc):
+	if error.code == "return_exceeds_received":
+		raise Fatal(
+			_(
+				"Koomyo refused return {0}: a line cannot go back for more than arrived at that place, less what already went back and what was sent on to branches. Return less, or take the transfer back first, then press Retry."
+			).format(doc.name)
+		)
+	if error.code == "destination_required":
+		raise Fatal(
+			_(
+				"Koomyo refused return {0}: the order was received at several places, and the return's Warehouse is not one of them on the Branch Map. Check the Warehouse on the return."
+			).format(doc.name)
+		)
+	if error.code == "stale_version":
+		raise Fatal(_("Koomyo order changed while the return was sent: press Retry."))
