@@ -138,12 +138,10 @@ class TestSendingPerDestination(RequestOrderCase):
 		frappe.db.commit()
 		self.assertEqual(purchasing.queue_closed_orders(self.conn_a.name), 1)
 		self.run_queue()
-		closes = [c for c in self.receive_calls() if c.get("close_short")]
+		closes = self.fake_a.close_calls
 		self.assertEqual(sorted(c["destination_id"] for c in closes), sorted([BRANCH_1, BRANCH_2]))
-		gulberg = next(c for c in closes if c["destination_id"] == BRANCH_1)
-		self.assertEqual(
-			gulberg["lines"][0]["quantity_received"], "5.5", "the total so far, so nothing more is booked"
-		)
+		self.assertEqual({c["reason_code"] for c in closes}, {"short"})
+		self.assertNotIn("lines", closes[0], "a close books no stock")
 		order = self.fake_a.purchase_orders["po-1"]
 		self.assertEqual(order["status"], "received")
 		self.assertTrue(all(a["closed_short"] for a in order["lines"][0]["allocations"]))
@@ -363,9 +361,7 @@ class TestClosingAPlace(RequestOrderCase):
 		self.fake_a.writes.clear()
 
 	def closes(self):
-		return [
-			w["body"] for w in self.writes("/purchase-orders/po-1/receive") if w["body"].get("close_short")
-		]
+		return self.fake_a.close_calls
 
 	def test_a_place_where_nothing_arrived_is_closed_with_zero_totals_and_books_no_delivery(self):
 		frappe.get_doc("Purchase Order", self.po.name).update_status("Closed")
@@ -374,8 +370,6 @@ class TestClosingAPlace(RequestOrderCase):
 		self.run_queue()
 		closes = self.closes()
 		self.assertEqual(sorted(c["destination_id"] for c in closes), sorted([BRANCH_1, BRANCH_2]))
-		for body in closes:
-			self.assertEqual([l["quantity_received"] for l in body["lines"]], ["0"])
 		order = self.fake_a.purchase_orders["po-1"]
 		self.assertEqual(order["status"], "received")
 		self.assertEqual({r["lines"] == [] and r["closed_short"] for r in order["receipts"]}, {True})
@@ -419,4 +413,4 @@ class TestClosingAPlace(RequestOrderCase):
 			[BRANCH_2],
 			"Gulberg was complete: only Johar Town is closed",
 		)
-		self.assertEqual(closes[0]["lines"][0]["quantity_received"], "0")
+		self.assertEqual(closes[0]["destination_type"], "branch")

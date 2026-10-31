@@ -346,16 +346,17 @@ class TestReceipts(PurchasingTestCase):
 		self.assertEqual(purchasing.queue_closed_orders(self.conn_a.name), 1)
 		self.assertEqual(purchasing.queue_closed_orders(self.conn_a.name), 0, "queued once")
 		self.run_queue()
-		close = [w for w in self.writes("/purchase-orders/po-1/receive")][-1]["body"]
-		self.assertTrue(close["close_short"])
-		self.assertEqual(close["lines"], [{"line_id": "po-1-line-0", "quantity_received": "6"}])
+		(close,) = self.fake_a.close_calls  # nothing more is arriving: close-short, not a receive
+		self.assertEqual(close["reason_code"], "short")
+		self.assertEqual(close["note"], f"Closed in ERPNext ({po.name})")
+		self.assertEqual(len(self.writes("/purchase-orders/po-1/receive")), 1, "only the delivery")
 		order = self.fake_a.purchase_orders["po-1"]
 		self.assertEqual((order["status"], order["closed_short"]), ("received", True))
 		self.assertEqual(
 			pr.name, frappe.get_all("Purchase Receipt", filters={"company": COMPANY_A}, pluck="name")[0]
 		)
 
-	def test_closing_an_order_nothing_arrived_for_sends_nothing(self):
+	def test_closing_an_order_nothing_arrived_for_is_a_close_short_with_no_delivery(self):
 		po = self.make_po(qty=10)
 		self.run_queue()
 		frappe.get_doc("Purchase Order", po.name).update_status("Closed")
@@ -363,8 +364,30 @@ class TestReceipts(PurchasingTestCase):
 		purchasing.queue_closed_orders(self.conn_a.name)
 		self.run_queue()
 		self.assertEqual(self.writes("/purchase-orders/po-1/receive"), [])
+		(call,) = self.writes("/purchase-orders/po-1/close-short")
+		self.assertEqual(call["body"]["reason_code"], "short")
 		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order_close"]
-		self.assertEqual(log.status, "Skipped")
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		order = self.fake_a.purchase_orders["po-1"]
+		self.assertEqual((order["status"], order["closed_short"]), ("received", True))
+
+	def test_closing_again_is_safe(self):
+		po = self.make_po(qty=10)
+		self.run_queue()
+		frappe.get_doc("Purchase Order", po.name).update_status("Closed")
+		frappe.db.commit()
+		purchasing.queue_closed_orders(self.conn_a.name)
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order_close"]
+		self.assertEqual(log.status, "Done")
+		purchasing.store_outbound(
+			self.conn_a,
+			"erpnext.purchase_order_close",
+			frappe.get_doc("Purchase Order", po.name),
+			action="again",
+		)
+		self.run_queue()
+		self.assertEqual(len(self.fake_a.close_calls), 1)
 
 	def test_nothing_new_is_skipped_and_a_complete_order_is_said_plainly(self):
 		po = self.make_po(qty=10)

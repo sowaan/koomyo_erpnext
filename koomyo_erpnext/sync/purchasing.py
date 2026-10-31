@@ -586,8 +586,16 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 	}
 	if receipt.get("supplier_delivery_note"):
 		body["delivery_note"] = str(receipt.supplier_delivery_note)[:80]
-	if po.status == "Closed":
-		body["close_short"] = True
+	if (
+		po.status == "Closed"
+	):  # the last delivery and the close in one call; close-short is for a close with none
+		body.update(
+			{
+				"close_short": True,
+				"reason_code": "short",
+				"reason_note": _("Closed in ERPNext ({0})").format(po.name)[:200],
+			}
+		)
 	before = {r.get("id") for r in order.get("receipts") or []}
 	return send_receive(connection, client, po, receipt, body, "receive", before)
 
@@ -661,26 +669,61 @@ def push_purchase_close(event: dict, connection, client: KoomyoClient | None = N
 				)
 			)
 		return close_by_destination(connection, client, po, order)
-	if order.get("status") != "partial":
+	if order.get("status") not in ("ordered", "partial"):
 		raise Skipped(
-			_("Koomyo purchase order {0} is {1}, not partly received: nothing to close short.").format(
+			_("Koomyo purchase order {0} is {1}: nothing left to close short.").format(
 				po.koomyo_id, order.get("status")
 			)
 		)
-	# The lines are sent with what Koomyo already holds, so only the closing changes (an empty body would receive everything).
-	body = {
-		"lines": [
-			{
-				"line_id": line["id"],
-				"quantity_received": text(money(line.get("quantity_received") or "0", "quantity_received")),
-			}
-			for line in order.get("lines") or []
-			if line.get("id")
-		],
-		"close_short": True,
-	}
-	before = {r.get("id") for r in order.get("receipts") or []}
-	return send_receive(connection, client, po, po, body, "close", before)
+	if not close_short_call(connection, client, po, order):
+		raise Skipped(_("Koomyo purchase order {0} was already closed short.").format(po.koomyo_id))
+	return ("Purchase Order", po.name)
+
+
+def close_short_call(connection, client, po, order: dict, place: tuple[str, str] | None = None) -> bool:
+	"""POST /purchase-orders/{id}/close-short: nothing more is arriving (at that place), no stock is booked.
+
+	Docs: a close with nothing delivered; the receive call's `close_short` is for the last delivery plus the close.
+	Closes ONE destination; an order whose shares go to several places is closed place by place. Returns False
+	when Koomyo says there is nothing left to close (409 nothing_to_receive: a retry is safe).
+	"""
+	path = f"/purchase-orders/{quote(po.koomyo_id, safe='')}/close-short"
+	for attempt in (1, 2):
+		body = {
+			"reason_code": "short",
+			"note": _("Closed in ERPNext ({0})").format(po.name)[:200],
+			"updated_at": order.get("updated_at"),
+		}
+		if place:
+			body.update({"destination_type": place[0], "destination_id": place[1]})
+		try:
+			answer = koomyo_write(
+				connection,
+				client,
+				"POST",
+				path,
+				body,
+				idempotency_key(
+					po.doctype, po.name, po.modified, f"close-short-{place[1] if place else 'order'}"
+				),
+			)
+		except KoomyoAPIError as e:
+			if e.code == "nothing_to_receive":
+				return False
+			if e.code == "stale_version" and attempt == 1:
+				order["updated_at"] = client.get(path.rsplit("/", 1)[0]).get("updated_at")
+				continue
+			if e.code == "destination_required":
+				raise Fatal(
+					_(
+						"Koomyo purchase order {0} goes to several places and each is closed on its own, but the place was not named."
+					).format(po.koomyo_id)
+				)
+			raise
+		if answer.get("updated_at"):
+			order["updated_at"] = answer["updated_at"]  # the next place's close reads the new version
+		return True
+	return False
 
 
 def send_receive(connection, client, po, doc, body: dict, action: str, before: set):
@@ -814,10 +857,8 @@ def push_receipt_by_destination(connection, client, po, receipt, order: dict):
 
 
 def close_by_destination(connection, client, po, order: dict):
-	"""Closed in ERPNext: finish short every place that still expects goods (the totals so far, plus close_short)."""
-	held = received_at(order)
-	before = {r.get("id") for r in order.get("receipts") or []}
-	open_places: dict[tuple[str, str], dict[str, Decimal]] = {}
+	"""Closed in ERPNext: close short every place that still expects goods (one close-short call for each place)."""
+	open_places: list[tuple[str, str]] = []
 	for line in order.get("lines") or []:
 		for share in line.get("allocations") or []:
 			if share.get("closed_short") or money(
@@ -825,28 +866,14 @@ def close_by_destination(connection, client, po, order: dict):
 			) >= money(share.get("quantity") or "0", "quantity"):
 				continue  # nothing still expected there
 			key = (share.get("destination_type"), share.get("destination_id"))
-			open_places.setdefault(key, {})
+			if key not in open_places:
+				open_places.append(key)
 	if not open_places:
 		raise Skipped(
 			_("Every share of Koomyo purchase order {0} is received or closed short.").format(po.koomyo_id)
 		)
-	skipped = 0
-	for (kind, place_id), _unused in open_places.items():
-		per_line = held.get((kind, place_id), {})
-		body = {
-			"destination_type": kind,
-			"destination_id": place_id,
-			"lines": [
-				{"line_id": line_id, "quantity_received": text(qty)} for line_id, qty in per_line.items()
-			],
-			"close_short": True,
-		}
-		try:
-			send_receive(connection, client, po, po, body, f"close-{place_id}", before)
-		except Skipped:
-			# 409 nothing_to_receive on a close: that place has nothing left to close, so it was closed before.
-			skipped += 1
-	if skipped == len(open_places):
+	closed = [place for place in open_places if close_short_call(connection, client, po, order, place)]
+	if not closed:
 		raise Skipped(
 			_("Every place of Koomyo purchase order {0} was already closed short.").format(po.koomyo_id)
 		)

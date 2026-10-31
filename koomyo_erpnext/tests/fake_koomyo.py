@@ -84,6 +84,7 @@ class FakeKoomyo:
 		self.reverse_calls: list[dict] = []
 		self.restate_calls: list[dict] = []
 		self.return_calls: list[dict] = []
+		self.close_calls: list[dict] = []
 		self.destination_required = False
 		self.cost_rule = "ask"  # the restaurant's ingredient cost rule: ask, auto or off
 		self.distributed: set[str] = set()  # delivery ids part of which went on by transfer
@@ -355,6 +356,8 @@ class FakeKoomyo:
 			if (body or {}).get("expected_date"):
 				order["expected_date"] = body["expected_date"]
 			return FakeResponse(200, order)
+		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/close-short"):
+			return self._close_short(path.split("/")[2], body or {})
 		if method == "POST" and path.startswith("/purchase-orders/") and path.endswith("/returns"):
 			return self._returns(path.split("/")[2], body or {})
 		if method == "POST" and "/receipts/" in path and path.endswith("/restate-costs"):
@@ -589,6 +592,51 @@ class FakeKoomyo:
 		order["updated_at"] = f"2026-10-30T10:{len(self.patch_calls):02d}:00Z"
 		self.patch_calls.append(body)
 		return FakeResponse(200, order)
+
+	def _close_short(self, order_id, body):
+		"""POST /purchase-orders/{id}/close-short: no stock, no lines; ends what is still expected at ONE place."""
+		from decimal import Decimal
+
+		order = self.purchase_orders.get(order_id)
+		if not order:
+			return error_response(404, "not_found")
+		if body.get("reason_code") not in ("short", "damaged", "wrong_item", "other"):
+			return error_response(400, "invalid_parameter", "reason_code is required")
+		if len(body.get("note") or "") > 200:
+			return error_response(400, "invalid_parameter", "note is at most 200 characters")
+		sent = body.get("updated_at")
+		if sent and sent != order["updated_at"]:
+			return error_response(409, "stale_version", "the order changed")
+		if order["status"] in ("received", "cancelled"):
+			return error_response(409, "nothing_to_receive", "complete, closed or cancelled")
+		shared = any(l.get("allocations") for l in order["lines"])
+		receive = {"close_short": True, "reason_code": body["reason_code"], "lines": []}
+		if shared:
+			for key in ("destination_type", "destination_id"):
+				if body.get(key):
+					receive[key] = body[key]
+			kind, place = body.get("destination_type"), body.get("destination_id")
+			for line in order["lines"]:
+				have = sum(
+					(
+						Decimal(a["received_quantity"])
+						for a in line["allocations"]
+						if (a["destination_type"], a["destination_id"]) == (kind, place) or not kind
+					),
+					Decimal(0),
+				)
+				receive["lines"].append({"line_id": line["id"], "quantity_received": str(have)})
+		else:
+			receive["lines"] = [
+				{"line_id": l["id"], "quantity_received": l["quantity_received"]} for l in order["lines"]
+			]
+		answer = self._receive(order_id, receive)
+		if answer.status_code == 200:
+			self.receive_calls.pop()  # a close is not a delivery
+			self.close_calls.append(body)
+			order["updated_at"] = f"2026-10-30T15:{len(self.close_calls):02d}:00Z"
+			order["receipts"][-1]["closed_reason"] = body["reason_code"]
+		return answer
 
 	def _returns(self, order_id, body):
 		"""POST /purchase-orders/{id}/returns: goods back to the supplier, never more than arrived, less returned."""
