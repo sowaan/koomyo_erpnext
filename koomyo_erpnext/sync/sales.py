@@ -25,7 +25,7 @@ from frappe import _
 from frappe.utils import escape_html
 
 from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Retryable, Skipped
-from koomyo_erpnext.sync import discounts
+from koomyo_erpnext.sync import cod, discounts
 from koomyo_erpnext.sync.common import (
 	branch_row,
 	check_company,
@@ -250,6 +250,7 @@ def book_order(order: dict, connection, timezone: str | None = None):
 	discounts.reclass_entry(connection, invoice, order, book, cost_center)
 
 	book_payments(invoice, order, connection, a["amount_paid"])
+	cod.book_cod(invoice, order, connection, a)
 	return ("Sales Invoice", invoice.name)
 
 

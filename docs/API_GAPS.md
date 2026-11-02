@@ -277,3 +277,13 @@ Scope `ingredients.write`; switch **Send Items and Warehouses to Koomyo** on the
 - **Not sent:** kind changes of a linked Item, `made_in_house`, pack groups, supply categories (`GET /supply-categories` is not read), the units list (`GET /units` is not read: the UOM Map is the check), and `GET .../cost-history`.
 
 Not verified: the real server (the fake plays the documented rules); the `level` field of `low_stock_levels` in the answer was not needed (the PUT is sent whenever reorder levels change, and Koomyo writes nothing when nothing changes); `deactivate: true` in the 409 is not read, the app switches it off whenever the code is `in_use`.
+
+## 34. Cash on delivery collected short or with extra cash (Built, fields read; not seen live)
+
+`Order.cod_short` and `Order.cod_extra` are in the OpenAPI file; Koomyo said they would announce when the data is live, so this was tested only against the fake. Null or absent is "nothing special"; a value that is neither an object nor null fails the order with a message.
+
+- **cod_short:** the order's payment is what was **collected**, so the Payment Entry matches the cash that arrived and the invoice is left with the shortfall unpaid. The figures are checked (`collected + shortfall = expected`, and they must agree with the order's `amount_due` and `amount_paid`: a mismatch books nothing). The reason is noted on the invoice. With **COD Shortfall Account** (new, on the connection, an expense account) a Journal Entry `cod-short:<order id>` debits it and credits the customer against the invoice, which clears the unpaid shortfall (a write-off). Without the setting the sale is booked, the invoice stays partly unpaid and the Event Log row says to set the account. It is not a refund and does not touch refund limits.
+- **cod_extra:** the payment is exactly the amount due, so the extra is in no payment, total or tax. A Journal Entry `cod-extra:<order id>` debits the cash account of the order's cash payment (the rider holds it, so rider settlement includes it) and credits **Rider Extra Cash Account** (new, an income account), apart from the sale. Without the setting it is noted on the invoice and the row warns.
+- A replay changes nothing (the invoice exists, and each entry has its own id). Orders booked before this change are not revisited.
+
+For Koomyo: the shortfall goes to a write-off expense account and the extra to an income account, both chosen on each connection. Nothing more is needed from your side.

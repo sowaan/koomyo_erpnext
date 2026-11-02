@@ -45,6 +45,8 @@
   "delivery_fee_account",
   "channel_markup_account",
   "payment_adjustment_account",
+  "cod_shortfall_account",
+  "cod_extra_account",
   "section_discount_map",
   "discount_map",
   "section_shifts",
@@ -391,6 +393,20 @@
    "fieldname": "payment_adjustment_account",
    "fieldtype": "Link",
    "label": "Payment Method Discount Account",
+   "options": "Account"
+  },
+  {
+   "description": "A delivery order the rider collected short on (with a manager's permission): the shortfall left unpaid on the invoice is written off to this expense account. Without it the invoice stays partly unpaid.",
+   "fieldname": "cod_shortfall_account",
+   "fieldtype": "Link",
+   "label": "COD Shortfall Account",
+   "options": "Account"
+  },
+  {
+   "description": "Extra cash a rider kept on a delivery (no change, or a tip) is booked here as income, apart from the sale, against the cash account of the order's payment. Without it the extra is only noted on the invoice.",
+   "fieldname": "cod_extra_account",
+   "fieldtype": "Link",
+   "label": "Rider Extra Cash Account",
    "options": "Account"
   },
   {
