@@ -77,3 +77,65 @@ def _answer(status: int, text: str):
 def _log_refusal(connection_name: str, reason: str):
 	# The reason never contains the secret or the signature value.
 	frappe.logger("koomyo_erpnext", allow_site=True).warning("webhook %s: %s", connection_name, reason)
+
+
+@frappe.whitelist(methods=["POST"])
+def make_transfer_from_request(material_request: str, source_warehouse: str) -> str:
+	"""A draft Material Transfer Stock Entry that fulfils a Koomyo-linked Material Request from a warehouse.
+
+	ERPNext's own `make_stock_entry` maps warehouses by Material Request type and cannot do this for a Purchase
+	request, so the entry is built here: one row per request row, from `source_warehouse` to the row's warehouse
+	(the branch's), for what is still needed (not ordered, not already transferred). The user reviews it and submits it;
+	Koomyo is asked before the submit and told after (sync/transfers_out.py).
+	"""
+	from frappe import _
+	from frappe.utils import flt
+
+	frappe.has_permission("Material Request", "read", material_request, throw=True)
+	frappe.has_permission("Stock Entry", "create", throw=True)
+	mr = frappe.get_doc("Material Request", material_request)
+	if mr.docstatus != 1 or not mr.get("koomyo_connection") or not mr.get("koomyo_id"):
+		frappe.throw(
+			_("{0} is not a submitted Material Request made from a Koomyo purchase request.").format(mr.name)
+		)
+	if frappe.db.get_value("Warehouse", source_warehouse, "company") != mr.company:
+		frappe.throw(_("Warehouse {0} is not in Company {1}.").format(source_warehouse, mr.company))
+	entry = frappe.new_doc("Stock Entry")
+	entry.update(
+		{
+			"company": mr.company,
+			"stock_entry_type": "Material Transfer",
+			"purpose": "Material Transfer",
+			"from_warehouse": source_warehouse,
+			"remarks": _("Fulfils Koomyo purchase request lines of {0}.").format(mr.name),
+		}
+	)
+	for item in mr.items:
+		if not item.get("koomyo_line_id") or item.warehouse == source_warehouse:
+			continue
+		moved = frappe.db.sql(
+			"""select coalesce(sum(transfer_qty), 0) from `tabStock Entry Detail`
+			where material_request_item = %s and docstatus < 2""",
+			item.name,
+		)[0][0]
+		left = flt(item.stock_qty) - flt(item.ordered_qty) - flt(moved)
+		if left <= 0:
+			continue
+		entry.append(
+			"items",
+			{
+				"item_code": item.item_code,
+				"qty": left / (flt(item.conversion_factor) or 1),
+				"uom": item.uom,
+				"conversion_factor": item.conversion_factor,
+				"s_warehouse": source_warehouse,
+				"t_warehouse": item.warehouse,
+				"material_request": mr.name,
+				"material_request_item": item.name,
+			},
+		)
+	if not entry.items:
+		frappe.throw(_("Nothing of {0} is still needed from a warehouse.").format(mr.name))
+	entry.to_warehouse = entry.items[0].t_warehouse
+	entry.insert()
+	return entry.name

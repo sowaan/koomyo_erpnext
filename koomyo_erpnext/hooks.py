@@ -55,7 +55,7 @@ required_apps = ["erpnext"]
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Material Request": "public/js/koomyo_material_request.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -305,6 +305,7 @@ doc_events = {
 		"on_cancel": "koomyo_erpnext.sync.purchase_edits.on_purchase_receipt_cancel",
 	},
 	"Stock Entry": {
+		"before_submit": "koomyo_erpnext.sync.transfers_out.before_stock_entry_submit",
 		"on_submit": [
 			"koomyo_erpnext.sync.transfers_out.on_stock_entry_submit",
 			"koomyo_erpnext.sync.stock_out.on_stock_change_submit",

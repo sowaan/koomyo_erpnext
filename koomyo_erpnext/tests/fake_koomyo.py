@@ -944,6 +944,28 @@ class FakeKoomyo:
 			if line["ingredient_id"] not in self.ingredients:
 				return error_response(400, "invalid_parameter", "unknown ingredient")
 			merged[line["ingredient_id"]] = merged.get(line["ingredient_id"], Decimal(0)) + qty
+		counted = {}
+		for line in body["lines"]:
+			if not line.get("request_line_id"):
+				continue
+			if self.purchase_requests_off:
+				return error_response(403, "feature_not_available", "purchase requests are off")
+			card, request_line = self._request_line(line["request_line_id"])
+			if not request_line:
+				return error_response(400, "invalid_parameter", "no such request line")
+			if (request_line.get("ingredient") or {}).get("id") != line["ingredient_id"]:
+				return error_response(400, "invalid_parameter", "that request line is another ingredient")
+			if body["to"]["type"] != "branch" or body["to"]["id"] != card.get("branch_id"):
+				return error_response(
+					400, "invalid_parameter", "the transfer must go to the request's branch"
+				)
+			if request_line.get("status") not in ("approved", "ordered", "partly_received"):
+				return error_response(409, "request_line_not_orderable", "the line is not open")
+			asked = request_line.get("approved_quantity") or request_line.get("quantity")
+			needed = Decimal(str(asked)) - Decimal(str(request_line.get("ordered_quantity") or 0))
+			if Decimal(str(line["quantity"])) > needed:
+				return error_response(409, "request_quantity_exceeded", "the line needs less than that")
+			counted[line["request_line_id"]] = Decimal(str(line["quantity"]))
 		n = len(self.transfers) + 1
 		tid = f"tr-{n}"
 		draft = bool(body.get("draft"))
@@ -986,9 +1008,28 @@ class FakeKoomyo:
 			"external_refs": {ref["system"]: ref["external_id"]} if ref else {},
 			"updated_at": "2026-10-30T10:00:00Z",
 		}
+		for original in body["lines"]:
+			if original.get("request_line_id"):
+				for line in transfer["lines"]:
+					if line["ingredient_id"] == original["ingredient_id"]:
+						line["request_line_id"] = original["request_line_id"]
+		for request_line_id, qty in counted.items():
+			card, request_line = self._request_line(request_line_id)
+			ordered = Decimal(str(request_line.get("ordered_quantity") or 0)) + qty
+			request_line["ordered_quantity"] = str(ordered)
+			asked = Decimal(str(request_line.get("approved_quantity") or request_line.get("quantity")))
+			if ordered >= asked:
+				request_line["status"] = "ordered"
 		self.transfers[tid] = transfer
 		self.transfer_calls.append(("create", body))
 		return FakeResponse(201, transfer)
+
+	def _request_line(self, line_id):
+		for card in self.lists.get("/purchase-requests", []):
+			for request_line in card.get("lines") or []:
+				if request_line.get("id") == line_id:
+					return card, request_line
+		return None, None
 
 	def _transfer_action(self, tid, action, body):
 		from decimal import Decimal
@@ -1024,6 +1065,15 @@ class FakeKoomyo:
 				return error_response(409, "transfer_partially_received", "resolve the rest instead")
 			transfer["status"] = "cancelled"
 			transfer["cancel_reason"] = reason
+			for line in transfer["lines"]:
+				if line.get("request_line_id"):
+					_card, request_line = self._request_line(line["request_line_id"])
+					request_line["ordered_quantity"] = str(
+						max(
+							D(str(request_line.get("ordered_quantity") or 0)) - D(line["quantity_sent"]), D(0)
+						)
+					)
+					request_line["status"] = "approved"
 		elif action == "receive":
 			if transfer["status"] == "draft":
 				return error_response(409, "transfer_not_sent", "a draft cannot be received")
