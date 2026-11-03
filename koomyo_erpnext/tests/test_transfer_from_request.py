@@ -242,3 +242,13 @@ class TestPurchaseOrderAfterTransfer(TransferFromRequestCase):
 			self.assertEqual(D(str(make_purchase_order(self.mr.name).items[0].qty)), D(6))
 		finally:
 			frappe.db.set_value("Material Request", self.mr.name, "koomyo_id", REQUEST_ID)
+
+	def test_the_button_route_is_allowed(self):
+		"""ERPNext's button goes through frappe.model.mapper.make_mapped_doc, which refuses a method that is not whitelisted."""
+		from frappe.model.mapper import make_mapped_doc
+
+		self.make_entry_from_request(4)
+		doc = make_mapped_doc(
+			"erpnext.stock.doctype.material_request.material_request.make_purchase_order", self.mr.name
+		)
+		self.assertEqual([D(str(r.qty)) for r in doc.items], [D(2)])

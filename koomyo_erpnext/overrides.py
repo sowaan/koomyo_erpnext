@@ -12,6 +12,7 @@ from frappe import _
 from frappe.utils import flt
 
 
+@frappe.whitelist()
 def make_purchase_order(source_name, target_doc=None, args=None):
 	from erpnext.stock.doctype.material_request.material_request import make_purchase_order as original
 
