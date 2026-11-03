@@ -373,6 +373,12 @@ REFUSALS = {
 def explain_order_refusal(error, po):
 	"""A refusal creates nothing in Koomyo; say what to do (never retried by itself)."""
 	message = REFUSALS.get(error.code)
+	if message and "partly received" in (error.message or "").lower():
+		raise Fatal(
+			_(
+				"Koomyo will not take Purchase Order {0}: its purchase request is already partly received (for example by a transfer from a warehouse), and Koomyo does not take an order on such a request, even for lines that are still approved. Nothing was created in Koomyo. This is Koomyo's rule: the order stays in ERPNext only. Koomyo said: {1}"
+			).format(po.name, error.message)
+		)
 	if message:
 		raise Fatal(message.format(po.name) + " (" + error.message + ")")
 	if error.code == "invalid_parameter" and any(row.get("material_request_item") for row in po.items):
