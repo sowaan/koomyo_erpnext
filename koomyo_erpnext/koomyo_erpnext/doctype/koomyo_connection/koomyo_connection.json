@@ -79,6 +79,7 @@
   "section_purchasing",
   "sync_purchasing",
   "book_koomyo_purchases",
+  "keep_draft_orders",
   "sync_purchase_requests",
   "deliver_to",
   "mark_orders_ordered",
@@ -582,6 +583,14 @@
    "fieldname": "book_koomyo_purchases",
    "fieldtype": "Check",
    "label": "Book Orders Made in Koomyo"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.sync_purchasing && doc.book_koomyo_purchases",
+   "description": "A draft order made in Koomyo is kept here as a draft Purchase Order (it moves no stock and no accounts). When it is ordered in Koomyo the same document is submitted; when it is cancelled or deleted in Koomyo the draft is deleted. A draft cannot be submitted by hand. Off: drafts are skipped.",
+   "fieldname": "keep_draft_orders",
+   "fieldtype": "Check",
+   "label": "Keep Koomyo Draft Orders as Drafts"
   },
   {
    "depends_on": "eval:doc.sync_purchasing && doc.book_koomyo_purchases",

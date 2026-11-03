@@ -48,7 +48,7 @@ from koomyo_erpnext.sync.common import (
 	stamp,
 	to_field,
 )
-from koomyo_erpnext.sync.events import handles, read_only
+from koomyo_erpnext.sync.events import handles, read_only, warn
 
 SYNC_TYPE = "koomyo.purchase_sync"
 EVENT_TYPES = ("purchase.created", "purchase.updated", "purchase.cancelled", "purchase.received", SYNC_TYPE)
@@ -82,11 +82,7 @@ def apply_order(order: dict, connection, event_type: str = SYNC_TYPE):
 	if status == "cancelled":
 		return cancel_counterpart(po, order, connection)
 	if status == "draft":
-		raise Skipped(
-			_(
-				"Purchase order {0} is a draft: a plan, not a commitment. Nothing is created until it is ordered."
-			).format(order.get("number") or order["id"])
-		)
+		return keep_draft(po, order, connection)
 
 	if not po:
 		if not connection.book_koomyo_purchases:
@@ -106,6 +102,51 @@ def apply_order(order: dict, connection, event_type: str = SYNC_TYPE):
 		booked = book_delivery(po, order, receipt, connection)
 		last = booked or last
 	return ("Purchase Receipt", last) if last else ("Purchase Order", po.name)
+
+
+def keep_draft(po, order: dict, connection):
+	"""A Koomyo draft: a plan, not a commitment. Kept as a draft Purchase Order only when the connection says so."""
+	number = order.get("number") or order["id"]
+	if not (connection.get("keep_draft_orders") and connection.book_koomyo_purchases):
+		raise Skipped(
+			_(
+				"Purchase order {0} is a draft: a plan, not a commitment. Nothing is created until it is ordered."
+			).format(number)
+		)
+	if po is None:
+		return ("Purchase Order", create_order(connection, order, draft=True).name)
+	if origin(po, order, connection) != "koomyo":
+		raise Skipped(
+			_("Purchase Order {0} was made in ERPNext; Koomyo's draft changes nothing.").format(po.name)
+		)
+	if po.docstatus != 0:
+		raise Skipped(
+			_("Purchase Order {0} is already ordered here; Koomyo's draft copy is older.").format(po.name)
+		)
+	return ("Purchase Order", rebuild_draft(po, order, connection).name)
+
+
+def rebuild_draft(po, order: dict, connection):
+	"""Make a draft Purchase Order match Koomyo's copy, in place (same name, same Koomyo id)."""
+	if po.get("koomyo_content") == fingerprint(order):
+		note_seen(po, order)
+		return po
+	fresh = build_order(connection, order)
+	for field in ("supplier", "schedule_date", "set_warehouse", "currency"):
+		po.set(field, fresh.get(field))
+	po.set("items", [])
+	for row in fresh.items:
+		po.append("items", row.as_dict(no_default_fields=True))
+	po.set("taxes", [])
+	for row in fresh.taxes:
+		po.append("taxes", row.as_dict(no_default_fields=True))
+	po.save(ignore_permissions=True)
+	check_total(po, order)
+	po.db_set(
+		{"koomyo_updated_at": order.get("updated_at"), "koomyo_content": fingerprint(order)},
+		update_modified=False,
+	)
+	return po
 
 
 def existing_order(order: dict, connection):
@@ -322,9 +363,36 @@ def tax_rows(connection, order: dict, cost_center: str) -> list[dict]:
 	return rows
 
 
-def create_order(connection, order: dict):
-	"""A submitted Purchase Order (and its Supplier) for an order made in the Koomyo admin."""
+def create_order(connection, order: dict, draft: bool = False):
+	"""A Purchase Order (and its Supplier) for an order made in the Koomyo admin: submitted, or left a draft."""
 	from koomyo_erpnext.sync.customers import write_reference
+
+	po = build_order(connection, order)
+	po.insert(ignore_permissions=True)
+	check_total(po, order)
+	if not draft:
+		submit_order(po, order)
+		write_reference(connection, KoomyoClient.for_connection(connection), "purchase_order", order, po)
+	else:
+		po.db_set(
+			{"koomyo_updated_at": order.get("updated_at"), "koomyo_content": fingerprint(order)},
+			update_modified=False,
+		)
+		po.add_comment("Comment", DRAFT_NOTE)
+	return po
+
+
+def submit_order(po, order: dict):
+	po.flags.from_koomyo = True  # a hand-made submit of a Koomyo draft is refused (see before_submit)
+	po.submit()
+	po.db_set(
+		{"koomyo_updated_at": order.get("updated_at"), "koomyo_content": fingerprint(order)},
+		update_modified=False,
+	)
+
+
+def build_order(connection, order: dict):
+	"""The unsaved Purchase Order for Koomyo's order: supplier, rows (one per branch share) and tax rows."""
 	from koomyo_erpnext.sync.purchasing import koomyo_supplier
 	from koomyo_erpnext.sync.stock import ingredient_item
 
@@ -377,14 +445,6 @@ def create_order(connection, order: dict):
 	for row in tax_rows(connection, order, cost_center or ""):
 		row.pop("basis")
 		po.append("taxes", row)
-	po.insert(ignore_permissions=True)
-	check_total(po, order)
-	po.submit()
-	po.db_set(
-		{"koomyo_updated_at": order.get("updated_at"), "koomyo_content": fingerprint(order)},
-		update_modified=False,
-	)
-	write_reference(connection, client, "purchase_order", order, po)
 	return po
 
 
@@ -447,6 +507,14 @@ def refresh_order(po, order: dict, connection, event_type: str):
 	"""A Koomyo-made order that Koomyo changed: rebuild it, or copy the notes once goods have arrived."""
 	if po.docstatus == 2:
 		raise Skipped(_("Purchase Order {0} was cancelled in ERPNext; it is left as it is.").format(po.name))
+	if po.docstatus == 0:  # kept as a draft until it was ordered in Koomyo: now it is a real order
+		from koomyo_erpnext.sync.customers import write_reference
+
+		po = rebuild_draft(po, order, connection)
+		submit_order(po, order)
+		write_reference(connection, KoomyoClient.for_connection(connection), "purchase_order", order, po)
+		po.add_comment("Comment", _("Ordered in Koomyo: the draft is now a submitted order."))
+		return po
 	same = po.get("koomyo_content") == fingerprint(order)
 	if same:
 		note_seen(po, order)
@@ -479,6 +547,8 @@ def cancel_counterpart(po, order: dict, connection):
 		)
 	if po.docstatus == 2:
 		return ("Purchase Order", po.name)
+	if po.docstatus == 0 and po.get("koomyo_content"):
+		return delete_draft(po, _("cancelled in Koomyo"))
 	received = received_against(po)
 	if received:
 		raise Fatal(
@@ -490,6 +560,69 @@ def cancel_counterpart(po, order: dict, connection):
 	po.cancel()
 	po.add_comment("Comment", _("Cancelled in Koomyo. Reason: {0}").format(order.get("cancel_reason") or "-"))
 	return ("Purchase Order", po.name)
+
+
+def delete_draft(po, why: str):
+	"""A draft Koomyo no longer has is deleted here too (a draft moved nothing and has no history to keep)."""
+	name = po.name
+	frappe.delete_doc("Purchase Order", name, force=True, ignore_permissions=True)
+	warn(_("Draft Purchase Order {0} was deleted: the order was {1}.").format(name, why))
+	return None
+
+
+DRAFT_GONE = "koomyo.purchase_draft_gone"
+DRAFT_NOTE = "Draft in Koomyo (a plan): changes made here are overwritten until it is ordered there."
+
+
+@handles(DRAFT_GONE, switch="sync_purchasing", scopes=SCOPES)
+def on_draft_gone(event: dict, connection):
+	"""Koomyo no longer has a draft order we kept (GET answered 404): delete the draft here too."""
+	name = find_existing("Purchase Order", connection, event["data"]["id"])
+	if not name:
+		raise Skipped(_("The draft order is already gone."))
+	po = frappe.get_doc("Purchase Order", name)
+	if po.docstatus != 0 or not po.get("koomyo_content"):
+		raise Skipped(_("Purchase Order {0} is not a draft kept from Koomyo.").format(name))
+	return delete_draft(po, _("deleted in Koomyo"))
+
+
+def check_drafts_still_exist(connection, client, limit: int = 50) -> int:
+	"""Koomyo has no event for a deleted draft: ask for each draft we keep, and queue the ones it no longer has."""
+	from koomyo_erpnext.exceptions import KoomyoAPIError
+	from koomyo_erpnext.sync.events import store_event
+
+	if not (connection.get("keep_draft_orders") and connection.book_koomyo_purchases):
+		return 0
+	gone = 0
+	drafts = frappe.get_all(
+		"Purchase Order",
+		filters={
+			"koomyo_connection": connection.name,
+			"koomyo_id": ("is", "set"),
+			"koomyo_content": ("is", "set"),
+			"docstatus": 0,
+		},
+		pluck="koomyo_id",
+		limit=limit,
+	)
+	for koomyo_id in drafts:
+		try:
+			client.get(f"/purchase-orders/{koomyo_id}")
+		except KoomyoAPIError as e:
+			if e.status != 404:
+				raise
+			event = {
+				"id": f"po-draft-gone:{koomyo_id}",
+				"type": DRAFT_GONE,
+				"seq": 0,
+				"tenant_id": connection.tenant_id,
+				"created": frappe.utils.now_datetime().isoformat(),
+				"entity": {"type": "purchase_order", "id": koomyo_id},
+				"data": {"id": koomyo_id},
+			}
+			_name, created = store_event(connection, event, "Feed")
+			gone += 1 if created else 0
+	return gone
 
 
 # ------------------------------------------------------------------ deliveries
@@ -801,8 +934,12 @@ def sync_purchase_orders(connection_name: str, client: KoomyoClient | None = Non
 		summary["read"] += 1
 		if order.get("object") != "purchase_order" or not order.get("id") or not order.get("updated_at"):
 			continue
-		if order.get("status") == "draft" and not find_existing("Purchase Order", connection, order["id"]):
-			continue  # a plan: nothing to book, and nothing is created for a draft
+		if (
+			order.get("status") == "draft"
+			and not find_existing("Purchase Order", connection, order["id"])
+			and not (connection.get("keep_draft_orders") and connection.book_koomyo_purchases)
+		):
+			continue  # a plan: nothing to book, and nothing is created for a draft (unless drafts are kept)
 		event = {
 			"id": f"po-sync:{order['id']}:{order['updated_at']}",
 			"type": SYNC_TYPE,
@@ -820,6 +957,7 @@ def sync_purchase_orders(connection_name: str, client: KoomyoClient | None = Non
 			newest = order["updated_at"]
 	if newest and newest != connection.purchase_sync_cursor:
 		connection.db_set("purchase_sync_cursor", newest, update_modified=False)
+	summary["queued"] += check_drafts_still_exist(connection, client)
 	frappe.db.commit()
 	if summary["queued"]:
 		enqueue_processing(connection_name)

@@ -290,6 +290,7 @@ fixtures = [{"dt": "Custom Field", "filters": [["module", "=", "Koomyo Erpnext"]
 # ERPNext documents that are written to Koomyo (queued here, sent by the background processor).
 doc_events = {
 	"Purchase Order": {
+		"before_submit": "koomyo_erpnext.sync.purchasing.before_purchase_order_submit",
 		"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_order_submit",
 		"on_cancel": "koomyo_erpnext.sync.purchasing.on_purchase_order_cancel",
 		"on_update_after_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_order_update",

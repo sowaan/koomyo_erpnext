@@ -72,6 +72,19 @@ def on_purchase_order_submit(doc, method=None):
 		store_outbound(connection, "erpnext.purchase_order", doc)
 
 
+def before_purchase_order_submit(doc, method=None):
+	"""A draft kept from Koomyo becomes a real order only when it is ordered in Koomyo (then this app submits it)."""
+	if doc.get("koomyo_content") and doc.get("koomyo_id") and not doc.flags.get("from_koomyo"):
+		order = frappe.db.get_value(
+			"Purchase Order", doc.name, "koomyo_updated_at"
+		)  # kept so the message can say when it was last seen
+		frappe.throw(
+			_(
+				"{0} is a draft in Koomyo (last seen {1}). It becomes a real order when it is ordered in Koomyo: this app then submits it. Do not submit it by hand."
+			).format(doc.name, order or "-")
+		)
+
+
 def on_purchase_order_cancel(doc, method=None):
 	"""A Purchase Order sent to Koomyo was cancelled in ERPNext: Koomyo is told (POST .../cancel)."""
 	if not doc.get("koomyo_connection") or not doc.get("koomyo_id") or doc.get("koomyo_content"):

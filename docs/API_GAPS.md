@@ -287,3 +287,16 @@ Not verified: the real server (the fake plays the documented rules); the `level`
 - A replay changes nothing (the invoice exists, and each entry has its own id). Orders booked before this change are not revisited.
 
 For Koomyo: the shortfall goes to a write-off expense account and the extra to an income account, both chosen on each connection. Nothing more is needed from your side.
+
+## 35. Keeping Koomyo draft orders as drafts (Built, opt in)
+
+Connection switch **Keep Koomyo Draft Orders as Drafts** (under Book Orders Made in Koomyo, off by default; it needs that switch). A Koomyo draft (`status: draft`, "a plan, not a commitment") is then kept as a **draft Purchase Order** (docstatus 0): it moves no stock and posts no accounts, carries the Koomyo id, and has a comment saying it is a plan. Off, or without Book Orders Made in Koomyo, drafts are Skipped as before.
+
+- **Edited in Koomyo:** the same draft is rebuilt in place (same name) when the copy differs (the fingerprint of supplier, lines, shares, charges and tax). A second copy of the same version changes nothing.
+- **Ordered in Koomyo:** the same document is rebuilt if needed and submitted, and the reference is written back to Koomyo as for any order. Deliveries then book as usual.
+- **Cancelled in Koomyo (`purchase.cancelled`):** the draft is deleted here (it moved nothing and has no history to keep); the Event Log row says so.
+- **Deleted in Koomyo:** the API publishes no delete call for orders and no event for it (not in the OpenAPI file: unconfirmed whether Koomyo ever deletes a draft). So the five-minute `updated_since` safety net also asks `GET /purchase-orders/{id}` for each draft it keeps (at most 50 a run); a 404 queues the Event Log row `koomyo.purchase_draft_gone`, which deletes the draft. Any other error is not treated as gone.
+- **Guards:** a Koomyo draft cannot be submitted by hand in ERPNext (the order becomes real only when it is ordered in Koomyo and this app submits it). Nothing is ever sent to Koomyo for a draft. A draft made in ERPNext (no Koomyo content) is never touched.
+- Note: ERPNext's Purchase Order has no `remarks` field, so the old `remarks` text on orders made from Koomyo is not stored; the order's Koomyo number is in the linked records and Event Log.
+
+Not verified: the real server (the fake plays the documented rules); Koomyo's behaviour when a draft is deleted (assumed 404 on `GET /purchase-orders/{id}`).
