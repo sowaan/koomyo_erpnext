@@ -81,6 +81,7 @@
   "book_koomyo_purchases",
   "keep_draft_orders",
   "sync_purchase_requests",
+  "keep_draft_requests",
   "deliver_to",
   "mark_orders_ordered",
   "restate_costs_from_invoices",
@@ -950,6 +951,14 @@
    "fieldname": "sync_purchase_requests",
    "fieldtype": "Check",
    "label": "Sync Purchase Requests"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_purchase_requests",
+   "description": "A request with nothing approved yet is kept here as a draft Material Request with the quantities the branch asked for (it moves nothing). When purchasing approves lines the same document is rebuilt with the approved quantities and submitted; when the request is rejected, cancelled or deleted in Koomyo the draft is deleted. A draft cannot be submitted by hand. Off: such requests are skipped.",
+   "fieldname": "keep_draft_requests",
+   "fieldtype": "Check",
+   "label": "Keep Unapproved Koomyo Requests as Drafts"
   },
   {
    "default": "Koomyo Decides",

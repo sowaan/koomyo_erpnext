@@ -85,6 +85,16 @@ def before_purchase_order_submit(doc, method=None):
 		)
 
 
+def before_material_request_submit(doc, method=None):
+	"""A draft kept from a Koomyo request becomes real only when purchasing approves it in Koomyo."""
+	if doc.get("koomyo_content") and doc.get("koomyo_id") and not doc.flags.get("from_koomyo"):
+		frappe.throw(
+			_(
+				"{0} is a draft in Koomyo: nothing is approved there yet. It becomes a real request when purchasing approves it in Koomyo: this app then submits it. Do not submit it by hand."
+			).format(doc.name)
+		)
+
+
 def on_purchase_order_cancel(doc, method=None):
 	"""A Purchase Order sent to Koomyo was cancelled in ERPNext: Koomyo is told (POST .../cancel)."""
 	if not doc.get("koomyo_connection") or not doc.get("koomyo_id") or doc.get("koomyo_content"):

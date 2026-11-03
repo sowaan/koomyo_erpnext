@@ -75,9 +75,14 @@ def apply_request(card: dict, connection) -> tuple[str, str]:
 		return close_request(mr, card, connection)
 
 	wanted = included_lines(card)
+	keep_drafts = bool(connection.get("keep_draft_requests"))
+	if mr and mr.docstatus == 0 and mr.get("koomyo_content"):
+		return advance_draft(mr, card, connection, wanted, keep_drafts)
 	if not wanted:
 		if mr and mr.docstatus == 1:
 			return rebuild_or_flag(mr, card, connection, wanted)
+		if keep_drafts and not mr and draft_lines(card):
+			return ("Material Request", create_request(card, connection, draft_lines(card), draft=True).name)
 		raise Skipped(
 			_(
 				"Purchase request {0} has nothing approved yet: ERPNext is told when purchasing approves lines."
@@ -155,8 +160,44 @@ def fingerprint(card: dict, wanted: list[dict]) -> str:
 	return hashlib.sha1(json.dumps(material, sort_keys=True).encode()).hexdigest()
 
 
-def create_request(card: dict, connection, wanted: list[dict]):
+def create_request(card: dict, connection, wanted: list[dict], draft: bool = False):
+	"""A Material Request: submitted (purchasing approved the lines), or kept as a draft (nothing approved yet)."""
 	from koomyo_erpnext.sync.customers import write_reference
+
+	mr = build_request(card, connection, wanted, draft)
+	mr.insert(ignore_permissions=True)
+	mr.add_comment("Comment", request_text(card))
+	if draft:
+		mr.add_comment("Comment", DRAFT_NOTE)
+		mr.db_set(
+			{"koomyo_updated_at": card.get("updated_at"), "koomyo_content": draft_fingerprint(card, wanted)},
+			update_modified=False,
+		)
+		return mr
+	submit_request(mr, card, wanted)
+	write_reference(connection, KoomyoClient.for_connection(connection), "purchase_request", card, mr)
+	return mr
+
+
+def submit_request(mr, card: dict, wanted: list[dict]):
+	mr.flags.from_koomyo = True  # a hand-made submit of a Koomyo draft is refused (see before_submit)
+	mr.submit()
+	mr.db_set(
+		{"koomyo_updated_at": card.get("updated_at"), "koomyo_content": fingerprint(card, wanted)},
+		update_modified=False,
+	)
+
+
+def request_text(card: dict) -> str:
+	text = _("Koomyo purchase request {0} of {1}.").format(
+		card.get("number") or card["id"], escape_html(card.get("branch_name") or "")
+	)
+	if card.get("notes"):
+		text += " " + escape_html(card["notes"])[:400]
+	return text
+
+
+def build_request(card: dict, connection, wanted: list[dict], draft: bool = False):
 	from koomyo_erpnext.sync.stock import ingredient_item
 
 	branch = branch_row(connection, card.get("branch_id"))
@@ -177,11 +218,6 @@ def create_request(card: dict, connection, wanted: list[dict]):
 			"set_warehouse": branch.warehouse,
 		}
 	)
-	text = _("Koomyo purchase request {0} of {1}.").format(
-		card.get("number") or card["id"], escape_html(card.get("branch_name") or "")
-	)
-	if card.get("notes"):
-		text += " " + escape_html(card["notes"])[:400]
 	stamp(mr, connection, card["id"], card.get("branch_id"))
 	for w in wanted:
 		line = w["line"]
@@ -206,15 +242,127 @@ def create_request(card: dict, connection, wanted: list[dict]):
 		if line.get("note"):
 			row["description"] = escape_html(line["note"])[:300]
 		mr.append("items", row)
-	mr.insert(ignore_permissions=True)
-	mr.add_comment("Comment", text)
-	mr.submit()
-	mr.db_set(
-		{"koomyo_updated_at": card.get("updated_at"), "koomyo_content": fingerprint(card, wanted)},
-		update_modified=False,
-	)
-	write_reference(connection, client, "purchase_request", card, mr)
 	return mr
+
+
+DRAFT_NOTE = (
+	"Draft in Koomyo: nothing is approved yet and the quantities are what the branch asked for. "
+	"It is rebuilt with the approved quantities and submitted when purchasing approves; changes made here are overwritten."
+)
+DRAFT_GONE = "koomyo.purchase_request_draft_gone"
+
+
+def draft_lines(card: dict) -> list[dict]:
+	"""Lines of a request nothing is approved on: what the branch asked for, except lines already rejected or cancelled."""
+	lines = []
+	for line in card.get("lines") or []:
+		if line.get("status") in ("rejected", "cancelled") or line.get("quantity") is None:
+			continue
+		qty = money(line["quantity"], "quantity")
+		if qty > 0:
+			lines.append({"line": line, "qty": qty})
+	return lines
+
+
+def draft_fingerprint(card: dict, wanted: list[dict]) -> str:
+	return "draft:" + fingerprint(card, wanted)
+
+
+def advance_draft(mr, card: dict, connection, wanted: list[dict], keep_drafts: bool):
+	"""A draft Material Request follows its Koomyo request: approved lines submit it, otherwise it tracks the asked lines."""
+	from koomyo_erpnext.sync.customers import write_reference
+
+	if wanted:  # purchasing approved: the draft becomes the real, submitted Material Request
+		rebuild_draft(mr, card, connection, wanted, fingerprint(card, wanted))
+		submit_request(mr, card, wanted)
+		write_reference(connection, KoomyoClient.for_connection(connection), "purchase_request", card, mr)
+		mr.add_comment("Comment", _("Approved in Koomyo: the draft is now a submitted Material Request."))
+		return ("Material Request", mr.name)
+	lines = draft_lines(card)
+	if not lines:
+		return delete_draft(mr, _("left with no lines in Koomyo"))
+	if not keep_drafts:
+		raise Skipped(
+			_("Material Request {0} is a draft kept from Koomyo; drafts are no longer kept.").format(mr.name)
+		)
+	rebuild_draft(mr, card, connection, lines, draft_fingerprint(card, lines))
+	return ("Material Request", mr.name)
+
+
+def rebuild_draft(mr, card: dict, connection, lines: list[dict], content: str):
+	"""Make the draft Material Request match Koomyo's lines, in place (same name, same Koomyo id)."""
+	if mr.get("koomyo_content") == content:
+		note_seen(mr, card)
+		return mr
+	fresh = build_request(card, connection, lines)
+	for field in ("transaction_date", "schedule_date", "set_warehouse"):
+		mr.set(field, fresh.get(field))
+	mr.set("items", [])
+	for row in fresh.items:
+		mr.append("items", row.as_dict(no_default_fields=True))
+	mr.save(ignore_permissions=True)
+	mr.db_set({"koomyo_updated_at": card.get("updated_at"), "koomyo_content": content}, update_modified=False)
+	return mr
+
+
+def delete_draft(mr, why: str):
+	"""A draft Koomyo no longer has is deleted here too (a draft moved nothing and has no history to keep)."""
+	from koomyo_erpnext.sync.events import warn
+
+	name = mr.name
+	frappe.delete_doc("Material Request", name, force=True, ignore_permissions=True)
+	warn(_("Draft Material Request {0} was deleted: the request was {1}.").format(name, why))
+	return None
+
+
+@handles(DRAFT_GONE, switch="sync_purchase_requests", scopes=SCOPES)
+def on_draft_gone(event: dict, connection):
+	"""Koomyo no longer has a request whose draft we keep (GET answered 404): delete the draft here too."""
+	name = find_existing("Material Request", connection, event["data"]["id"])
+	if not name:
+		raise Skipped(_("The draft request is already gone."))
+	mr = frappe.get_doc("Material Request", name)
+	if mr.docstatus != 0 or not mr.get("koomyo_content"):
+		raise Skipped(_("Material Request {0} is not a draft kept from Koomyo.").format(name))
+	return delete_draft(mr, _("deleted in Koomyo"))
+
+
+def check_drafts_still_exist(connection, client, limit: int = 50) -> int:
+	"""Koomyo has no event for a deleted request: ask for each draft we keep, and queue the ones it no longer has."""
+	from koomyo_erpnext.exceptions import KoomyoAPIError
+	from koomyo_erpnext.sync.events import store_event
+
+	if not connection.get("keep_draft_requests"):
+		return 0
+	gone = 0
+	for koomyo_id in frappe.get_all(
+		"Material Request",
+		filters={
+			"koomyo_connection": connection.name,
+			"koomyo_id": ("is", "set"),
+			"koomyo_content": ("is", "set"),
+			"docstatus": 0,
+		},
+		pluck="koomyo_id",
+		limit=limit,
+	):
+		try:
+			client.get(f"/purchase-requests/{koomyo_id}")
+		except KoomyoAPIError as e:
+			if e.status != 404:
+				raise
+			event = {
+				"id": f"pr-draft-gone:{koomyo_id}",
+				"type": DRAFT_GONE,
+				"seq": 0,
+				"tenant_id": connection.tenant_id,
+				"created": frappe.utils.now_datetime().isoformat(),
+				"entity": {"type": "purchase_request", "id": koomyo_id},
+				"data": {"id": koomyo_id},
+			}
+			_name, created = store_event(connection, event, "Feed")
+			gone += 1 if created else 0
+	return gone
 
 
 def documents_against(mr) -> list[str]:
@@ -268,6 +416,8 @@ def close_request(mr, card: dict, connection):
 		)
 	if mr.docstatus == 2:
 		return ("Material Request", mr.name)
+	if mr.docstatus == 0 and mr.get("koomyo_content"):
+		return delete_draft(mr, _("{0} in Koomyo").format(card.get("status")))
 	against = documents_against(mr)
 	if against:
 		raise Fatal(
@@ -345,6 +495,7 @@ def sync_purchase_requests(connection_name: str, client: KoomyoClient | None = N
 		raise
 	if newest and newest != connection.purchase_request_cursor:
 		connection.db_set("purchase_request_cursor", newest, update_modified=False)
+	summary["queued"] += check_drafts_still_exist(connection, client)
 	frappe.db.commit()
 	if summary["queued"]:
 		enqueue_processing(connection_name)

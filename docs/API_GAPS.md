@@ -300,3 +300,15 @@ Connection switch **Keep Koomyo Draft Orders as Drafts** (under Book Orders Made
 - Note: ERPNext's Purchase Order has no `remarks` field, so the old `remarks` text on orders made from Koomyo is not stored; the order's Koomyo number is in the linked records and Event Log.
 
 Not verified: the real server (the fake plays the documented rules); Koomyo's behaviour when a draft is deleted (assumed 404 on `GET /purchase-orders/{id}`).
+
+## 36. Keeping unapproved purchase requests as drafts (Built, opt in)
+
+Connection switch **Keep Unapproved Koomyo Requests as Drafts** (under Sync Purchase Requests, off by default). A request with nothing approved yet (`submitted`, `awaiting_branch_approval`, or approved with no approved line) is then kept as a **draft Material Request** (docstatus 0, type Purchase), with the quantities the branch **asked** for (`quantity`, lines not rejected or cancelled), each row carrying its Koomyo line id, and a comment saying nothing is approved. It moves nothing and no reference is written back to Koomyo for it. Off, drafts are Skipped as before.
+
+- **Edited in Koomyo:** the same draft is rebuilt in place (same name) when the asked lines change.
+- **Approved:** the same document is rebuilt with the **approved** quantities and submitted (as for any approved request), and the reference is written back. Once submitted it follows the existing rules (rebuilt only while nothing was ordered from it).
+- **Rejected or cancelled:** the draft is deleted (the row says so). A submitted Material Request is cancelled as before.
+- **Deleted in Koomyo:** no event exists for it, so the five-minute safety net asks `GET /purchase-requests/{id}` for each draft it keeps (50 a run); a 404 queues `koomyo.purchase_request_draft_gone`, which deletes the draft. Other errors are not treated as gone.
+- **Guard:** a Koomyo draft cannot be submitted by hand (its quantities are not approved: it could be ordered by mistake); the app submits it when purchasing approves.
+
+Not verified: the real server (the fake plays the documented rules); Koomyo's answer for a deleted request (assumed 404).
