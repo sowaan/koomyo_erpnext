@@ -178,3 +178,67 @@ class TestFromRequest(TransferFromRequestCase):
 		frappe.db.commit()
 		self.run_queue()
 		self.assertEqual(D(self.request_line()["ordered_quantity"]), D(0))
+
+
+class TestPurchaseOrderAfterTransfer(TransferFromRequestCase):
+	"""ERPNext's Create > Purchase Order must not order what a transfer already covers."""
+
+	def po_rows(self):
+		from koomyo_erpnext.overrides import make_purchase_order
+
+		return make_purchase_order(self.mr.name).items
+
+	def test_a_row_the_transfer_covers_in_full_is_left_off_and_a_part_is_taken_off(self):
+		self.make_entry_from_request(4)
+		(row,) = self.po_rows()
+		self.assertEqual(D(str(row.qty)), D(2))  # 6 approved, 4 by transfer
+
+	def test_a_row_that_is_all_transferred_is_dropped(self):
+		from koomyo_erpnext.tests.test_purchase_requests import CHEESE, FLOUR, line
+
+		# two lines: mozzarella 6 (transferred in full) and flour 3
+		self.fake_a.add_ingredient(FLOUR["id"], "Flour", "kg", "90.0000")
+		card = make_request(
+			"approved",
+			"2026-10-26T11:00:00Z",
+			lines=[
+				line(LINE_1, CHEESE, "6.000", "6.000"),
+				line("5d7a1c62-0b1e-4f0e-9d33-2f6f5a4b8e02", FLOUR, "3.000", "3.000"),
+			],
+		)
+		self.fake_a.lists["/purchase-requests"] = [copy.deepcopy(card)]
+		self.seq += 1
+		self.book(request_event(card, "purchase_request.updated", self.seq))
+		name = frappe.db.get_value(
+			"Material Request",
+			{"koomyo_connection": self.conn_a.name, "koomyo_id": REQUEST_ID, "docstatus": 1},
+		)
+		self.mr = frappe.get_doc("Material Request", name)
+		self.assertEqual(len(self.mr.items), 2)
+		entry_name = api.make_transfer_from_request(self.mr.name, CENTRAL)
+		entry = frappe.get_doc("Stock Entry", entry_name)
+		entry.items = [r for r in entry.items if r.item_code == self.mr.items[0].item_code]
+		entry.save()
+		entry.submit()
+		frappe.db.commit()
+		rows = self.po_rows()
+		self.assertEqual([r.item_code for r in rows], [self.mr.items[1].item_code])
+		self.assertEqual([r.idx for r in rows], [1])
+
+	def test_when_everything_is_covered_it_says_so(self):
+		self.make_entry_from_request()  # all 6
+		with self.assertRaises(frappe.ValidationError) as caught:
+			self.po_rows()
+		self.assertIn("already covered by transfers", str(caught.exception))
+
+	def test_a_material_request_not_from_koomyo_is_untouched(self):
+		from koomyo_erpnext.overrides import take_off_transfers
+
+		self.assertTrue(callable(take_off_transfers))
+		frappe.db.set_value("Material Request", self.mr.name, "koomyo_id", None)
+		try:
+			from koomyo_erpnext.overrides import make_purchase_order
+
+			self.assertEqual(D(str(make_purchase_order(self.mr.name).items[0].qty)), D(6))
+		finally:
+			frappe.db.set_value("Material Request", self.mr.name, "koomyo_id", REQUEST_ID)

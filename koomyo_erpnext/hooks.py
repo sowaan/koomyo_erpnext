@@ -332,3 +332,8 @@ doc_events = {
 
 # A nudge to the setup wizard while the site has no Koomyo connection.
 app_include_js = "/assets/koomyo_erpnext/js/koomyo_setup_banner.js"
+
+# ERPNext's "Create > Purchase Order" on a Material Request must not order what a transfer already covers.
+override_whitelisted_methods = {
+	"erpnext.stock.doctype.material_request.material_request.make_purchase_order": "koomyo_erpnext.overrides.make_purchase_order"
+}
