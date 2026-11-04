@@ -443,27 +443,66 @@ def build_order(connection, order: dict):
 		item_code = ingredient_item(connection, line, client=client)
 		rate = to_field(entry["net"] / entry["qty"], 6)
 		shares = [a for a in line.get("allocations") or [] if money(a.get("quantity") or "0", "quantity") > 0]
+		quantities = [money(s["quantity"], "quantity") for s in shares] or [entry["qty"]]
+		unit = exact_unit(item_code, entry["net"], entry["qty"], quantities)
 		# A line with branch shares is one row per share, each for its place: the branch's Warehouse, or the
 		# warehouse the goods go to first.
 		for share in shares or [None]:
-			po.append(
-				"items",
-				{
-					"item_code": item_code,
-					"qty": to_field(money(share["quantity"], "quantity"), 6)
-					if share
-					else to_field(entry["qty"], 6),
-					"rate": rate,
-					"warehouse": share_warehouse(connection, share) if share else warehouse,
-					"schedule_date": order.get("expected_date") or date,
-				},
-			)
+			stock_qty = money(share["quantity"], "quantity") if share else entry["qty"]
+			row = {
+				"item_code": item_code,
+				"qty": to_field(stock_qty, 6),
+				"rate": rate,
+				"warehouse": share_warehouse(connection, share) if share else warehouse,
+				"schedule_date": order.get("expected_date") or date,
+			}
+			if unit:
+				row.update(
+					{
+						"uom": unit["uom"],
+						"conversion_factor": unit["factor"],
+						"qty": to_field(stock_qty / Decimal(str(unit["factor"])), 6),
+						"rate": unit["rate"],
+					}
+				)
+			po.append("items", row)
 	if not po.items:
 		raise Skipped(_("Purchase order {0} has no lines.").format(order["id"]))
 	for row in tax_rows(connection, order, cost_center or ""):
 		row.pop("basis")
 		po.append("taxes", row)
 	return po
+
+
+def exact_unit(item_code: str, net: Decimal, qty: Decimal, quantities: list[Decimal]) -> dict | None:
+	"""A UOM of the Item that holds the line's price exactly, when the price per piece cannot be held.
+
+	ERPNext keeps a rate to the currency's precision (two places): 250000.00 for 110000 pieces is 2.272727... a
+	piece, which becomes 2.27 and a total of 249700.00. If the Item has a larger UOM (a pack of 1100) in which the
+	whole line is a clean quantity at a clean price (100 packs at 2500.00), the row is made in that UOM instead:
+	the stock quantity is the same and the total is exact. None when the piece price is already exact or no UOM fits.
+	"""
+	precision = frappe.get_precision("Purchase Order Item", "rate") or 2
+	cent = Decimal(1).scaleb(-2)
+	if (Decimal(str(flt(net / qty, precision))) * qty).quantize(cent) == net.quantize(cent):
+		return None
+	stock_uom, purchase_uom = frappe.db.get_value("Item", item_code, ["stock_uom", "purchase_uom"])
+	units = frappe.get_all(
+		"UOM Conversion Detail", filters={"parent": item_code}, fields=["uom", "conversion_factor"]
+	)
+	for unit in sorted(units, key=lambda u: (u.uom != purchase_uom, -flt(u.conversion_factor))):
+		factor = Decimal(str(flt(unit.conversion_factor, 9)))
+		if unit.uom == stock_uom or factor <= 1:
+			continue
+		if any(
+			abs(q / factor - (q / factor).quantize(Decimal("0.001"))) > Decimal("1e-9") for q in quantities
+		):
+			continue
+		total = qty / factor
+		pack_rate = Decimal(str(flt(net / total, precision)))
+		if (pack_rate * total).quantize(cent) == net.quantize(cent):
+			return {"uom": unit.uom, "factor": float(factor), "rate": float(pack_rate)}
+	return None
 
 
 def share_warehouse(connection, share: dict) -> str:
@@ -496,11 +535,18 @@ def check_total(po, order: dict):
 	got = Decimal(str(flt(po.grand_total, 2))).quantize(CENT)
 	tolerance = CENT * (len(po.items) + len(po.taxes))
 	if abs(got - wanted) > tolerance:
-		raise Fatal(
-			_(
-				"Purchase order {0}: ERPNext computed {1} but Koomyo's total is {2}. Nothing was booked."
-			).format(order.get("number") or order["id"], got, wanted)
-		)
+		message = _(
+			"Purchase order {0}: ERPNext computed {1} but Koomyo's total is {2}. Nothing was booked."
+		).format(order.get("number") or order["id"], got, wanted)
+		precision = frappe.get_precision("Purchase Order Item", "rate") or 2
+		if any(
+			len(str(line.get("unit_cost") or "").partition(".")[2].rstrip("0")) > precision
+			for line in order.get("lines") or []
+		):
+			message += " " + _(
+				"ERPNext keeps a price to {0} decimals and a price per piece in this order has more. Give the Item a larger UOM (a pack) in which the line is a whole quantity at an exact price, or raise the Currency Precision in System Settings, then press Retry."
+			).format(precision)
+		raise Fatal(message)
 	if got != wanted:
 		po.remarks = (
 			(po.remarks or "")
@@ -723,7 +769,7 @@ def book_delivery(po, order: dict, receipt: dict, connection) -> str | None:
 		)
 		quantities[ingredient_id] = left - stock_qty
 		item.qty = item.received_qty = to_field(stock_qty / factor, 6)
-		delivered_value += stock_qty * Decimal(str(item.rate))
+		delivered_value += stock_qty * Decimal(str(item.rate)) / factor
 	if not pr.items:
 		raise Skipped(_("Nothing was received on purchase order {0}.").format(order["id"]))
 	pr.posting_date = local_date(receipt.get("received_at"), connection.koomyo_timezone) or posting_date(

@@ -167,3 +167,86 @@ class TestPricePerPiece(PurchasingTestCase):
 		self.run_queue()
 		(call,) = self.created("/purchase-orders")
 		self.assertEqual(call["body"]["lines"][0]["unit_cost"], "1450")
+
+
+class TestKoomyoOrderInPieces(PurchasingTestCase):
+	"""A Koomyo order of 110000 pieces at 2.27272727 (250000.00): ERPNext holds a rate to two places only."""
+
+	def setUp(self):
+		super().setUp()
+		self.conn_a.reload()
+		self.conn_a.update(
+			{
+				"book_koomyo_purchases": 1,
+				"main_warehouse": "Stores - _KTA",
+				"supplier_group": "_Koomyo Suppliers",
+			}
+		)
+		self.conn_a.save()
+
+	def order(self, status="ordered", **changes):
+		from koomyo_erpnext.tests.test_purchase_orders import make_order
+
+		order = make_order(status, **changes)
+		order["lines"][0].update(
+			{
+				"quantity_ordered": "110000.000",
+				"unit_cost": "2.27272727",
+				"line_total": "250000.00",
+				"ordered_value": "250000.00",
+			}
+		)
+		order.update({"total_ordered": "250000.00", "items_without_tax": "250000.00"})
+		return order
+
+	def send(self, order, event_type="purchase.created"):
+		from koomyo_erpnext.tests.test_purchase_orders import event_for
+
+		return self.book(event_for(order, event_type, 980))
+
+	def po(self):
+		name = frappe.db.get_value("Purchase Order", {"koomyo_connection": self.conn_a.name})
+		return frappe.get_doc("Purchase Order", name) if name else None
+
+	def test_an_item_with_a_pack_gets_the_row_in_packs_at_an_exact_price(self):
+		item = frappe.get_doc("Item", self.cheese)
+		item.append("uoms", {"uom": "Box", "conversion_factor": 1100})
+		item.save()
+		log = self.send(self.order())
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		po = self.po()
+		(row,) = po.items
+		self.assertEqual((row.uom, row.conversion_factor, row.qty, row.rate), ("Box", 1100, 100, 2500))
+		self.assertEqual((row.stock_qty, po.grand_total), (110000, 250000))
+
+	def test_the_delivery_is_booked_in_packs_at_the_right_value(self):
+		from koomyo_erpnext.tests.test_purchase_orders import receipt
+
+		item = frappe.get_doc("Item", self.cheese)
+		item.append("uoms", {"uom": "Box", "conversion_factor": 1100})
+		item.save()
+		order = self.order("received", receipts=[receipt("rcpt-1", "110000.000")], fully_received=True)
+		order["lines"][0]["quantity_received"] = "110000.000"
+		log = self.send(order, "purchase.received")
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		pr = frappe.get_doc(
+			"Purchase Receipt", frappe.db.get_value("Purchase Receipt", {"koomyo_id": "rcpt-1"})
+		)
+		(row,) = pr.items
+		self.assertEqual((row.qty, row.stock_qty, row.uom), (100, 110000, "Box"))
+		self.assertEqual(pr.grand_total, 250000)
+
+	def test_an_item_without_a_fitting_unit_stops_with_what_to_do(self):
+		log = self.send(self.order())
+		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
+		self.assertIn("ERPNext computed 249700.00 but Koomyo's total is 250000.00", log.message)
+		self.assertIn("larger UOM", log.message)
+		self.assertIsNone(self.po())
+
+	def test_a_price_that_is_exact_in_pieces_is_unchanged(self):
+		from koomyo_erpnext.tests.test_purchase_orders import make_order
+
+		log = self.send(make_order("ordered"))
+		self.assertEqual(log.status, "Done")
+		(row,) = self.po().items
+		self.assertEqual((row.uom, row.qty, row.rate), (row.stock_uom, 10, 1450))
