@@ -77,14 +77,29 @@ class TestSplitOrder(SplitCase):
 		self.assertEqual((line["ingredient_id"], line["quantity_ordered"]), (MOZZARELLA, "120"))
 		self.assertEqual(
 			sorted(
-				(a["destination_type"], a["destination_id"], a["quantity"], a["branch_id"])
+				(a["destination_type"], a["destination_id"], a["quantity"], a.get("branch_id"))
 				for a in line["allocations"]
 			),
-			sorted([("warehouse", CENTRAL_WAREHOUSE, "50", BRANCH), ("branch", BRANCH, "70", BRANCH)]),
-			"every share names the branch it is for",
+			sorted([("warehouse", CENTRAL_WAREHOUSE, "50", None), ("branch", BRANCH, "70", BRANCH)]),
+			"a branch share names its branch; a share at a central warehouse names none",
 		)
 		self.assertTrue(all("request_line_id" not in a for a in line["allocations"]))
 		self.assertNotIn("branch_id", body, "the order follows its shares")
+
+	def test_the_order_answer_has_no_branch_on_the_warehouse_share_and_reading_it_back_is_fine(self):
+		self.make_split_po()
+		self.run_queue()
+		shares = self.fake_a.purchase_orders["po-1"]["lines"][0]["allocations"]
+		self.assertEqual(
+			{a["destination_type"]: a["branch_id"] for a in shares}, {"warehouse": None, "branch": BRANCH}
+		)
+		po = frappe.get_all("Purchase Order", filters={"koomyo_id": "po-1"}, pluck="name")
+		self.assertTrue(po, "the order was linked")
+		from koomyo_erpnext.tests.test_purchase_orders import event_for, make_order
+
+		order = make_order("ordered", id="po-1", external_refs={"erpnext": po[0]})
+		order["lines"][0]["allocations"] = shares
+		self.assertEqual(self.book(event_for(order, "purchase.updated", 990)).status, "Done")
 
 	def test_a_single_warehouse_order_has_no_shares_as_before(self):
 		self.make_po()
@@ -129,43 +144,6 @@ class TestSplitOrder(SplitCase):
 		self.assertEqual(log.error_class, "NeedsMapping")
 		self.assertIn("Work In Progress - _KTA", log.message)
 		self.assertEqual(self.created("/purchase-orders"), [])
-
-
-class TestWarehouseShareBranch(SplitCase):
-	def test_without_the_setting_the_share_is_sent_without_a_branch_and_koomyos_answer_is_shown(self):
-		self.conn_a.reload()
-		self.conn_a.warehouse_share_branch = None
-		self.conn_a.save()
-		self.make_split_po()
-		self.run_queue()
-		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
-		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
-		self.assertIn("every allocation needs a branch_id", log.message)  # Koomyo's own words
-		(call,) = [w for w in self.fake_a.writes if w["path"] == "/purchase-orders"]
-		shares = call["body"]["lines"][0]["allocations"]
-		self.assertEqual(
-			{a["destination_type"]: a.get("branch_id") for a in shares}, {"warehouse": None, "branch": BRANCH}
-		)
-		self.assertEqual(self.fake_a.purchase_orders, {}, "nothing was created")
-
-	def test_the_setting_must_be_a_branch_not_a_central_warehouse(self):
-		self.conn_a.reload()
-		self.conn_a.warehouse_share_branch = CENTRAL
-		self.conn_a.save()
-		self.make_split_po()
-		self.run_queue()
-		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
-		self.assertEqual(log.error_class, "NeedsMapping")
-		self.assertIn("not a branch", log.message)
-
-	def test_a_single_branch_order_needs_no_setting(self):
-		self.conn_a.reload()
-		self.conn_a.warehouse_share_branch = None
-		self.conn_a.save()
-		self.make_po(warehouse=STORES, qty=10)
-		self.run_queue()
-		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
-		self.assertEqual(log.status, "Done")
 
 
 class TestReceiptAtAnotherPlace(SplitCase):
@@ -263,6 +241,6 @@ class TestSplitByEdit(SplitCase):
 		line = patches[-1]["lines"][0]
 		self.assertEqual(line["quantity_ordered"], "120")
 		self.assertEqual(
-			sorted((a["destination_id"], a["quantity"], a["branch_id"]) for a in line["allocations"]),
-			sorted([(CENTRAL_WAREHOUSE, "50", BRANCH), (BRANCH, "70", BRANCH)]),
+			sorted((a["destination_id"], a["quantity"], a.get("branch_id")) for a in line["allocations"]),
+			sorted([(CENTRAL_WAREHOUSE, "50", None), (BRANCH, "70", BRANCH)]),
 		)

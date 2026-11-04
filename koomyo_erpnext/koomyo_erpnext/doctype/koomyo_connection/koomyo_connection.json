@@ -87,7 +87,6 @@
   "restate_costs_from_invoices",
   "section_purchasing_settings",
   "main_warehouse",
-  "warehouse_share_branch",
   "cb_purchasing",
   "supplier_group",
   "section_purchase_taxes",
@@ -606,14 +605,6 @@
    "fieldtype": "Link",
    "label": "Main Warehouse",
    "mandatory_depends_on": "book_koomyo_purchases",
-   "options": "Warehouse"
-  },
-  {
-   "depends_on": "sync_purchasing",
-   "description": "Optional. A share of an order line that goes to a central warehouse is sent without a branch, because ERPNext warehouses have none. If Koomyo refuses that and you want such shares sent for one branch, pick the Warehouse of that branch from the Branch Map. Leave empty otherwise.",
-   "fieldname": "warehouse_share_branch",
-   "fieldtype": "Link",
-   "label": "Branch For Warehouse Shares (its Warehouse)",
    "options": "Warehouse"
   },
   {

@@ -518,7 +518,7 @@ class FakeKoomyo:
 					)
 			for number, share in enumerate(shares):
 				if not share.get("request_line_id"):  # a share by warehouse: no request line
-					if not share.get("branch_id"):
+					if share.get("destination_type") != "warehouse" and not share.get("branch_id"):
 						return error_response(
 							400,
 							"invalid_parameter",
@@ -530,6 +530,7 @@ class FakeKoomyo:
 						{
 							"id": f"alloc-{index}-{number}",
 							"branch_id": share.get("branch_id"),
+							"branch_name": None,
 							"quantity": share["quantity"],
 							"destination_type": share["destination_type"],
 							"destination_id": share["destination_id"],

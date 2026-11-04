@@ -566,38 +566,15 @@ SPLIT = "split"  # a share that fills no request line: a row of an order split o
 
 
 def share_entry(request_line: str, kind: str, place_id: str, qty: Decimal, connection=None) -> dict:
-	"""One share of an order line. Koomyo wants the branch each share is for: a request line knows its own, any
-	other share names it (a branch share is for its own branch; a share at a central warehouse is for the
-	connection's Branch For Warehouse Shares)."""
+	"""One share of an order line. A share that fills a request line needs nothing more (the line knows its branch); a
+	branch share is for its own branch (`branch_id`); a share at a central warehouse names no branch: Koomyo takes it
+	as "for the whole restaurant", received at that warehouse until a transfer moves it."""
 	entry = {"quantity": text(qty), "destination_type": kind, "destination_id": place_id}
 	if request_line != SPLIT:
 		entry["request_line_id"] = request_line
 	elif kind == "branch":
 		entry["branch_id"] = place_id
-	else:
-		branch = warehouse_share_branch(connection)
-		if branch:
-			entry["branch_id"] = branch
 	return entry
-
-
-def warehouse_share_branch(connection) -> str | None:
-	"""The branch a central-warehouse share is for, only if the connection names one (optional).
-
-	ERPNext warehouses have no branch. Without the setting the share is sent without `branch_id` and Koomyo
-	answers: if it refuses, its own message is shown (nothing is guessed, and no rule of Koomyo's is copied here).
-	"""
-	warehouse = connection.get("warehouse_share_branch")
-	if not warehouse:
-		return None
-	kind, branch_id = destination_of(connection, warehouse)
-	if kind != "branch":
-		raise NeedsMapping(
-			_(
-				"Branch For Warehouse Shares on connection {0} is Warehouse {1}, which is a central warehouse on the Branch Map, not a branch. Pick the Warehouse of a branch, or clear it."
-			).format(connection.name, warehouse)
-		)
-	return branch_id
 
 
 def order_shares(po, connection) -> dict:
