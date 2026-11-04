@@ -26,7 +26,7 @@ from koomyo_erpnext.sync.purchasing import (
 	linked_ingredient,
 	order_lines_for_koomyo,
 	order_notes,
-	request_line_of,
+	order_shares,
 	tax_fields,
 	text,
 )
@@ -143,7 +143,7 @@ def edit_body(po, connection, order: dict) -> dict | None:
 		if not changes:
 			return None
 		return {**body, **changes}
-	shares = {item.name: request_line_of(item, connection) for item in po.items}
+	shares = order_shares(po, connection)
 	lines = order_lines_for_koomyo(po, connection, shares)
 	ids = {line.get("ingredient_id"): line.get("id") for line in order.get("lines") or [] if line.get("id")}
 	for entry in lines:
@@ -163,7 +163,7 @@ def edit_body(po, connection, order: dict) -> dict | None:
 def frozen_differences(po, connection, order: dict, tax: dict) -> list[str]:
 	"""What ERPNext changed that a partly received Koomyo order cannot take (said in words, not sent)."""
 	seen = []
-	shares = {item.name: request_line_of(item, connection) for item in po.items}
+	shares = order_shares(po, connection)
 	wanted = {e["ingredient_id"]: e for e in order_lines_for_koomyo(po, connection, shares)}
 	for line in order.get("lines") or []:
 		new = wanted.pop(line.get("ingredient_id"), None)

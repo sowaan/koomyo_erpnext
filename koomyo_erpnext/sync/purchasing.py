@@ -68,6 +68,12 @@ def on_purchase_order_submit(doc, method=None):
 	if doc.get("koomyo_connection"):
 		return  # made from a Koomyo order: Koomyo already has it
 	connection, _row = connection_for_warehouse(doc.company, po_warehouse(doc))
+	if not connection and not doc.get("set_warehouse"):
+		# Rows in several Warehouses (an order split by place): the connection that holds any of them.
+		for warehouse in sorted({row.warehouse for row in doc.items if row.warehouse}):
+			connection, _row = connection_for_warehouse(doc.company, warehouse)
+			if connection:
+				break
 	if not connection:
 		# An order made from Koomyo purchase requests goes to several branches' Warehouses: its connection is the
 		# one the Material Requests came from.
@@ -234,10 +240,15 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 		# Sent before: only make sure it is not left a draft (a Retry after a failed mark).
 		ensure_ordered(connection, client or KoomyoClient.for_connection(connection), po)
 		return ("Purchase Order", po.name)
-	shares = {item.name: request_line_of(item, connection) for item in po.items}
+	shares = order_shares(po, connection)
 	with_shares = any(shares.values())
+	split = with_shares and all(v == SPLIT for v in shares.values())
 	row = None
-	if with_shares:
+	if split:
+		# One Koomyo line per ingredient with a share per warehouse: every warehouse must be a place Koomyo knows.
+		for warehouse in sorted({item.warehouse for item in po.items}):
+			destination_of(connection, warehouse)
+	elif with_shares:
 		missing = [item.item_code for item in po.items if not shares[item.name]]
 		if missing:
 			raise Fatal(
@@ -273,7 +284,7 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 		**tax,
 		"external_ref": {"system": connection.ref_system or "erpnext", "external_id": po.name},
 	}
-	if not with_shares and row.location_type != "Warehouse":
+	if row is not None and row.location_type != "Warehouse":
 		body["branch_id"] = row.koomyo_branch_id  # leave out to receive into the main warehouse (docs)
 	# The key says which document version and which body: the same key with another body is refused (422).
 	body_hash = hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:10]
@@ -539,7 +550,7 @@ def share_destination(po, item, connection) -> tuple[str, str]:
 	the Purchase Receipt of the row is received into, so ERPNext and Koomyo agree where the goods go.
 	"""
 	kind, place_id = destination_of(connection, item.warehouse)
-	if kind == "branch":
+	if kind == "branch" and item.get("material_request_item"):
 		parent = frappe.db.get_value("Material Request Item", item.material_request_item, "parent")
 		wanted = frappe.db.get_value("Material Request", parent, "koomyo_branch")
 		if wanted and wanted != place_id:
@@ -549,6 +560,27 @@ def share_destination(po, item, connection) -> tuple[str, str]:
 				).format(po.name, item.item_code, item.warehouse)
 			)
 	return kind, place_id
+
+
+SPLIT = "split"  # a share that fills no request line: a row of an order split over several warehouses
+
+
+def share_entry(request_line: str, kind: str, place_id: str, qty: Decimal) -> dict:
+	entry = {"quantity": text(qty), "destination_type": kind, "destination_id": place_id}
+	if request_line != SPLIT:
+		entry["request_line_id"] = request_line
+	elif kind == "branch":
+		entry["branch_id"] = place_id  # a branch share is for its own branch
+	return entry
+
+
+def order_shares(po, connection) -> dict:
+	"""Which rows are shares. Rows made from Koomyo request lines fill them; an order with no such row but rows in
+	several warehouses is split by warehouse (one share per row), so Koomyo can take each delivery at its place."""
+	shares = {item.name: request_line_of(item, connection) for item in po.items}
+	if not any(shares.values()) and len({item.warehouse for item in po.items}) > 1:
+		return {item.name: SPLIT for item in po.items}
+	return shares
 
 
 def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
@@ -607,12 +639,7 @@ def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 			entry["discount_percent"] = text(line["discount"])
 		if line["shares"]:
 			entry["allocations"] = [
-				{
-					"request_line_id": request_line,
-					"quantity": text(qty),
-					"destination_type": kind,
-					"destination_id": place_id,
-				}
+				share_entry(request_line, kind, place_id, qty)
 				for (request_line, kind, place_id), qty in line["shares"].items()
 			]
 		out.append(entry)
@@ -635,6 +662,7 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 		raise Fatal(_("Koomyo answered GET /purchase-orders/{0} with something else.").format(po.koomyo_id))
 	if has_shares(order):
 		return push_receipt_by_destination(connection, client, po, receipt, order)
+	check_receipt_place(connection, po, receipt, order)
 	lines = {line.get("ingredient_id"): line for line in order.get("lines") or [] if line.get("id")}
 
 	# Koomyo takes each line's TOTAL received so far and adds only the difference to stock: this
@@ -972,6 +1000,33 @@ def send_receive(connection, client, po, doc, body: dict, action: str, before: s
 	if new and doc.doctype == "Purchase Receipt":
 		link_delivery(doc, connection, new[-1])
 	return (doc.doctype, doc.name)
+
+
+def check_receipt_place(connection, po, receipt, order: dict):
+	"""An order without shares has one place; a receipt at another Warehouse would land there all the same.
+
+	Koomyo can only split a delivery across places when the order's lines carry shares, so a receipt at a place the
+	order is not for is refused before anything is sent (a Warehouse that is not on the Branch Map is not checked).
+	"""
+	for warehouse in sorted(
+		{i.warehouse for i in receipt.items if i.purchase_order == po.name and i.warehouse}
+	):
+		try:
+			kind, place_id = destination_of(connection, warehouse)
+		except NeedsMapping:
+			continue
+		branch, home = order.get("branch_id"), order.get("warehouse_id")
+		wrong = (
+			(branch and (kind, place_id) != ("branch", branch))
+			or (not branch and kind == "branch")
+			or (not branch and home and kind == "warehouse" and place_id != home)
+		)
+		if wrong:
+			raise Fatal(
+				_(
+					"Purchase Receipt {0} receives at Warehouse {1}, which is not the place of Koomyo order {2}, and the order has no shares: Koomyo would put the whole delivery at the order's own place. Koomyo splits a delivery over several places only when the order's lines carry shares. Give the Purchase Order one row for each Warehouse (Update Items), which sends the shares, then press Retry. If the order was already received in Koomyo, cancel that receipt first (it is reversed there)."
+				).format(receipt.name, warehouse, po.koomyo_id)
+			)
 
 
 def link_delivery(receipt, connection, delivery_id: str):

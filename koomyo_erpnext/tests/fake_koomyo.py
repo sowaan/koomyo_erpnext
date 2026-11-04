@@ -510,13 +510,32 @@ class FakeKoomyo:
 			shares = line.get("allocations") or []
 			made = []
 			if shares:
-				if self.purchase_requests_off:
+				if self.purchase_requests_off and any(s.get("request_line_id") for s in shares):
 					return error_response(403, "feature_not_available", "purchase requests are not enabled")
 				if sum(Decimal(s["quantity"]) for s in shares) != Decimal(line["quantity_ordered"]):
 					return error_response(
 						400, "invalid_parameter", "the shares do not add up to quantity_ordered"
 					)
 			for number, share in enumerate(shares):
+				if not share.get("request_line_id"):  # a share by warehouse: no request line
+					if not share.get("destination_type") or not share.get("destination_id"):
+						return error_response(400, "invalid_parameter", "a share needs its destination")
+					made.append(
+						{
+							"id": f"alloc-{index}-{number}",
+							"branch_id": share.get("branch_id"),
+							"quantity": share["quantity"],
+							"destination_type": share["destination_type"],
+							"destination_id": share["destination_id"],
+							"request_line_id": None,
+							"received_quantity": "0",
+							"landed_quantity": "0",
+							"distributed_quantity": "0",
+							"lost_quantity": "0",
+							"closed_short": False,
+						}
+					)
+					continue
 				card, request_line = by_line.get(share.get("request_line_id"), (None, None))
 				if not request_line:
 					return error_response(400, "invalid_parameter", "unknown request line")
