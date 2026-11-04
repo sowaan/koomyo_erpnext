@@ -8,8 +8,6 @@
   "naming_series",
   "connection",
   "company",
-  "from_date",
-  "to_date",
   "koomyo_branch_id",
   "column_break_1",
   "status",
@@ -20,16 +18,21 @@
   "started_on",
   "finished_on",
   "section_what",
-  "bring_sales",
-  "bring_shifts",
-  "bring_stock",
-  "column_break_2",
-  "bring_customers",
-  "bring_purchases",
   "bring_suppliers",
+  "bring_customers",
   "column_break_4",
   "bring_catalog",
   "bring_places",
+  "section_transactions",
+  "bring_sales",
+  "bring_shifts",
+  "bring_stock",
+  "column_break_5",
+  "bring_purchases",
+  "transactions_dates",
+  "from_date",
+  "column_break_6",
+  "to_date",
   "section_counts",
   "found",
   "created",
@@ -71,24 +74,6 @@
    "label": "Company",
    "options": "Company",
    "read_only": 1
-  },
-  {
-   "fieldname": "from_date",
-   "fieldtype": "Date",
-   "in_list_view": 1,
-   "label": "From Date",
-   "mandatory_depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
-   "depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
-   "description": "Needed for sales, shifts, stock and purchase orders. Not needed for suppliers, customers, the menu and ingredients, or warehouses and branches: those come in whole."
-  },
-  {
-   "description": "Not after today.",
-   "fieldname": "to_date",
-   "fieldtype": "Date",
-   "in_list_view": 1,
-   "label": "To Date",
-   "mandatory_depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
-   "depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases"
   },
   {
    "description": "Leave empty for every branch of the connection.",
@@ -135,6 +120,15 @@
    "read_only": 1
   },
   {
+   "description": "Set when the events feed lost events: when this backfill completes, the feed carries on from this event number.",
+   "fieldname": "resync_seq",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Feed Re-sync Up To",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "started_on",
    "fieldtype": "Datetime",
    "label": "Started On",
@@ -149,10 +143,44 @@
    "read_only": 1
   },
   {
-   "description": "Each record goes through the same mapping and duplicate guard as live sync, dated with its own Koomyo day. Running the same range twice changes nothing.",
+   "description": "Brought in whole, so no dates are needed. Tick only these and the date fields disappear. Anything already in ERPNext is left as it is.",
    "fieldname": "section_what",
    "fieldtype": "Section Break",
-   "label": "What to Bring"
+   "label": "Master Records"
+  },
+  {
+   "fieldname": "bring_suppliers",
+   "fieldtype": "Check",
+   "label": "Suppliers",
+   "description": "Every supplier card, whole: Supplier, Address, Contact and payment terms (needs Sync Purchasing and Book Orders Made in Koomyo). Alone, it needs no dates."
+  },
+  {
+   "description": "Every customer, whole (needs Sync Customers). Alone, it needs no dates.",
+   "fieldname": "bring_customers",
+   "fieldtype": "Check",
+   "label": "Customers"
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "bring_catalog",
+   "fieldtype": "Check",
+   "label": "Menu and Ingredients",
+   "description": "Every menu item, size and ingredient as an Item, like the Load Menu and Ingredients button. Alone, it needs no dates."
+  },
+  {
+   "fieldname": "bring_places",
+   "fieldtype": "Check",
+   "label": "Warehouses and Branches",
+   "description": "Branches and central warehouses of Koomyo that are not on the Branch Map yet: their Cost Center and Warehouse are used or made, and a row is added. Alone, it needs no dates."
+  },
+  {
+   "fieldname": "section_transactions",
+   "fieldtype": "Section Break",
+   "label": "Transactions",
+   "description": "Each record goes through the same mapping and duplicate guard as live sync, dated with its own Koomyo day. Running the same range twice changes nothing."
   },
   {
    "default": "1",
@@ -174,20 +202,42 @@
    "label": "Stock Movements and Transfers"
   },
   {
-   "fieldname": "column_break_2",
+   "fieldname": "column_break_5",
    "fieldtype": "Column Break"
-  },
-  {
-   "description": "Every customer, whole (needs Sync Customers). Alone, it needs no dates.",
-   "fieldname": "bring_customers",
-   "fieldtype": "Check",
-   "label": "Customers"
   },
   {
    "description": "Purchase orders made in ERPNext and received in Koomyo in the range (needs Sync Purchasing).",
    "fieldname": "bring_purchases",
    "fieldtype": "Check",
    "label": "Purchase Orders"
+  },
+  {
+   "fieldname": "transactions_dates",
+   "fieldtype": "Section Break",
+   "depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
+   "label": "Range"
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "From Date",
+   "mandatory_depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
+   "depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
+   "description": "Needed for sales, shifts, stock and purchase orders. Not needed for suppliers, customers, the menu and ingredients, or warehouses and branches: those come in whole."
+  },
+  {
+   "fieldname": "column_break_6",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Not after today.",
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "To Date",
+   "mandatory_depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
+   "depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases"
   },
   {
    "fieldname": "section_counts",
@@ -266,37 +316,6 @@
    "no_copy": 1,
    "options": "Koomyo Backfill Chunk",
    "read_only": 1
-  },
-  {
-   "description": "Set when the events feed lost events: when this backfill completes, the feed carries on from this event number.",
-   "fieldname": "resync_seq",
-   "fieldtype": "Int",
-   "hidden": 1,
-   "label": "Feed Re-sync Up To",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "bring_suppliers",
-   "fieldtype": "Check",
-   "label": "Suppliers",
-   "description": "Every supplier card, whole: Supplier, Address, Contact and payment terms (needs Sync Purchasing and Book Orders Made in Koomyo). Alone, it needs no dates."
-  },
-  {
-   "fieldname": "column_break_4",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "bring_catalog",
-   "fieldtype": "Check",
-   "label": "Menu and Ingredients",
-   "description": "Every menu item, size and ingredient as an Item, like the Load Menu and Ingredients button. Alone, it needs no dates."
-  },
-  {
-   "fieldname": "bring_places",
-   "fieldtype": "Check",
-   "label": "Warehouses and Branches",
-   "description": "Branches and central warehouses of Koomyo that are not on the Branch Map yet: their Cost Center and Warehouse are used or made, and a row is added. Alone, it needs no dates."
   }
  ],
  "links": [],

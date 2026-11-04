@@ -22,13 +22,21 @@ frappe.listview_settings["Koomyo Backfill"] = {
 			const d = new frappe.ui.Dialog({
 				title: __("One backfill per connection"),
 				fields: [
+					{ fieldtype: "Section Break", label: __("Master records (no dates needed)") },
+					{ fieldname: "bring_suppliers", fieldtype: "Check", label: __("Suppliers") },
+					{ fieldname: "bring_customers", fieldtype: "Check", label: __("Customers") },
+					{ fieldtype: "Column Break" },
 					{
-						fieldname: "from_date",
-						fieldtype: "Date",
-						label: __("From Date"),
-						description: __("Only for sales, shifts, stock and purchase orders."),
+						fieldname: "bring_catalog",
+						fieldtype: "Check",
+						label: __("Menu and Ingredients"),
 					},
-					{ fieldname: "to_date", fieldtype: "Date", label: __("To Date") },
+					{
+						fieldname: "bring_places",
+						fieldtype: "Check",
+						label: __("Warehouses and Branches"),
+					},
+					{ fieldtype: "Section Break", label: __("Transactions (need dates)") },
 					{
 						fieldname: "bring_sales",
 						fieldtype: "Check",
@@ -41,23 +49,14 @@ frappe.listview_settings["Koomyo Backfill"] = {
 						fieldtype: "Check",
 						label: __("Stock Movements and Transfers"),
 					},
+					{ fieldtype: "Column Break" },
 					{
 						fieldname: "bring_purchases",
 						fieldtype: "Check",
 						label: __("Purchase Orders"),
 					},
-					{ fieldname: "bring_suppliers", fieldtype: "Check", label: __("Suppliers") },
-					{ fieldname: "bring_customers", fieldtype: "Check", label: __("Customers") },
-					{
-						fieldname: "bring_catalog",
-						fieldtype: "Check",
-						label: __("Menu and Ingredients"),
-					},
-					{
-						fieldname: "bring_places",
-						fieldtype: "Check",
-						label: __("Warehouses and Branches"),
-					},
+					{ fieldname: "from_date", fieldtype: "Date", label: __("From Date") },
+					{ fieldname: "to_date", fieldtype: "Date", label: __("To Date") },
 				],
 				primary_action_label: __("Create"),
 				primary_action(values) {

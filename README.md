@@ -191,7 +191,7 @@ Use **Retry** on a row, or **Retry All Failed** on the list. Done rows are delet
 
 ### Backfill: past dates
 
-**Koomyo Backfill > New**: pick the connection, the dates and what to bring, and save. Then:
+**Koomyo Backfill > New**: pick the connection and what to bring, in two groups: **Master Records** (suppliers, customers, menu and ingredients, warehouses and branches; whole, no dates) and **Transactions** (sales, shifts, stock, purchase orders; with a From and To date), and save. Then:
 1. **Preview** counts what it would find, create, find already there, skip and fail, and shows a sample. It writes nothing.
 2. **Start** brings it in. Documents get their own Koomyo dates, and anything already in ERPNext, from live sync or an earlier run, is left alone.
 3. **Stop** pauses; **Start** carries on from where it was.
