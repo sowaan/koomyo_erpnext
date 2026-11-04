@@ -26,6 +26,10 @@
   "column_break_2",
   "bring_customers",
   "bring_purchases",
+  "bring_suppliers",
+  "column_break_4",
+  "bring_catalog",
+  "bring_places",
   "section_counts",
   "found",
   "created",
@@ -73,7 +77,9 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "From Date",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
+   "depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
+   "description": "Needed for sales, shifts, stock and purchase orders. Not needed for suppliers, customers, the menu and ingredients, or warehouses and branches: those come in whole."
   },
   {
    "description": "Not after today.",
@@ -81,7 +87,8 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "To Date",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases",
+   "depends_on": "eval:doc.bring_sales || doc.bring_shifts || doc.bring_stock || doc.bring_purchases"
   },
   {
    "description": "Leave empty for every branch of the connection.",
@@ -171,7 +178,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Customers changed from the From Date on (needs Sync Customers).",
+   "description": "Every customer, whole (needs Sync Customers). Alone, it needs no dates.",
    "fieldname": "bring_customers",
    "fieldtype": "Check",
    "label": "Customers"
@@ -180,7 +187,7 @@
    "description": "Purchase orders made in ERPNext and received in Koomyo in the range (needs Sync Purchasing).",
    "fieldname": "bring_purchases",
    "fieldtype": "Check",
-   "label": "Purchases"
+   "label": "Purchase Orders"
   },
   {
    "fieldname": "section_counts",
@@ -268,6 +275,28 @@
    "label": "Feed Re-sync Up To",
    "no_copy": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "bring_suppliers",
+   "fieldtype": "Check",
+   "label": "Suppliers",
+   "description": "Every supplier card, whole: Supplier, Address, Contact and payment terms (needs Sync Purchasing and Book Orders Made in Koomyo). Alone, it needs no dates."
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "bring_catalog",
+   "fieldtype": "Check",
+   "label": "Menu and Ingredients",
+   "description": "Every menu item, size and ingredient as an Item, like the Load Menu and Ingredients button. Alone, it needs no dates."
+  },
+  {
+   "fieldname": "bring_places",
+   "fieldtype": "Check",
+   "label": "Warehouses and Branches",
+   "description": "Branches and central warehouses of Koomyo that are not on the Branch Map yet: their Cost Center and Warehouse are used or made, and a row is added. Alone, it needs no dates."
   }
  ],
  "links": [],

@@ -32,6 +32,7 @@ from koomyo_erpnext.sync.common import find_existing, money
 
 BACKFILL = "Koomyo Backfill"
 SAMPLE_SIZE = 10
+MASTER_CHUNKS = ("catalog", "places")  # not lists of events: the menu loader and the Branch Map fill
 SLEEP = time.sleep
 
 
@@ -392,7 +393,9 @@ def run_chunk(backfill, connection, reader, chunk, dry_run: bool, sample: list):
 	for kind in chunk_kinds(backfill, chunk):
 		if kind in state.get("done", []):
 			continue
-		if kind in ("customer", "purchase_order", "supplier"):
+		if kind in MASTER_CHUNKS:
+			run_master_chunk(connection, kind, counts, messages, sample, dry_run)
+		elif kind in ("customer", "purchase_order", "supplier"):
 			read_unpaged_kind(backfill, reader, kind, state, handle, chunk, counts, dry_run)
 		elif kind == "usage":
 			from koomyo_erpnext.sync.order_stock import PER_ORDER, effective_mode
@@ -445,6 +448,41 @@ def run_chunk(backfill, connection, reader, chunk, dry_run: bool, sample: list):
 		save_state(chunk, {**state, "done": state.get("done", [])}, counts)
 
 
+def run_master_chunk(connection, kind: str, counts: dict, messages: list, sample: list, dry_run: bool):
+	"""The menu and ingredients, or the Branch Map places: whole, through the same code as the buttons."""
+	if kind == "catalog":
+		from koomyo_erpnext.sync.catalog import load_catalog
+
+		summary = load_catalog(connection.name, preview=dry_run)
+		parts = [summary["menu"], summary["ingredients"], summary.get("variants") or {}]
+		changed = sum((p.get("created") or 0) + (p.get("updated") or 0) for p in parts)
+		same = sum(p.get("unchanged") or 0 for p in parts)
+		counts["created"] += changed
+		counts["already_there"] += same
+		counts["found"] += changed + same
+		counts["failed"] += len(summary.get("problems") or [])
+		messages.append((summary.get("text") or "")[:900])
+		if len(sample) < SAMPLE_SIZE:
+			sample.append({"kind": "menu and ingredients", "text": summary.get("text")})
+		return
+	from koomyo_erpnext.auto_setup import bring_places
+
+	summary = bring_places(connection, preview=dry_run)
+	counts["found"] += summary["found"]
+	counts["already_there"] += summary["already"]
+	counts["created"] += summary["new"]
+	messages.append(
+		_("{0} place(s) of Koomyo are not on the Branch Map: {1}.").format(
+			summary["new"], ", ".join(summary["names"][:10]) or "-"
+		)
+		if summary["new"]
+		else _("Every branch and central warehouse of Koomyo is on the Branch Map.")
+	)
+	messages.extend(summary["notes"])
+	for name in summary["names"][: SAMPLE_SIZE - len(sample)]:
+		sample.append({"kind": "place", "name": name})
+
+
 def read_unpaged_kind(backfill, reader, kind, state, handle, chunk, counts, dry_run):
 	"""Customers (by last change) and purchase orders (all received ones), filtered to the range."""
 	start, end = str(getdate(backfill.from_date)), str(getdate(backfill.to_date))
@@ -487,8 +525,12 @@ def read_all(reader, path, params) -> list[dict]:
 def chunk_kinds(backfill, chunk) -> list[str]:
 	if chunk.chunk == "customers":
 		return ["customer"]
+	if chunk.chunk == "suppliers":
+		return ["supplier"]
 	if chunk.chunk == "purchases":
-		return ["supplier", "purchase_order"]
+		return ["purchase_order"]
+	if chunk.chunk in MASTER_CHUNKS:
+		return [chunk.chunk]
 	return kinds_for(backfill)
 
 

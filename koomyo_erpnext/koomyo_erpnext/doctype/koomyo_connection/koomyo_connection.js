@@ -76,6 +76,22 @@ frappe.ui.form.on("Koomyo Connection", {
 				)
 			);
 		}
+		// Master data only: a backfill row with that one thing ticked (no dates needed), to Preview then Start.
+		const master = (label, tick) =>
+			frm.add_custom_button(
+				label,
+				() =>
+					frappe.new_doc("Koomyo Backfill", {
+						connection: frm.doc.name,
+						bring_sales: 0,
+						[tick]: 1,
+					}),
+				__("Bring In")
+			);
+		master(__("Suppliers"), "bring_suppliers");
+		master(__("Customers"), "bring_customers");
+		master(__("Menu and Ingredients"), "bring_catalog");
+		master(__("Warehouses and Branches"), "bring_places");
 		action(__("Preview Menu Load"), () => load_catalog(frm, 1));
 		action(__("Load Menu and Ingredients"), () =>
 			frappe.confirm(

@@ -314,7 +314,7 @@ class TestSupplierOnAnOrder(SupplierCase):
 
 
 class TestSupplierBackfill(BackfillTestCase):
-	"""A backfill with Purchases ticked brings in every supplier card, like supplier.updated would."""
+	"""A backfill with Suppliers ticked brings in every supplier card, like supplier.updated would."""
 
 	def setUp(self):
 		purge_orphan_contact_rows()
@@ -367,13 +367,13 @@ class TestSupplierBackfill(BackfillTestCase):
 		)
 
 	def test_preview_counts_run_brings_them_in_and_a_second_run_changes_nothing(self):
-		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"), "preview")
+		doc = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"), "preview")
 		self.assertEqual((doc.found, doc.created, doc.failed), (2, 2, 0), doc.error)
 		self.assertEqual(self.suppliers(), [], "a preview writes nothing")
-		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		doc = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"))
 		self.assertEqual((doc.status, doc.created, doc.failed), ("Completed", 2, 0), doc.error)
 		self.assertEqual(self.suppliers(), ["bf-1", "bf-2"], "a supplier made after the range is left out")
-		again = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		again = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"))
 		self.assertEqual((again.created, again.already_there), (0, 2))
 		self.assertEqual(len(self.suppliers()), 2)
 		self.assertTrue(frappe.db.exists("Address", {"koomyo_id": "bf-1"}))
@@ -383,11 +383,11 @@ class TestSupplierBackfill(BackfillTestCase):
 			card(id="bf-1", name="_BF Dairy", updated_at="2026-10-12T16:54:31Z"), "supplier.updated"
 		)
 		self.assertEqual(self.book(live).status, "Done")
-		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		doc = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"))
 		self.assertEqual((doc.created, doc.already_there), (1, 1))
 
 	def test_a_changed_card_is_brought_up_to_date(self):
-		self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"))
 		self.fake_a.lists["/suppliers"][0] = card(
 			id="bf-1",
 			name="_BF Dairy",
@@ -395,7 +395,7 @@ class TestSupplierBackfill(BackfillTestCase):
 			phone="+92 111",
 			updated_at="2026-10-20T08:00:00Z",
 		)
-		doc = self.press(self.make(bring_sales=0, bring_purchases=1, to_date="2026-10-13"))
+		doc = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"))
 		self.assertEqual((doc.created, doc.already_there), (1, 1))
 		contact = frappe.get_doc("Contact", frappe.db.get_value("Contact", {"koomyo_id": "bf-1"}))
 		self.assertEqual(contact.phone_nos[0].phone, "+92 111")

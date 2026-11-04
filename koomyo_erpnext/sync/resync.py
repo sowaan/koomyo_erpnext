@@ -104,6 +104,7 @@ def ticks_for(connection, start) -> dict:
 		"bring_shifts": int(bool(connection.sync_shifts)),
 		"bring_customers": int(bool(connection.sync_customers)),
 		"bring_purchases": int(bool(connection.sync_purchasing)),
+		"bring_suppliers": int(bool(connection.sync_purchasing and connection.book_koomyo_purchases)),
 		# Stock before the opening stock date is already in the opening stock.
 		"bring_stock": int(
 			bool(

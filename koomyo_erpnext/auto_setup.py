@@ -198,25 +198,9 @@ def leaf_names(doctype: str, filters: dict | None = None) -> list[str]:
 # ------------------------------------------------------------------ the plan
 
 
-def read_koomyo(connection) -> dict:
-	"""Everything the plan needs from Koomyo: reads only."""
-	client = KoomyoClient.for_connection(connection)
-	account = client.get_account()
-	scopes = set(account["key"]["scopes"])
-	notes = []
+def read_places(client, scopes: set, notes: list) -> tuple[list, dict]:
+	"""Koomyo's branches and central warehouses: reads only (also used on its own by the backfill)."""
 	branches = client.list_branches() if "catalog.read" in scopes else []
-	methods = client.get("/payment-methods")["data"] if "catalog.read" in scopes else []
-	if "catalog.read" not in scopes:
-		notes.append(
-			_("The key has no catalog.read scope, so branches and payment methods could not be read.")
-		)
-	units = set()
-	if "stock.read" in scopes:
-		for ingredient in client.iter_list("/ingredients", {"limit": 500}, max_pages=20):
-			if ingredient.get("unit"):
-				units.add(ingredient["unit"])
-	else:
-		notes.append(_("The key has no stock.read scope, so ingredient units could not be read."))
 	warehouses = {}  # id -> {"name", "main"}
 	if "stock.read" in scopes:
 		try:
@@ -241,6 +225,28 @@ def read_koomyo(connection) -> dict:
 				notes.append(
 					_("Stock transfers could not be read, so central warehouses were not looked for.")
 				)
+	return branches, warehouses
+
+
+def read_koomyo(connection) -> dict:
+	"""Everything the plan needs from Koomyo: reads only."""
+	client = KoomyoClient.for_connection(connection)
+	account = client.get_account()
+	scopes = set(account["key"]["scopes"])
+	notes = []
+	methods = client.get("/payment-methods")["data"] if "catalog.read" in scopes else []
+	if "catalog.read" not in scopes:
+		notes.append(
+			_("The key has no catalog.read scope, so branches and payment methods could not be read.")
+		)
+	units = set()
+	if "stock.read" in scopes:
+		for ingredient in client.iter_list("/ingredients", {"limit": 500}, max_pages=20):
+			if ingredient.get("unit"):
+				units.add(ingredient["unit"])
+	else:
+		notes.append(_("The key has no stock.read scope, so ingredient units could not be read."))
+	branches, warehouses = read_places(client, scopes, notes)
 	return {
 		"account": account,
 		"branches": branches,
@@ -249,6 +255,79 @@ def read_koomyo(connection) -> dict:
 		"units": sorted(units),
 		"notes": notes,
 	}
+
+
+def bring_places(connection, preview: bool) -> dict:
+	"""Fill the Branch Map with the branches and central warehouses of Koomyo that are not on it yet.
+
+	The same plan as Set Up From Koomyo, limited to places: a Cost Center and Warehouse that already exist are used,
+	the others are made, and a row is added for each. Preview reads and counts and writes nothing.
+	"""
+	client = KoomyoClient.for_connection(connection)
+	account = client.get_account()
+	notes: list = []
+	branches, warehouses = read_places(client, set(account["key"]["scopes"]), notes)
+	koomyo = {
+		"account": account,
+		"branches": branches,
+		"warehouses": warehouses,
+		"methods": [],
+		"units": [],
+		"notes": notes,
+	}
+	plan = [r for r in build_plan(connection, koomyo) if r["id"].startswith(("branch:", "central:"))]
+	new_ids = {r["id"].split(":")[1] for r in plan}
+	summary = {
+		"found": len(branches) + len(warehouses),
+		"new": len(new_ids),
+		"already": len(branches) + len(warehouses) - len(new_ids),
+		"names": [
+			r["value"] or r["label"]
+			for r in plan
+			if r["id"].endswith((":warehouse",)) or r["id"].startswith("central:")
+		],
+		"notes": notes,
+		"created": [],
+	}
+	if preview or not plan:
+		return summary
+	setup = Setup(connection)
+	resolved = {r["id"]: setup.resolve(r) for r in plan}
+	for branch in branches:
+		cc, wh = (
+			resolved.get(f"branch:{branch['id']}:cost_center"),
+			resolved.get(f"branch:{branch['id']}:warehouse"),
+		)
+		if cc and wh:
+			connection.append(
+				"branch_map",
+				{
+					"location_type": "Branch",
+					"koomyo_branch_id": branch["id"],
+					"koomyo_branch_name": branch.get("name"),
+					"cost_center": cc,
+					"warehouse": wh,
+				},
+			)
+	for warehouse_id, warehouse in warehouses.items():
+		if resolved.get(f"central:{warehouse_id}"):
+			connection.append(
+				"branch_map",
+				{
+					"location_type": "Warehouse",
+					"koomyo_branch_id": warehouse_id,
+					"koomyo_branch_name": warehouse["name"],
+					"warehouse": resolved[f"central:{warehouse_id}"],
+				},
+			)
+	for doctype, name, note in setup.created:
+		connection.append(
+			"setup_log",
+			{"doctype_name": doctype, "record_name": name, "note": note, "created_on": now_datetime()},
+		)
+	connection.save()
+	summary["created"] = [f"{d} {n}" for d, n, _note in setup.created]
+	return summary
 
 
 def build_plan(connection, koomyo: dict) -> list[dict]:

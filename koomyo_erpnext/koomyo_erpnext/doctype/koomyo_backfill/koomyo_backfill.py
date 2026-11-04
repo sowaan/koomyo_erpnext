@@ -20,12 +20,23 @@ NEEDS = {
 	"bring_shifts": (("sync_shifts",), "Shifts"),
 	"bring_stock": (("sync_stock",), "Stock Movements and Transfers"),
 	"bring_customers": (("sync_customers",), "Customers"),
-	"bring_purchases": (("sync_purchasing",), "Purchases"),
+	"bring_purchases": (("sync_purchasing",), "Purchase Orders"),
+	"bring_suppliers": (("sync_purchasing", "book_koomyo_purchases"), "Suppliers"),
+	"bring_catalog": ((), "Menu and Ingredients"),
+	"bring_places": ((), "Warehouses and Branches"),
 }
+# Ticks that look at a date range; the others bring everything, whole.
+DATED = ("bring_sales", "bring_shifts", "bring_stock", "bring_purchases")
 
 
 class KoomyoBackfill(Document):
 	def validate(self):
+		if not any(self.get(t) for t in DATED):
+			# Master data only (suppliers, customers, menu and ingredients, places): no range is asked for.
+			self.from_date = self.from_date or "2000-01-01"
+			self.to_date = self.to_date or today()
+		elif not (self.from_date and self.to_date):
+			frappe.throw(_("Sales, shifts, stock and purchase orders need a From Date and a To Date."))
 		if self.status in ("Queued", "Running", "Previewing", "Stopping") and not self.flags.from_job:
 			if self.has_value_changed("from_date") or self.has_value_changed("to_date"):
 				frappe.throw(_("This backfill is running. Stop it before changing it."))
@@ -44,7 +55,7 @@ class KoomyoBackfill(Document):
 			frappe.throw(_("To Date cannot be in the future."))
 		if getdate(self.from_date) > getdate(self.to_date):
 			frappe.throw(_("From Date must be on or before To Date."))
-		if date_diff(self.to_date, self.from_date) >= MAX_DAYS:
+		if any(self.get(t) for t in DATED) and date_diff(self.to_date, self.from_date) >= MAX_DAYS:
 			frappe.throw(
 				_("A backfill covers at most {0} days. Split the range into several backfills.").format(
 					MAX_DAYS
@@ -88,10 +99,15 @@ class KoomyoBackfill(Document):
 			while day <= getdate(self.to_date):
 				self.append("chunks", {"chunk": str(day), "day": day, "status": "Pending"})
 				day = add_days(day, 1)
-		if self.bring_customers:
-			self.append("chunks", {"chunk": "customers", "status": "Pending"})
-		if self.bring_purchases:
-			self.append("chunks", {"chunk": "purchases", "status": "Pending"})
+		for tick, chunk in (
+			("bring_places", "places"),
+			("bring_catalog", "catalog"),
+			("bring_suppliers", "suppliers"),
+			("bring_customers", "customers"),
+			("bring_purchases", "purchases"),
+		):
+			if self.get(tick):
+				self.append("chunks", {"chunk": chunk, "status": "Pending"})
 		for key in ("found", "created", "already_there", "skipped", "failed", "progress"):
 			self.set(key, 0)
 
@@ -279,7 +295,16 @@ def accounts_frozen_until(company: str):
 
 @frappe.whitelist()
 def create_for_all_connections(
-	from_date, to_date, bring_sales=0, bring_shifts=0, bring_stock=0, bring_customers=0, bring_purchases=0
+	from_date=None,
+	to_date=None,
+	bring_sales=0,
+	bring_shifts=0,
+	bring_stock=0,
+	bring_customers=0,
+	bring_purchases=0,
+	bring_suppliers=0,
+	bring_catalog=0,
+	bring_places=0,
 ):
 	"""One backfill per enabled connection the user may see (never one mixed run)."""
 	if not frappe.has_permission("Koomyo Backfill", "create"):
@@ -297,6 +322,9 @@ def create_for_all_connections(
 				"bring_stock": int(bring_stock),
 				"bring_customers": int(bring_customers),
 				"bring_purchases": int(bring_purchases),
+				"bring_suppliers": int(bring_suppliers),
+				"bring_catalog": int(bring_catalog),
+				"bring_places": int(bring_places),
 			}
 		)
 		try:

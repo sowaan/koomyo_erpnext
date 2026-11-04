@@ -22,8 +22,13 @@ frappe.listview_settings["Koomyo Backfill"] = {
 			const d = new frappe.ui.Dialog({
 				title: __("One backfill per connection"),
 				fields: [
-					{ fieldname: "from_date", fieldtype: "Date", label: __("From Date"), reqd: 1 },
-					{ fieldname: "to_date", fieldtype: "Date", label: __("To Date"), reqd: 1 },
+					{
+						fieldname: "from_date",
+						fieldtype: "Date",
+						label: __("From Date"),
+						description: __("Only for sales, shifts, stock and purchase orders."),
+					},
+					{ fieldname: "to_date", fieldtype: "Date", label: __("To Date") },
 					{
 						fieldname: "bring_sales",
 						fieldtype: "Check",
@@ -36,8 +41,23 @@ frappe.listview_settings["Koomyo Backfill"] = {
 						fieldtype: "Check",
 						label: __("Stock Movements and Transfers"),
 					},
+					{
+						fieldname: "bring_purchases",
+						fieldtype: "Check",
+						label: __("Purchase Orders"),
+					},
+					{ fieldname: "bring_suppliers", fieldtype: "Check", label: __("Suppliers") },
 					{ fieldname: "bring_customers", fieldtype: "Check", label: __("Customers") },
-					{ fieldname: "bring_purchases", fieldtype: "Check", label: __("Purchases") },
+					{
+						fieldname: "bring_catalog",
+						fieldtype: "Check",
+						label: __("Menu and Ingredients"),
+					},
+					{
+						fieldname: "bring_places",
+						fieldtype: "Check",
+						label: __("Warehouses and Branches"),
+					},
 				],
 				primary_action_label: __("Create"),
 				primary_action(values) {
