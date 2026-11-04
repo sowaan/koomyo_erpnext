@@ -200,6 +200,54 @@ class TestOneStep(TransfersOutCase):
 		self.assertEqual(self.transfers(), [])
 
 
+class TestSendIntoTheTransitWarehouse(TransfersOutCase):
+	def test_a_send_into_a_real_warehouse_is_refused_at_submit_with_what_to_do(self):
+		entry = self.make_entry(CENTRAL, STORES, 5, transit=True, submit=False)
+		with self.assertRaises(frappe.ValidationError) as caught:
+			entry.submit()
+		message = str(caught.exception)
+		self.assertIn(STORES, message)
+		self.assertIn(TRANSIT, message)
+		self.assertIn("through the Transit Warehouse", message)
+		self.assertEqual(frappe.db.get_value("Stock Entry", entry.name, "docstatus"), 0)
+
+	def test_a_send_into_the_transit_warehouse_is_fine(self):
+		entry = self.make_entry(CENTRAL, TRANSIT, 5, transit=True)
+		self.assertEqual(frappe.db.get_value("Stock Entry", entry.name, "docstatus"), 1)
+
+	def test_without_a_transit_warehouse_on_the_connection_the_send_says_so(self):
+		self.conn_a.reload()
+		self.conn_a.transit_warehouse = None
+		self.conn_a.save()
+		entry = self.make_entry(CENTRAL, TRANSIT, 5, transit=True, submit=False)
+		with self.assertRaises(frappe.ValidationError) as caught:
+			entry.submit()
+		self.assertIn("has no Transit Warehouse", str(caught.exception))
+
+	def test_the_message_at_the_push_is_readable_when_a_send_slipped_through(self):
+		sent = self.make_entry(CENTRAL, TRANSIT, 10, transit=True)
+		frappe.db.set_value("Stock Entry Detail", {"parent": sent.name}, "t_warehouse", STORES)
+		frappe.db.commit()
+		self.receive_entry_unchecked(sent)
+		self.run_queue()
+		(log,) = self.outbound_logs("erpnext.stock_transfer")
+		self.assertEqual(log.error_class, "NeedsMapping")
+		self.assertIn(f"{sent.name} sent the stock into {STORES}", log.message)
+		self.assertIn(TRANSIT, log.message)
+
+	def receive_entry_unchecked(self, sent):
+		from erpnext.stock.doctype.stock_entry.stock_entry import make_stock_in_entry
+
+		entry = make_stock_in_entry(sent.name)
+		for row in entry.items:
+			row.qty = 5
+			row.t_warehouse = STORES
+		entry.insert()
+		frappe.db.set_value("Stock Entry", entry.name, "docstatus", 1)  # as if it had been submitted earlier
+		frappe.get_doc("Stock Entry", entry.name).run_method("on_submit")
+		frappe.db.commit()
+
+
 class TestInSteps(TransfersOutCase):
 	def setUp(self):
 		super().setUp()

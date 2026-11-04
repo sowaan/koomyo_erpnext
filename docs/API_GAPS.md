@@ -388,3 +388,7 @@ Built: a share at a central warehouse is sent with only `destination_type`, `des
 
 The check of item 42 skipped a Purchase Order that Koomyo made itself (found with Event Log `spm9rafeo7`: PUR-ORD-2026-00004 came from the feed, one row of 100 at the main warehouse, and a receipt of 100 at the Tariq Road branch was allowed in ERPNext, then refused at the push). A receipt made in ERPNext against such an order is sent to Koomyo all the same, so it is checked the same way. Its message differs: the order cannot be split from ERPNext (an order Koomyo made is not edited from here), so it says to give each place its share in the Koomyo admin, after which the order is updated here, or to receive it at its own place.
 
+
+## 46. The Send to Warehouse of a transfer in steps must go into the Transit Warehouse (fix)
+
+Found with Event Log `8pgp5v5pam`: a Send entry marked "Add to Transit" had the branch's own Warehouse as its target (and an empty header target), so the receive step failed with a garbled message ("Set Transit Warehouse on connection X to , the warehouse MAT-STE... sent the stock to"). Two fixes: the check now reads the **rows'** target (the header can be empty) and the message says in plain words which Warehouse the stock was sent into and which the connection's Transit Warehouse is; and the same check now runs when the Send entry is **submitted** (for Warehouses on the Branch Map, with sending of transfers switched on), so ERPNext does not take a Send that Koomyo's steps could not follow. Without a Transit Warehouse on the connection it says so.

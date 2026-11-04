@@ -116,7 +116,17 @@ def before_stock_entry_submit(doc, method=None):
 	if doc.get("purpose") != "Material Transfer" or doc.get("koomyo_connection"):
 		return
 	if doc.get("outgoing_stock_entry") is None and doc.get("add_to_transit"):
-		return  # the destination is not known until the stock is received
+		# The destination is not known until the stock is received, but the Send to Warehouse must go into the
+		# connection's Transit Warehouse, or Koomyo's steps cannot match (the receive step would be refused).
+		connection = transfer_connection(doc)
+		if connection:
+			went_into = one_warehouse(doc, "t_warehouse")
+			if not connection.get("transit_warehouse") or went_into != connection.transit_warehouse:
+				frappe.throw(
+					transit_message(connection, doc, went_into).replace(_(", then press Retry"), ""),
+					title=_("Koomyo would not take this transfer in steps"),
+				)
+		return
 	by_request: dict[str, tuple] = {}
 	for row in doc.items:
 		name = row.get("material_request")
@@ -378,6 +388,18 @@ def not_an_ingredient(connection, doc) -> str:
 	).format(", ".join(bad), doc.name)
 
 
+def transit_message(connection, sent, went_into: str | None) -> str:
+	if not connection.get("transit_warehouse"):
+		return _(
+			"Connection {0} has no Transit Warehouse. {1} sent the stock into {2}: set that Warehouse as the connection's Transit Warehouse so the steps of a transfer match in Koomyo, then press Retry."
+		).format(connection.name, sent.name, went_into or _("(no single Warehouse)"))
+	return _(
+		"{0} sent the stock into {1}, but connection {2}'s Transit Warehouse is {3}. A transfer in steps must go through the Transit Warehouse: make the Send to Warehouse go into {3} (and the Receive at Warehouse from it to the destination), then press Retry."
+	).format(
+		sent.name, went_into or _("(no single Warehouse)"), connection.name, connection.transit_warehouse
+	)
+
+
 def line_ids(transfer: dict) -> dict[str, str]:
 	return {l["ingredient_id"]: l["id"] for l in transfer.get("lines") or []}
 
@@ -468,12 +490,9 @@ def receive_step(connection, client, doc, event):
 	sent = frappe.get_doc("Stock Entry", doc.outgoing_stock_entry)
 	if sent.docstatus != 1 or not sent.get("add_to_transit"):
 		raise Skipped(_("{0} does not receive a Send to Warehouse entry.").format(doc.name))
-	if not connection.get("transit_warehouse") or sent.to_warehouse != connection.transit_warehouse:
-		raise NeedsMapping(
-			_(
-				"Set Transit Warehouse on connection {0} to {1}, the warehouse {2} sent the stock to, so the steps of a transfer match in Koomyo."
-			).format(connection.name, sent.to_warehouse, sent.name)
-		)
+	went_into = one_warehouse(sent, "t_warehouse")
+	if not connection.get("transit_warehouse") or went_into != connection.transit_warehouse:
+		raise NeedsMapping(transit_message(connection, sent, went_into))
 	source_w, target_w = one_warehouse(sent, "s_warehouse"), one_warehouse(doc, "t_warehouse")
 	returning = bool(source_w) and source_w == target_w  # back where it was sent from: a resolution
 	if returning:
