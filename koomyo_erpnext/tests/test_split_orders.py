@@ -120,31 +120,70 @@ class TestSplitOrder(SplitCase):
 
 
 class TestReceiptAtAnotherPlace(SplitCase):
-	def test_an_order_without_shares_refuses_a_receipt_at_another_place(self):
-		po = self.make_po(warehouse=STORES, qty=120)
-		self.run_queue()
-		pr = self.receive_at(po, {STORES: 70})  # fine: the order's own place
-		self.run_queue()
-		self.assertEqual(len(self.writes("/purchase-orders/po-1/receive")), 1)
-		# a receipt into the central Warehouse instead: ERPNext allows it, Koomyo would land it at the branch
+	def other_place_receipt(self, po, warehouse, qty=50):
 		from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
 		other = make_purchase_receipt(po.name)
 		other.posting_date = "2026-10-14"
 		other.set_posting_time = 1
 		for row in other.items:
-			row.qty = row.received_qty = 50
-			row.warehouse = CENTRAL
+			row.qty = row.received_qty = qty
+			row.warehouse = warehouse
 		other.insert()
-		other.submit()
-		frappe.db.commit()
+		return other
+
+	def test_an_order_without_shares_does_not_take_a_receipt_at_another_place_in_erpnext_either(self):
+		po = self.make_po(warehouse=STORES, qty=120)
 		self.run_queue()
-		logs = [l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt"]
-		failed = [l for l in logs if l.status == "Failed"]
-		self.assertEqual(len(failed), 1, [(l.status, l.message) for l in logs])
-		self.assertIn("has no shares", failed[0].message)
+		self.receive_at(po, {STORES: 70})  # fine: the order's own place
+		self.run_queue()
+		other = self.other_place_receipt(po, CENTRAL)
+		with self.assertRaises(frappe.ValidationError) as caught:
+			other.submit()
+		self.assertIn("has no shares", str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Purchase Receipt", other.name, "docstatus"), 0)
+		self.run_queue()
 		self.assertEqual(len(self.writes("/purchase-orders/po-1/receive")), 1, "nothing more was received")
-		self.assertTrue(pr)
+
+	def test_an_order_with_shares_takes_receipts_only_at_the_places_of_its_shares(self):
+		po = self.make_split_po()
+		self.run_queue()
+		self.conn_a.reload()
+		self.conn_a.append(
+			"branch_map",
+			{
+				"location_type": "Branch",
+				"koomyo_branch_id": "90000000-0000-4000-8000-0000000000aa",
+				"warehouse": "Work In Progress - _KTA",
+			},
+		)
+		self.conn_a.save()
+		other = self.other_place_receipt(po, "Work In Progress - _KTA")
+		with self.assertRaises(frappe.ValidationError) as caught:
+			other.submit()
+		self.assertIn("delivers only to the places of its shares", str(caught.exception))
+
+	def test_when_koomyo_cannot_be_read_the_check_only_warns_and_the_push_still_refuses(self):
+		po = self.make_po(warehouse=STORES, qty=120)
+		self.run_queue()
+		other = self.other_place_receipt(po, CENTRAL)
+		self.fake_a.down = True
+		other.submit()  # not blocked: Koomyo could not be asked
+		frappe.db.commit()
+		self.fake_a.down = False
+		self.run_queue()
+		failed = [
+			l for l in self.outbound() if l.event_type == "erpnext.purchase_receipt" and l.status == "Failed"
+		]
+		self.assertEqual(len(failed), 1)
+		self.assertIn("has no shares", failed[0].message)
+		self.assertEqual(self.writes("/purchase-orders/po-1/receive"), [])
+
+	def test_a_receipt_at_a_place_that_is_a_share_goes_through(self):
+		po = self.make_split_po()
+		self.run_queue()
+		pr = self.receive_at(po, {CENTRAL: 50})
+		self.assertEqual(frappe.db.get_value("Purchase Receipt", pr.name, "docstatus"), 1)
 
 
 class TestSplitByEdit(SplitCase):

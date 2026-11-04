@@ -1002,18 +1002,28 @@ def send_receive(connection, client, po, doc, body: dict, action: str, before: s
 	return (doc.doctype, doc.name)
 
 
-def check_receipt_place(connection, po, receipt, order: dict):
-	"""An order without shares has one place; a receipt at another Warehouse would land there all the same.
+def receipt_place_problem(connection, po_koomyo_id: str, items, order: dict, receipt_name: str) -> str | None:
+	"""Why Koomyo would put this receipt at the wrong place, or refuse it (None when it is fine).
 
-	Koomyo can only split a delivery across places when the order's lines carry shares, so a receipt at a place the
-	order is not for is refused before anything is sent (a Warehouse that is not on the Branch Map is not checked).
+	An order without shares has one place; a receipt at another Warehouse would land there all the same, because
+	Koomyo splits a delivery across places only when the order's lines carry shares. An order with shares delivers
+	only at the places of its shares. A Warehouse that is not on the Branch Map is not checked.
 	"""
-	for warehouse in sorted(
-		{i.warehouse for i in receipt.items if i.purchase_order == po.name and i.warehouse}
-	):
+	for warehouse in sorted({i.warehouse for i in items if i.warehouse}):
 		try:
 			kind, place_id = destination_of(connection, warehouse)
 		except NeedsMapping:
+			continue
+		if has_shares(order):
+			places = {
+				(a.get("destination_type"), a.get("destination_id"))
+				for line in order.get("lines") or []
+				for a in line.get("allocations") or []
+			}
+			if (kind, place_id) not in places:
+				return _(
+					"Purchase Receipt {0} receives at Warehouse {1}, but Koomyo order {2} delivers only to the places of its shares, and this is not one of them. Receive at one of those Warehouses, or change the Purchase Order's rows (Update Items) so a share is for this one."
+				).format(receipt_name, warehouse, po_koomyo_id)
 			continue
 		branch, home = order.get("branch_id"), order.get("warehouse_id")
 		wrong = (
@@ -1022,11 +1032,61 @@ def check_receipt_place(connection, po, receipt, order: dict):
 			or (not branch and home and kind == "warehouse" and place_id != home)
 		)
 		if wrong:
-			raise Fatal(
-				_(
-					"Purchase Receipt {0} receives at Warehouse {1}, which is not the place of Koomyo order {2}, and the order has no shares: Koomyo would put the whole delivery at the order's own place. Koomyo splits a delivery over several places only when the order's lines carry shares. Give the Purchase Order one row for each Warehouse (Update Items), which sends the shares, then press Retry. ERPNext only lets a row be split once the Purchase Receipts of that row are cancelled (cancel them all: each one is reversed in Koomyo if it was received there), then make the receipts again, one for each Warehouse."
-				).format(receipt.name, warehouse, po.koomyo_id)
+			return _(
+				"Purchase Receipt {0} receives at Warehouse {1}, which is not the place of Koomyo order {2}, and the order has no shares: Koomyo would put the whole delivery at the order's own place. Koomyo splits a delivery over several places only when the order's lines carry shares. Give the Purchase Order one row for each Warehouse (Update Items), which sends the shares, then press Retry. ERPNext only lets a row be split once the Purchase Receipts of that row are cancelled (cancel them all: each one is reversed in Koomyo if it was received there), then make the receipts again, one for each Warehouse."
+			).format(receipt_name, warehouse, po_koomyo_id)
+	return None
+
+
+def check_receipt_place(connection, po, receipt, order: dict):
+	problem = receipt_place_problem(
+		connection,
+		po.koomyo_id,
+		[i for i in receipt.items if i.purchase_order == po.name],
+		order,
+		receipt.name,
+	)
+	if problem:
+		raise Fatal(problem)
+
+
+def before_purchase_receipt_submit(doc, method=None):
+	"""Koomyo would refuse, or misplace, this receipt: ERPNext does not take it either.
+
+	Asked of Koomyo (the order as it stands), not kept here: a Purchase Order this app sent, received at a Warehouse
+	its Koomyo order does not deliver to. If Koomyo cannot be read, a warning is shown and nothing is blocked.
+	"""
+	if doc.get("is_return") or doc.get("koomyo_connection"):
+		return
+	for name in sorted({row.purchase_order for row in doc.items if row.purchase_order}):
+		po = frappe.db.get_value(
+			"Purchase Order",
+			name,
+			["koomyo_connection", "koomyo_id", "koomyo_content", "docstatus"],
+			as_dict=True,
+		)
+		if not po or not po.koomyo_connection or not po.koomyo_id or po.koomyo_content or po.docstatus != 1:
+			continue  # never sent to Koomyo, or an order Koomyo made itself
+		connection = frappe.get_cached_doc("Koomyo Connection", po.koomyo_connection)
+		if not (connection.enabled and connection.sync_purchasing):
+			continue
+		try:
+			order = KoomyoClient.for_connection(connection).get(
+				f"/purchase-orders/{quote(po.koomyo_id, safe='')}"
 			)
+		except KoomyoAPIError as e:
+			frappe.msgprint(
+				_(
+					"Koomyo could not be asked about order {0} ({1}); the receipt is checked again when it is sent."
+				).format(po.koomyo_id, e.code),
+				indicator="orange",
+			)
+			continue
+		problem = receipt_place_problem(
+			connection, po.koomyo_id, [r for r in doc.items if r.purchase_order == name], order, doc.name
+		)
+		if problem:
+			frappe.throw(problem, title=_("Koomyo would not take this receipt"))
 
 
 def link_delivery(receipt, connection, delivery_id: str):

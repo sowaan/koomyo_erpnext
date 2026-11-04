@@ -22,6 +22,10 @@ BRANCH = "90000000-0000-4000-8000-000000000001"
 class PurchasingTestCase(StockTestCase):
 	def setUp(self):
 		super().setUp()
+		# Submitting a Purchase Receipt asks Koomyo about its order first: a fake answers for the whole test.
+		patcher = self.koomyo()
+		patcher.__enter__()
+		self.addCleanup(patcher.__exit__, None, None, None)
 		self.conn_a.reload()
 		self.conn_a.sync_purchasing = 1
 		self.conn_a.save()

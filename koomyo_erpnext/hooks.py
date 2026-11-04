@@ -299,6 +299,7 @@ doc_events = {
 	"Material Request": {"before_submit": "koomyo_erpnext.sync.purchasing.before_material_request_submit"},
 	"Purchase Invoice": {"on_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_invoice_submit"},
 	"Purchase Receipt": {
+		"before_submit": "koomyo_erpnext.sync.purchasing.before_purchase_receipt_submit",
 		"on_submit": [
 			"koomyo_erpnext.sync.purchasing.on_purchase_receipt_submit",
 			"koomyo_erpnext.sync.purchase_edits.on_purchase_return_submit",
