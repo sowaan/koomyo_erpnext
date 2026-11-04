@@ -27,10 +27,16 @@
   "branch_map",
   "section_payment_map",
   "payment_map",
+  "default_payment_mode",
   "section_tax_map",
   "tax_map",
-  "default_payment_mode",
-  "tab_syncs",
+  "section_discount_map",
+  "discount_map",
+  "section_stock_maps",
+  "uom_map",
+  "cb_stock_maps",
+  "waste_map",
+  "tab_sales",
   "section_syncs",
   "sync_sales",
   "sync_refunds",
@@ -40,21 +46,21 @@
   "menu_item_group",
   "income_account",
   "price_list",
-  "cb_sales",
   "default_cost_center",
+  "cb_sales",
   "delivery_fee_account",
   "channel_markup_account",
   "payment_adjustment_account",
+  "section_cod",
   "cod_shortfall_account",
   "cod_extra_account",
-  "section_discount_map",
-  "discount_map",
   "section_shifts",
   "sync_shifts",
   "section_shift_settings",
   "cash_over_short_account",
   "cb_shifts",
   "drawer_account",
+  "tab_stock",
   "section_stock",
   "sync_stock",
   "section_stock_settings",
@@ -68,26 +74,26 @@
   "stock_adjustment_account",
   "transfer_loss_account",
   "supplies_expense_account",
+  "section_stock_transit",
   "transit_warehouse",
+  "section_stock_push",
   "push_stock_transfers",
   "push_stock_changes",
   "push_ingredients",
-  "section_stock_maps",
-  "uom_map",
-  "cb_stock_maps",
-  "waste_map",
+  "tab_purchasing",
   "section_purchasing",
   "sync_purchasing",
   "book_koomyo_purchases",
   "keep_draft_orders",
-  "sync_purchase_requests",
-  "keep_draft_requests",
-  "deliver_to",
+  "cb_purchasing",
   "mark_orders_ordered",
   "restate_costs_from_invoices",
+  "section_purchase_requests",
+  "sync_purchase_requests",
+  "keep_draft_requests",
   "section_purchasing_settings",
   "main_warehouse",
-  "cb_purchasing",
+  "cb_purchasing_in",
   "supplier_group",
   "section_purchase_taxes",
   "purchase_tax_account",
@@ -96,7 +102,7 @@
   "purchase_charge_account",
   "purchase_charge_expense_account",
   "landed_cost_method",
-  "purchase_sync_cursor",
+  "tab_people",
   "section_customers",
   "sync_customers",
   "section_customer_settings",
@@ -112,11 +118,6 @@
   "cb_webhook",
   "webhook_secret",
   "webhook_token",
-  "tab_catalog",
-  "section_catalog",
-  "catalog_loaded_on",
-  "cb_catalog",
-  "catalog_summary",
   "tab_status",
   "section_restaurant",
   "restaurant_name",
@@ -133,10 +134,17 @@
   "last_caught_up_on",
   "cb_feed",
   "last_alert_on",
+  "section_catalog",
+  "catalog_loaded_on",
+  "cb_catalog",
+  "catalog_summary",
   "section_setup_log",
   "setup_log",
+  "purchase_sync_cursor",
+  "cb_technical",
   "purchase_request_cursor",
-  "purchase_requests_state"
+  "purchase_requests_state",
+  "deliver_to"
  ],
  "fields": [
   {
@@ -260,7 +268,7 @@
   {
    "fieldname": "tab_setup",
    "fieldtype": "Tab Break",
-   "label": "Setup"
+   "label": "Maps"
   },
   {
    "description": "Each Koomyo branch maps to a Cost Center and Warehouse of this connection's Company; each Koomyo central warehouse to a Warehouse.",
@@ -286,6 +294,13 @@
    "options": "Koomyo Payment Map"
   },
   {
+   "description": "A payment method Koomyo sends that is not in the Payment Map (a new one, such as an online card) is booked to this Mode of Payment and its default account for the Company, and the Event Log says so. Leave empty to have such an order fail with the Payment Map row to add (the default).",
+   "fieldname": "default_payment_mode",
+   "fieldtype": "Link",
+   "label": "Default Mode of Payment",
+   "options": "Mode of Payment"
+  },
+  {
    "description": "Koomyo sends one tax amount and rate per order, and whether prices include tax. Map each rate to a tax account. The most exact row wins: branch and rate, then rate, then branch, then an empty row.",
    "fieldname": "section_tax_map",
    "fieldtype": "Section Break",
@@ -298,9 +313,43 @@
    "options": "Koomyo Tax Map"
   },
   {
-   "fieldname": "tab_syncs",
+   "description": "Koomyo discounts are posted as a discount on each line (list price, discount, net price). Give each source its own account so promotions, vouchers and staff discounts can be told apart in the books.",
+   "fieldname": "section_discount_map",
+   "fieldtype": "Section Break",
+   "label": "Discount Accounts"
+  },
+  {
+   "fieldname": "discount_map",
+   "fieldtype": "Table",
+   "label": "Discount Map",
+   "options": "Koomyo Discount Map"
+  },
+  {
+   "depends_on": "sync_stock",
+   "fieldname": "section_stock_maps",
+   "fieldtype": "Section Break",
+   "label": "Units and Waste Reasons"
+  },
+  {
+   "fieldname": "uom_map",
+   "fieldtype": "Table",
+   "label": "UOM Map",
+   "options": "Koomyo UOM Map"
+  },
+  {
+   "fieldname": "cb_stock_maps",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "waste_map",
+   "fieldtype": "Table",
+   "label": "Waste Map",
+   "options": "Koomyo Waste Map"
+  },
+  {
+   "fieldname": "tab_sales",
    "fieldtype": "Tab Break",
-   "label": "Syncs"
+   "label": "Sales"
   },
   {
    "fieldname": "section_syncs",
@@ -367,14 +416,14 @@
    "options": "Price List"
   },
   {
-   "fieldname": "cb_sales",
-   "fieldtype": "Column Break"
-  },
-  {
    "fieldname": "default_cost_center",
    "fieldtype": "Link",
    "label": "Cost Center for Records Without a Branch",
    "options": "Cost Center"
+  },
+  {
+   "fieldname": "cb_sales",
+   "fieldtype": "Column Break"
   },
   {
    "description": "Needed once an order has a delivery fee.",
@@ -398,6 +447,14 @@
    "options": "Account"
   },
   {
+   "fieldname": "section_cod",
+   "fieldtype": "Section Break",
+   "label": "Cash on Delivery",
+   "depends_on": "sync_sales",
+   "collapsible": 1,
+   "description": "A rider who collected less than the amount due, or kept extra cash. Both are optional: without the accounts the sale still books and the Event Log says what to set."
+  },
+  {
    "description": "A delivery order the rider collected short on (with a manager's permission): the shortfall left unpaid on the invoice is written off to this expense account. Without it the invoice stays partly unpaid.",
    "fieldname": "cod_shortfall_account",
    "fieldtype": "Link",
@@ -410,18 +467,6 @@
    "fieldtype": "Link",
    "label": "Rider Extra Cash Account",
    "options": "Account"
-  },
-  {
-   "description": "Koomyo discounts are posted as a discount on each line (list price, discount, net price). Give each source its own account so promotions, vouchers and staff discounts can be told apart in the books.",
-   "fieldname": "section_discount_map",
-   "fieldtype": "Section Break",
-   "label": "Discount Accounts"
-  },
-  {
-   "fieldname": "discount_map",
-   "fieldtype": "Table",
-   "label": "Discount Map",
-   "options": "Koomyo Discount Map"
   },
   {
    "fieldname": "section_shifts",
@@ -458,6 +503,11 @@
    "fieldtype": "Link",
    "label": "Cash Drawer Account",
    "options": "Account"
+  },
+  {
+   "fieldname": "tab_stock",
+   "fieldtype": "Tab Break",
+   "label": "Stock"
   },
   {
    "fieldname": "section_stock",
@@ -545,25 +595,61 @@
   },
   {
    "depends_on": "sync_stock",
-   "fieldname": "section_stock_maps",
+   "description": "Supplies (soap, gloves, bin liners, uniforms) are an expense, never food cost. What an employee takes (stock movement supply_issue) is booked to this account, not to Cost of Goods Sold or Stock Adjustment.",
+   "fieldname": "supplies_expense_account",
+   "fieldtype": "Link",
+   "label": "Supplies Expense Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "section_stock_transit",
    "fieldtype": "Section Break",
-   "label": "Units and Waste Reasons"
+   "label": "Transfers in Steps",
+   "depends_on": "sync_stock"
   },
   {
-   "fieldname": "uom_map",
-   "fieldtype": "Table",
-   "label": "UOM Map",
-   "options": "Koomyo UOM Map"
+   "depends_on": "sync_stock",
+   "description": "Stock sent between places waits here until it arrives (ERPNext's Send to Warehouse / Receive at Warehouse). With it, a transfer is posted in steps: sent, each delivery, then returned or lost. Without it, a transfer is posted in one step when it completes.",
+   "fieldname": "transit_warehouse",
+   "fieldtype": "Link",
+   "label": "Transit Warehouse",
+   "options": "Warehouse"
   },
   {
-   "fieldname": "cb_stock_maps",
-   "fieldtype": "Column Break"
+   "fieldname": "section_stock_push",
+   "fieldtype": "Section Break",
+   "label": "Send to Koomyo (opt in)",
+   "depends_on": "sync_stock",
+   "description": "Nothing is sent unless the switch is on and the document is marked. Each needs its scope on the API key."
   },
   {
-   "fieldname": "waste_map",
-   "fieldtype": "Table",
-   "label": "Waste Map",
-   "options": "Koomyo Waste Map"
+   "default": "0",
+   "depends_on": "sync_stock",
+   "description": "A Material Transfer made in ERPNext between warehouses on the Branch Map is also made in Koomyo (needs the transfers.write scope). A plain one is sent and received at once; with a Transit Warehouse, the first Receive at Warehouse makes it, because ERPNext only knows the destination then.",
+   "fieldname": "push_stock_transfers",
+   "fieldtype": "Check",
+   "label": "Send Stock Transfers to Koomyo"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_stock",
+   "description": "Stock Entries (Material Issue or Receipt) you mark Send To Koomyo As, and Stock Reconciliations you mark as a count, are also recorded in Koomyo (needs the stock.write scope). Nothing is sent unless you mark it, and never sales: Koomyo takes sales off stock itself.",
+   "fieldname": "push_stock_changes",
+   "fieldtype": "Check",
+   "label": "Send Stock Changes to Koomyo"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_stock",
+   "description": "Items you mark Send To Koomyo As become ingredients in Koomyo, and a linked Item's name, unit, disabled flag, default supplier and reorder levels follow; a Warehouse you mark becomes a Koomyo warehouse. Deleting a linked Item deletes the ingredient in Koomyo, or switches it off when it is in use (needs the ingredients.write scope).",
+   "fieldname": "push_ingredients",
+   "fieldtype": "Check",
+   "label": "Send Items and Warehouses to Koomyo"
+  },
+  {
+   "fieldname": "tab_purchasing",
+   "fieldtype": "Tab Break",
+   "label": "Purchasing"
   },
   {
    "fieldname": "section_purchasing",
@@ -594,6 +680,48 @@
    "label": "Keep Koomyo Draft Orders as Drafts"
   },
   {
+   "fieldname": "cb_purchasing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "depends_on": "sync_purchasing",
+   "description": "An order ERPNext sends is created as a draft in Koomyo. ERPNext already placed it with the supplier, so Koomyo is told to mark it ordered (nothing is emailed: do not press Send there). Switch off to leave orders as drafts.",
+   "fieldname": "mark_orders_ordered",
+   "fieldtype": "Check",
+   "label": "Mark Sent Orders as Ordered"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_purchasing",
+   "description": "When a Purchase Invoice charges a different price than the Purchase Receipt it is made from, correct the unit cost of that delivery in Koomyo (quantities are never changed). Koomyo then applies the restaurant's own ingredient cost rule. Switch on only if prices are corrected by the supplier's invoice.",
+   "fieldname": "restate_costs_from_invoices",
+   "fieldtype": "Check",
+   "label": "Send Invoice Price Differences"
+  },
+  {
+   "fieldname": "section_purchase_requests",
+   "fieldtype": "Section Break",
+   "label": "Purchase Requests",
+   "depends_on": "sync_purchasing"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_purchasing",
+   "description": "Branch purchase requests (submitted in Koomyo) become Material Requests once purchasing has approved lines. A Purchase Order made in ERPNext from such a Material Request is sent to Koomyo with a share for each branch, and each Purchase Receipt is received at its own place. Needs the restaurant's Inventory app and purchase requests feature. In Koomyo, set Settings > Inventory and costs > Purchase requests > Who orders to the external system, so only ERPNext orders, and do not press Send on an order ERPNext made: Send emails the supplier and ERPNext already placed the order.",
+   "fieldname": "sync_purchase_requests",
+   "fieldtype": "Check",
+   "label": "Sync Purchase Requests"
+  },
+  {
+   "default": "0",
+   "depends_on": "sync_purchase_requests",
+   "description": "A request with nothing approved yet is kept here as a draft Material Request with the quantities the branch asked for (it moves nothing). When purchasing approves lines the same document is rebuilt with the approved quantities and submitted; when the request is rejected, cancelled or deleted in Koomyo the draft is deleted. A draft cannot be submitted by hand. Off: such requests are skipped.",
+   "fieldname": "keep_draft_requests",
+   "fieldtype": "Check",
+   "label": "Keep Unapproved Koomyo Requests as Drafts"
+  },
+  {
    "depends_on": "eval:doc.sync_purchasing && doc.book_koomyo_purchases",
    "fieldname": "section_purchasing_settings",
    "fieldtype": "Section Break",
@@ -608,7 +736,7 @@
    "options": "Warehouse"
   },
   {
-   "fieldname": "cb_purchasing",
+   "fieldname": "cb_purchasing_in",
    "fieldtype": "Column Break"
   },
   {
@@ -617,6 +745,58 @@
    "label": "Supplier Group",
    "mandatory_depends_on": "book_koomyo_purchases",
    "options": "Supplier Group"
+  },
+  {
+   "depends_on": "eval:doc.sync_purchasing && doc.book_koomyo_purchases",
+   "description": "Koomyo sends the tax, any withholding and extra charges (delivery, labour) of each order. Map them to accounts so the Purchase Order and Receipt match Koomyo to the cent.",
+   "fieldname": "section_purchase_taxes",
+   "fieldtype": "Section Break",
+   "label": "Purchase Taxes and Charges"
+  },
+  {
+   "description": "Input tax that can be claimed back (not part of what an ingredient costs).",
+   "fieldname": "purchase_tax_account",
+   "fieldtype": "Link",
+   "label": "Purchase Tax Account",
+   "options": "Account"
+  },
+  {
+   "description": "Where withholding tax deducted from the supplier's bill is owed. Never part of cost.",
+   "fieldname": "purchase_withholding_account",
+   "fieldtype": "Link",
+   "label": "Withholding Tax Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "cb_purchase_taxes",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "An account of type Expenses Included In Valuation: tax that cannot be claimed back and charges spread over cost end up in the cost of the goods through it.",
+   "fieldname": "purchase_charge_account",
+   "fieldtype": "Link",
+   "label": "Landed Cost Account",
+   "options": "Account"
+  },
+  {
+   "description": "Charges that are not spread over cost (an expense only).",
+   "fieldname": "purchase_charge_expense_account",
+   "fieldtype": "Link",
+   "label": "Charges Expense Account",
+   "options": "Account"
+  },
+  {
+   "default": "Follow Koomyo",
+   "description": "Follow Koomyo uses each charge's own setting (none, by value, by quantity). The others override it for every charge of the connection.",
+   "fieldname": "landed_cost_method",
+   "fieldtype": "Select",
+   "label": "Charges in Landed Cost",
+   "options": "Follow Koomyo\nNone\nBy Value\nBy Quantity"
+  },
+  {
+   "fieldname": "tab_people",
+   "fieldtype": "Tab Break",
+   "label": "Customers and Complaints"
   },
   {
    "fieldname": "section_customers",
@@ -653,6 +833,18 @@
    "label": "Territory",
    "mandatory_depends_on": "sync_customers",
    "options": "Territory"
+  },
+  {
+   "fieldname": "section_complaints",
+   "fieldtype": "Section Break",
+   "label": "Complaints"
+  },
+  {
+   "default": "0",
+   "description": "Koomyo complaints (complaint.created and complaint.updated) become Issues: ticket number and summary, status, priority, category, the order it is about, resolution and its cost. The customer's name and phone are never copied. Needs the complaints.read scope and a restaurant with the Complaints app.",
+   "fieldname": "sync_complaints",
+   "fieldtype": "Check",
+   "label": "Sync Complaints"
   },
   {
    "fieldname": "tab_webhook",
@@ -700,35 +892,6 @@
    "no_copy": 1,
    "read_only": 1,
    "unique": 1
-  },
-  {
-   "fieldname": "tab_catalog",
-   "fieldtype": "Tab Break",
-   "label": "Menu and Ingredients"
-  },
-  {
-   "description": "Use the Load Menu and Ingredients button to make every Koomyo menu item and ingredient an Item now, instead of on first sale or first stock movement. Loading again updates names, categories and active flags; nothing is ever doubled.",
-   "fieldname": "section_catalog",
-   "fieldtype": "Section Break",
-   "label": "Menu and Ingredients"
-  },
-  {
-   "fieldname": "catalog_loaded_on",
-   "fieldtype": "Datetime",
-   "label": "Last Loaded On",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "cb_catalog",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "catalog_summary",
-   "fieldtype": "Small Text",
-   "label": "Last Load",
-   "no_copy": 1,
-   "read_only": 1
   },
   {
    "fieldname": "tab_status",
@@ -833,10 +996,35 @@
    "read_only": 1
   },
   {
+   "description": "Use the Load Menu and Ingredients button to make every Koomyo menu item and ingredient an Item now, instead of on first sale or first stock movement. Loading again updates names, categories and active flags; nothing is ever doubled.",
+   "fieldname": "section_catalog",
+   "fieldtype": "Section Break",
+   "label": "Menu and Ingredients"
+  },
+  {
+   "fieldname": "catalog_loaded_on",
+   "fieldtype": "Datetime",
+   "label": "Last Loaded On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_catalog",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "catalog_summary",
+   "fieldtype": "Small Text",
+   "label": "Last Load",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "section_setup_log",
    "fieldtype": "Section Break",
-   "label": "Created by Set Up From Koomyo"
+   "label": "Technical",
+   "description": "What the app keeps for itself. Nothing here needs editing."
   },
   {
    "fieldname": "setup_log",
@@ -847,53 +1035,6 @@
    "read_only": 1
   },
   {
-   "depends_on": "eval:doc.sync_purchasing && doc.book_koomyo_purchases",
-   "description": "Koomyo sends the tax, any withholding and extra charges (delivery, labour) of each order. Map them to accounts so the Purchase Order and Receipt match Koomyo to the cent.",
-   "fieldname": "section_purchase_taxes",
-   "fieldtype": "Section Break",
-   "label": "Purchase Taxes and Charges"
-  },
-  {
-   "description": "Input tax that can be claimed back (not part of what an ingredient costs).",
-   "fieldname": "purchase_tax_account",
-   "fieldtype": "Link",
-   "label": "Purchase Tax Account",
-   "options": "Account"
-  },
-  {
-   "description": "Where withholding tax deducted from the supplier's bill is owed. Never part of cost.",
-   "fieldname": "purchase_withholding_account",
-   "fieldtype": "Link",
-   "label": "Withholding Tax Account",
-   "options": "Account"
-  },
-  {
-   "fieldname": "cb_purchase_taxes",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "An account of type Expenses Included In Valuation: tax that cannot be claimed back and charges spread over cost end up in the cost of the goods through it.",
-   "fieldname": "purchase_charge_account",
-   "fieldtype": "Link",
-   "label": "Landed Cost Account",
-   "options": "Account"
-  },
-  {
-   "description": "Charges that are not spread over cost (an expense only).",
-   "fieldname": "purchase_charge_expense_account",
-   "fieldtype": "Link",
-   "label": "Charges Expense Account",
-   "options": "Account"
-  },
-  {
-   "default": "Follow Koomyo",
-   "description": "Follow Koomyo uses each charge's own setting (none, by value, by quantity). The others override it for every charge of the connection.",
-   "fieldname": "landed_cost_method",
-   "fieldtype": "Select",
-   "label": "Charges in Landed Cost",
-   "options": "Follow Koomyo\nNone\nBy Value\nBy Quantity"
-  },
-  {
    "fieldname": "purchase_sync_cursor",
    "fieldtype": "Data",
    "hidden": 1,
@@ -901,73 +1042,8 @@
    "read_only": 1
   },
   {
-   "depends_on": "sync_stock",
-   "description": "Stock sent between places waits here until it arrives (ERPNext's Send to Warehouse / Receive at Warehouse). With it, a transfer is posted in steps: sent, each delivery, then returned or lost. Without it, a transfer is posted in one step when it completes.",
-   "fieldname": "transit_warehouse",
-   "fieldtype": "Link",
-   "label": "Transit Warehouse",
-   "options": "Warehouse"
-  },
-  {
-   "default": "0",
-   "depends_on": "sync_stock",
-   "description": "A Material Transfer made in ERPNext between warehouses on the Branch Map is also made in Koomyo (needs the transfers.write scope). A plain one is sent and received at once; with a Transit Warehouse, the first Receive at Warehouse makes it, because ERPNext only knows the destination then.",
-   "fieldname": "push_stock_transfers",
-   "fieldtype": "Check",
-   "label": "Send Stock Transfers to Koomyo"
-  },
-  {
-   "default": "0",
-   "depends_on": "sync_stock",
-   "description": "Stock Entries (Material Issue or Receipt) you mark Send To Koomyo As, and Stock Reconciliations you mark as a count, are also recorded in Koomyo (needs the stock.write scope). Nothing is sent unless you mark it, and never sales: Koomyo takes sales off stock itself.",
-   "fieldname": "push_stock_changes",
-   "fieldtype": "Check",
-   "label": "Send Stock Changes to Koomyo"
-  },
-  {
-   "default": "0",
-   "depends_on": "sync_stock",
-   "description": "Items you mark Send To Koomyo As become ingredients in Koomyo, and a linked Item's name, unit, disabled flag, default supplier and reorder levels follow; a Warehouse you mark becomes a Koomyo warehouse. Deleting a linked Item deletes the ingredient in Koomyo, or switches it off when it is in use (needs the ingredients.write scope).",
-   "fieldname": "push_ingredients",
-   "fieldtype": "Check",
-   "label": "Send Items and Warehouses to Koomyo"
-  },
-  {
-   "fieldname": "section_complaints",
-   "fieldtype": "Section Break",
-   "label": "Complaints"
-  },
-  {
-   "default": "0",
-   "description": "Koomyo complaints (complaint.created and complaint.updated) become Issues: ticket number and summary, status, priority, category, the order it is about, resolution and its cost. The customer's name and phone are never copied. Needs the complaints.read scope and a restaurant with the Complaints app.",
-   "fieldname": "sync_complaints",
-   "fieldtype": "Check",
-   "label": "Sync Complaints"
-  },
-  {
-   "default": "0",
-   "depends_on": "sync_purchasing",
-   "description": "Branch purchase requests (submitted in Koomyo) become Material Requests once purchasing has approved lines. A Purchase Order made in ERPNext from such a Material Request is sent to Koomyo with a share for each branch, and each Purchase Receipt is received at its own place. Needs the restaurant's Inventory app and purchase requests feature. In Koomyo, set Settings > Inventory and costs > Purchase requests > Who orders to the external system, so only ERPNext orders, and do not press Send on an order ERPNext made: Send emails the supplier and ERPNext already placed the order.",
-   "fieldname": "sync_purchase_requests",
-   "fieldtype": "Check",
-   "label": "Sync Purchase Requests"
-  },
-  {
-   "default": "0",
-   "depends_on": "sync_purchase_requests",
-   "description": "A request with nothing approved yet is kept here as a draft Material Request with the quantities the branch asked for (it moves nothing). When purchasing approves lines the same document is rebuilt with the approved quantities and submitted; when the request is rejected, cancelled or deleted in Koomyo the draft is deleted. A draft cannot be submitted by hand. Off: such requests are skipped.",
-   "fieldname": "keep_draft_requests",
-   "fieldtype": "Check",
-   "label": "Keep Unapproved Koomyo Requests as Drafts"
-  },
-  {
-   "default": "Koomyo Decides",
-   "depends_on": "sync_purchase_requests",
-   "description": "No longer needed: each share of a Purchase Order goes where the row's Warehouse says (a branch's Warehouse: straight to the branch; a Koomyo warehouse's: to that warehouse), which is also where its Purchase Receipt is received. Kept so existing connections load; it is not sent.",
-   "fieldname": "deliver_to",
-   "fieldtype": "Select",
-   "label": "Deliver Shares To (not used)",
-   "options": "Koomyo Decides\nWarehouse\nBranches"
+   "fieldname": "cb_technical",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "purchase_request_cursor",
@@ -975,21 +1051,6 @@
    "hidden": 1,
    "label": "Purchase Requests Read Up To",
    "read_only": 1
-  },
-  {
-   "depends_on": "sync_stock",
-   "description": "Supplies (soap, gloves, bin liners, uniforms) are an expense, never food cost. What an employee takes (stock movement supply_issue) is booked to this account, not to Cost of Goods Sold or Stock Adjustment.",
-   "fieldname": "supplies_expense_account",
-   "fieldtype": "Link",
-   "label": "Supplies Expense Account",
-   "options": "Account"
-  },
-  {
-   "description": "A payment method Koomyo sends that is not in the Payment Map (a new one, such as an online card) is booked to this Mode of Payment and its default account for the Company, and the Event Log says so. Leave empty to have such an order fail with the Payment Map row to add (the default).",
-   "fieldname": "default_payment_mode",
-   "fieldtype": "Link",
-   "label": "Default Mode of Payment",
-   "options": "Mode of Payment"
   },
   {
    "description": "From GET /account at the last Test Connection: enabled or not, and who orders (koomyo or external).",
@@ -1000,20 +1061,14 @@
    "read_only": 1
   },
   {
-   "default": "1",
-   "depends_on": "sync_purchasing",
-   "description": "An order ERPNext sends is created as a draft in Koomyo. ERPNext already placed it with the supplier, so Koomyo is told to mark it ordered (nothing is emailed: do not press Send there). Switch off to leave orders as drafts.",
-   "fieldname": "mark_orders_ordered",
-   "fieldtype": "Check",
-   "label": "Mark Sent Orders as Ordered"
-  },
-  {
-   "default": "0",
-   "depends_on": "sync_purchasing",
-   "description": "When a Purchase Invoice charges a different price than the Purchase Receipt it is made from, correct the unit cost of that delivery in Koomyo (quantities are never changed). Koomyo then applies the restaurant's own ingredient cost rule. Switch on only if prices are corrected by the supplier's invoice.",
-   "fieldname": "restate_costs_from_invoices",
-   "fieldtype": "Check",
-   "label": "Send Invoice Price Differences"
+   "default": "Koomyo Decides",
+   "depends_on": "sync_purchase_requests",
+   "description": "No longer needed: each share of a Purchase Order goes where the row's Warehouse says (a branch's Warehouse: straight to the branch; a Koomyo warehouse's: to that warehouse), which is also where its Purchase Receipt is received. Kept so existing connections load; it is not sent.",
+   "fieldname": "deliver_to",
+   "fieldtype": "Select",
+   "label": "Deliver Shares To (not used)",
+   "options": "Koomyo Decides\nWarehouse\nBranches",
+   "hidden": 1
   }
  ],
  "links": [],
