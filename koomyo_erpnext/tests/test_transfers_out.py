@@ -332,8 +332,9 @@ class TestAutomaticTransit(TransfersOutCase):
 		self.conn_a.reload()
 		self.conn_a.transit_warehouse = None
 		self.conn_a.save()
-		entry = frappe.get_doc("Stock Entry", self.send_to(STORES, submit=False).name)
-		self.assertEqual(([r.t_warehouse for r in entry.items], entry.koomyo_destination), ([STORES], None))
+		# a Transit-type Warehouse as the target (ERPNext v16 insists on one for Add to Transit)
+		entry = frappe.get_doc("Stock Entry", self.send_to(TRANSIT, submit=False).name)
+		self.assertEqual(([r.t_warehouse for r in entry.items], entry.koomyo_destination), ([TRANSIT], None))
 		with self.assertRaises(frappe.ValidationError) as caught:
 			entry.submit()
 		self.assertIn("has no Transit Warehouse", str(caught.exception))
