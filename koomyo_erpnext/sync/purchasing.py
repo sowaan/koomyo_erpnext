@@ -1024,7 +1024,7 @@ def check_receipt_place(connection, po, receipt, order: dict):
 		if wrong:
 			raise Fatal(
 				_(
-					"Purchase Receipt {0} receives at Warehouse {1}, which is not the place of Koomyo order {2}, and the order has no shares: Koomyo would put the whole delivery at the order's own place. Koomyo splits a delivery over several places only when the order's lines carry shares. Give the Purchase Order one row for each Warehouse (Update Items), which sends the shares, then press Retry. If the order was already received in Koomyo, cancel that receipt first (it is reversed there)."
+					"Purchase Receipt {0} receives at Warehouse {1}, which is not the place of Koomyo order {2}, and the order has no shares: Koomyo would put the whole delivery at the order's own place. Koomyo splits a delivery over several places only when the order's lines carry shares. Give the Purchase Order one row for each Warehouse (Update Items), which sends the shares, then press Retry. ERPNext only lets a row be split once the Purchase Receipts of that row are cancelled (cancel them all: each one is reversed in Koomyo if it was received there), then make the receipts again, one for each Warehouse."
 				).format(receipt.name, warehouse, po.koomyo_id)
 			)
 
