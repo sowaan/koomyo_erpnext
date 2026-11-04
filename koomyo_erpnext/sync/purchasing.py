@@ -74,6 +74,16 @@ def on_purchase_order_submit(doc, method=None):
 		connection = request_connection(doc)
 	if connection:
 		store_outbound(connection, "erpnext.purchase_order", doc)
+		return
+	# Not sent, and the person should know why (this is not an error: a company may order for places Koomyo does not run).
+	candidates = connections_for_company(doc.company)
+	if candidates:
+		warehouse = po_warehouse(doc) or _("(no single Warehouse)")
+		note = _(
+			"Not sent to Koomyo: Warehouse {0} is not on the Branch Map of connection {1}. If this order should go to Koomyo, add the Warehouse to the Branch Map and send it again (cancel and amend, or save it with a change)."
+		).format(warehouse, ", ".join(c.name for c in candidates))
+		doc.add_comment("Comment", note)
+		frappe.msgprint(note, indicator="orange", alert=True)
 
 
 def before_purchase_order_submit(doc, method=None):

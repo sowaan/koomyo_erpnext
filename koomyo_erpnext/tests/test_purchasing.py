@@ -190,10 +190,17 @@ class TestPurchaseOrders(PurchasingTestCase):
 		self.assertNotIn("branch_id", po_call["body"])
 
 	def test_order_for_other_warehouse_is_not_sent(self):
-		self.make_po(warehouse="Work In Progress - _KTA")
+		po = self.make_po(warehouse="Work In Progress - _KTA")
 		self.run_queue()
 		self.assertEqual(self.outbound(), [])
 		self.assertEqual(self.fake_a.writes, [])
+		# not an error, but the person is told why on the document
+		notes = frappe.get_all(
+			"Comment",
+			filters={"reference_doctype": "Purchase Order", "reference_name": po.name},
+			pluck="content",
+		)
+		self.assertTrue([n for n in notes if "Not sent to Koomyo" in n and "Work In Progress - _KTA" in n])
 
 	def test_item_that_is_not_an_ingredient(self):
 		if not frappe.db.exists("Item", "_KTEST-NAPKINS"):
