@@ -1005,7 +1005,9 @@ def send_receive(connection, client, po, doc, body: dict, action: str, before: s
 	return (doc.doctype, doc.name)
 
 
-def receipt_place_problem(connection, po_koomyo_id: str, items, order: dict, receipt_name: str) -> str | None:
+def receipt_place_problem(
+	connection, po_koomyo_id: str, items, order: dict, receipt_name: str, made_in_koomyo: bool = False
+) -> str | None:
 	"""Why Koomyo would put this receipt at the wrong place, or refuse it (None when it is fine).
 
 	An order without shares has one place; a receipt at another Warehouse would land there all the same, because
@@ -1035,6 +1037,10 @@ def receipt_place_problem(connection, po_koomyo_id: str, items, order: dict, rec
 			or (not branch and home and kind == "warehouse" and place_id != home)
 		)
 		if wrong:
+			if made_in_koomyo:
+				return _(
+					"Purchase Receipt {0} receives at Warehouse {1}, which is not the place of Koomyo order {2}, and the order has no shares: Koomyo would put the whole delivery at the order's own place. This order was made in Koomyo, so split it there (give each place its share in the Koomyo admin); it is then updated here. Until then receive it at its own place."
+				).format(receipt_name, warehouse, po_koomyo_id)
 			return _(
 				"Purchase Receipt {0} receives at Warehouse {1}, which is not the place of Koomyo order {2}, and the order has no shares: Koomyo would put the whole delivery at the order's own place. Koomyo splits a delivery over several places only when the order's lines carry shares. Give the Purchase Order one row for each Warehouse (Update Items), which sends the shares, then press Retry. ERPNext only lets a row be split once the Purchase Receipts of that row are cancelled (cancel them all: each one is reversed in Koomyo if it was received there), then make the receipts again, one for each Warehouse."
 			).format(receipt_name, warehouse, po_koomyo_id)
@@ -1048,6 +1054,7 @@ def check_receipt_place(connection, po, receipt, order: dict):
 		[i for i in receipt.items if i.purchase_order == po.name],
 		order,
 		receipt.name,
+		bool(po.get("koomyo_content")),
 	)
 	if problem:
 		raise Fatal(problem)
@@ -1056,8 +1063,8 @@ def check_receipt_place(connection, po, receipt, order: dict):
 def before_purchase_receipt_submit(doc, method=None):
 	"""Koomyo would refuse, or misplace, this receipt: ERPNext does not take it either.
 
-	Asked of Koomyo (the order as it stands), not kept here: a Purchase Order this app sent, received at a Warehouse
-	its Koomyo order does not deliver to. If Koomyo cannot be read, a warning is shown and nothing is blocked.
+	Asked of Koomyo (the order as it stands), not kept here: a Purchase Order Koomyo knows (sent from ERPNext, or made
+	in Koomyo: the receipt is sent either way), received at a Warehouse its Koomyo order does not deliver to. If Koomyo cannot be read, a warning is shown and nothing is blocked.
 	"""
 	if doc.get("is_return") or doc.get("koomyo_connection"):
 		return
@@ -1068,8 +1075,8 @@ def before_purchase_receipt_submit(doc, method=None):
 			["koomyo_connection", "koomyo_id", "koomyo_content", "docstatus"],
 			as_dict=True,
 		)
-		if not po or not po.koomyo_connection or not po.koomyo_id or po.koomyo_content or po.docstatus != 1:
-			continue  # never sent to Koomyo, or an order Koomyo made itself
+		if not po or not po.koomyo_connection or not po.koomyo_id or po.docstatus != 1:
+			continue  # an order Koomyo does not know (made in ERPNext and sent, or made in Koomyo: both get the delivery)
 		connection = frappe.get_cached_doc("Koomyo Connection", po.koomyo_connection)
 		if not (connection.enabled and connection.sync_purchasing):
 			continue
@@ -1086,7 +1093,12 @@ def before_purchase_receipt_submit(doc, method=None):
 			)
 			continue
 		problem = receipt_place_problem(
-			connection, po.koomyo_id, [r for r in doc.items if r.purchase_order == name], order, doc.name
+			connection,
+			po.koomyo_id,
+			[r for r in doc.items if r.purchase_order == name],
+			order,
+			doc.name,
+			bool(po.koomyo_content),
 		)
 		if problem:
 			frappe.throw(problem, title=_("Koomyo would not take this receipt"))

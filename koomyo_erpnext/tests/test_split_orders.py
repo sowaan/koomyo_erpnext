@@ -244,3 +244,32 @@ class TestSplitByEdit(SplitCase):
 			sorted((a["destination_id"], a["quantity"], a.get("branch_id")) for a in line["allocations"]),
 			sorted([(CENTRAL_WAREHOUSE, "50", None), (BRANCH, "70", BRANCH)]),
 		)
+
+
+class TestKoomyoMadeOrderReceipt(SplitCase):
+	def test_an_order_made_in_koomyo_is_checked_too_when_received_in_erpnext(self):
+		from koomyo_erpnext.tests.test_purchase_orders import event_for, make_order
+
+		self.conn_a.reload()
+		self.conn_a.update(
+			{"book_koomyo_purchases": 1, "main_warehouse": STORES, "supplier_group": "_Koomyo Suppliers"}
+		)
+		self.conn_a.save()
+		order = make_order("ordered", id="koomyo-po-1")  # one place: the Gulberg branch (Stores)
+		self.fake_a.purchase_orders["koomyo-po-1"] = order
+		self.assertEqual(self.book(event_for(order, "purchase.created", 995)).status, "Done")
+		name = frappe.db.get_value("Purchase Order", {"koomyo_id": "koomyo-po-1"})
+		self.assertTrue(frappe.db.get_value("Purchase Order", name, "koomyo_content"), "made from Koomyo")
+		from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
+
+		pr = make_purchase_receipt(name)
+		pr.posting_date = "2026-10-14"
+		pr.set_posting_time = 1
+		for row in pr.items:
+			row.qty = row.received_qty = 5
+			row.warehouse = CENTRAL
+		pr.insert()
+		with self.assertRaises(frappe.ValidationError) as caught:
+			pr.submit()
+		self.assertIn("has no shares", str(caught.exception))
+		self.assertIn("split it there", str(caught.exception))
