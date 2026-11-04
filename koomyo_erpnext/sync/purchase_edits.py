@@ -172,7 +172,9 @@ def frozen_differences(po, connection, order: dict, tax: dict) -> list[str]:
 			continue
 		if money(new["quantity_ordered"], "quantity") != money(line.get("quantity_ordered"), "quantity"):
 			seen.append(_("{0} quantity {1}").format(line.get("ingredient"), new["quantity_ordered"]))
-		if money(new["unit_cost"], "unit_cost") != money(line.get("unit_cost"), "unit_cost"):
+		if money(new["unit_cost"], "unit_cost").quantize(Decimal("0.0001")) != money(
+			line.get("unit_cost"), "unit_cost"
+		).quantize(Decimal("0.0001")):
 			seen.append(_("{0} price {1}").format(line.get("ingredient"), new["unit_cost"]))
 	seen += [_("new line {0}").format(e["ingredient_id"]) for e in wanted.values()]
 	return seen

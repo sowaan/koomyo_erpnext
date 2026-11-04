@@ -275,38 +275,47 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 	client = client or KoomyoClient.for_connection(connection)
 	supplier_id = push_supplier_doc(frappe.get_doc("Supplier", po.supplier), connection, client)
 
-	lines = order_lines_for_koomyo(po, connection, shares)
 	tax, residual = tax_fields(po, connection)
-	body = {
-		"supplier_id": supplier_id,
-		"notes": order_notes(po, residual),
-		"lines": lines,
-		**tax,
-		"external_ref": {"system": connection.ref_system or "erpnext", "external_id": po.name},
-	}
-	if row is not None and row.location_type != "Warehouse":
-		body["branch_id"] = row.koomyo_branch_id  # leave out to receive into the main warehouse (docs)
-	# The key says which document version and which body: the same key with another body is refused (422).
-	body_hash = hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:10]
-	try:
-		answer = koomyo_write(
-			connection,
-			client,
-			"POST",
-			"/purchase-orders",
-			body,
-			# A retry after a refusal gets its own key: Koomyo may answer the same key with the first (refused)
-			# answer again. The external_ref still makes the order unique for good.
-			idempotency_key(
-				"Purchase Order",
-				po.name,
-				po.modified,
-				f"po-{body_hash}" if event.get("attempt", 1) <= 1 else f"po-{body_hash}-{event['attempt']}",
-			),
-		)
-	except KoomyoAPIError as e:
-		explain_order_refusal(e, po)
-		raise
+	answer = None
+	# Six decimals on the price per piece keep the total exact; if Koomyo refuses that many, the order is sent
+	# again with four (a refusal creates nothing, and the new body has its own key).
+	for places in (6, 4):
+		lines = order_lines_for_koomyo(po, connection, shares, places)
+		body = {
+			"supplier_id": supplier_id,
+			"notes": order_notes(po, residual),
+			"lines": lines,
+			**tax,
+			"external_ref": {"system": connection.ref_system or "erpnext", "external_id": po.name},
+		}
+		if row is not None and row.location_type != "Warehouse":
+			body["branch_id"] = row.koomyo_branch_id  # leave out to receive into the main warehouse (docs)
+		# The key says which document version and which body: the same key with another body is refused (422).
+		body_hash = hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:10]
+		try:
+			answer = koomyo_write(
+				connection,
+				client,
+				"POST",
+				"/purchase-orders",
+				body,
+				# A retry after a refusal gets its own key: Koomyo may answer the same key with the first (refused)
+				# answer again. The external_ref still makes the order unique for good.
+				idempotency_key(
+					"Purchase Order",
+					po.name,
+					po.modified,
+					f"po-{body_hash}"
+					if event.get("attempt", 1) <= 1
+					else f"po-{body_hash}-{event['attempt']}",
+				),
+			)
+			break
+		except KoomyoAPIError as e:
+			if places == 6 and e.code == "invalid_parameter" and "unit_cost" in (e.message or "").lower():
+				continue
+			explain_order_refusal(e, po)
+			raise
 	if answer.get("object") != "purchase_order" or not answer.get("id"):
 		raise Fatal(_("Koomyo answered the purchase order with something else."))
 	check_same_document(po, answer)  # before anything is linked: a reused number is not this document
@@ -586,7 +595,17 @@ def order_shares(po, connection) -> dict:
 	return shares
 
 
-def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
+def cost_text(value, places: int = 6) -> str:
+	"""A unit cost as decimal text with up to `places` decimals, no trailing zeros.
+
+	A price per piece that comes from a larger unit (2500 a pack of 1100) is a long fraction: rounded to four places the
+	order lost 9 paisa in Koomyo (3300 x 2.2727 = 7499.91 against ERPNext's 7500.00).
+	"""
+	d = Decimal(str(value)).quantize(Decimal(1).scaleb(-places))
+	return format(d.normalize(), "f") if d != d.to_integral() else format(d.quantize(Decimal(1)), "f")
+
+
+def order_lines_for_koomyo(po, connection, shares: dict, places: int = 6) -> list[dict]:
 	"""One Koomyo line per ingredient. A row that fills a purchase request line becomes a share of its line.
 
 	Koomyo checks that a line's shares add up to its quantity, so the rows of one Item (made from several
@@ -636,7 +655,7 @@ def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 		entry = {
 			"ingredient_id": ingredient_id,
 			"quantity_ordered": text(line["qty"]),
-			"unit_cost": text(line["cost"]),
+			"unit_cost": cost_text(line["cost"], places),
 		}
 		if line["discount"]:
 			entry["discount_percent"] = text(line["discount"])

@@ -99,6 +99,7 @@ class FakeKoomyo:
 		self.warehouse_records: dict[str, dict] = {}  # warehouses made through POST /warehouses
 		self.branch_limited_key = False  # True plays a key limited to one branch (403 place_not_allowed)
 		self.supplies_on = True  # False plays a Koomyo whose Supplies switch is off
+		self.max_cost_places: int | None = None  # a Koomyo that takes only this many decimals on a unit_cost
 		self.transfers: dict[str, dict] = {}  # stock transfers made through POST /stock-transfers
 		self.transfer_calls: list[tuple] = []  # (action, body) of each accepted transfer call
 		self.destination_required = False
@@ -325,6 +326,15 @@ class FakeKoomyo:
 					return FakeResponse(200, order)
 			if body.get("supplier_id") not in self.suppliers:
 				return error_response(400, "invalid_parameter", "supplier_id")
+			if self.max_cost_places is not None:
+				for n, line in enumerate(body.get("lines") or [], start=1):
+					places = len(str(line["unit_cost"]).partition(".")[2])
+					if places > self.max_cost_places:
+						return error_response(
+							400,
+							"invalid_parameter",
+							f"Line {n}: unit_cost takes at most {self.max_cost_places} decimals.",
+						)
 			allocated = self._allocations(body)
 			if isinstance(allocated, FakeResponse):
 				return allocated

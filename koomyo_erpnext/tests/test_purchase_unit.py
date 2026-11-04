@@ -117,3 +117,53 @@ class TestOrderInThePurchaseUom(PurchasingTestCase):
 		(call,) = self.created("/purchase-orders")
 		(line,) = call["body"]["lines"]
 		self.assertEqual((line["quantity_ordered"], line["unit_cost"]), ("5000", "1450"))
+
+
+class TestPricePerPiece(PurchasingTestCase):
+	"""2500 a pack of 1100 is 2.2727... a piece: rounded to four places, 3300 pieces cost 7499.91, not 7500.00."""
+
+	def pack_order(self):
+		item = frappe.get_doc("Item", self.cheese)
+		item.append("uoms", {"uom": "Box", "conversion_factor": 1100})
+		item.save()
+		po = self.make_po(qty=3, rate=2500, submit=False)
+		row = po.items[0]
+		row.uom, row.conversion_factor = "Box", 1100
+		po.save()
+		po.submit()
+		frappe.db.commit()
+		return po
+
+	def test_the_price_per_piece_keeps_six_places_so_the_total_is_exact(self):
+		po = self.pack_order()
+		self.run_queue()
+		(call,) = self.created("/purchase-orders")
+		(line,) = call["body"]["lines"]
+		self.assertEqual((line["quantity_ordered"], line["unit_cost"]), ("3300", "2.272727"))
+		order = self.fake_a.purchase_orders["po-1"]
+		self.assertEqual(order["total_ordered"], "7500.00")
+		notes = frappe.get_all(
+			"Comment",
+			filters={"reference_doctype": "Purchase Order", "reference_name": po.name},
+			pluck="content",
+		)
+		self.assertTrue([n for n in notes if "Koomyo's total for this order is 7500.00" in n], notes)
+
+	def test_a_koomyo_that_takes_four_places_only_gets_the_order_again_with_four(self):
+		self.fake_a.max_cost_places = 4
+		po = self.pack_order()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		bodies = [w["body"] for w in self.created("/purchase-orders")]
+		self.assertEqual(
+			[b["lines"][0]["unit_cost"] for b in bodies], ["2.272727", "2.2727"], "refused, then sent again"
+		)
+		self.assertEqual(len(self.fake_a.purchase_orders), 1, "only the second made an order")
+		self.assertEqual(frappe.db.get_value("Purchase Order", po.name, "koomyo_id"), "po-1")
+
+	def test_a_whole_price_is_still_whole(self):
+		self.make_po(qty=10, rate=1450)
+		self.run_queue()
+		(call,) = self.created("/purchase-orders")
+		self.assertEqual(call["body"]["lines"][0]["unit_cost"], "1450")
