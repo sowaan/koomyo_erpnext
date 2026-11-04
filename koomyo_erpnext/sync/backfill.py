@@ -28,7 +28,7 @@ from frappe.utils import add_days, getdate, now_datetime
 from koomyo_erpnext.client import KoomyoClient, check_list_page
 from koomyo_erpnext.exceptions import KoomyoAPIError
 from koomyo_erpnext.sync import events
-from koomyo_erpnext.sync.common import find_existing, money
+from koomyo_erpnext.sync.common import find_existing, money, version_of
 
 BACKFILL = "Koomyo Backfill"
 SAMPLE_SIZE = 10
@@ -72,7 +72,7 @@ KINDS = {
 
 def purchase_already_there(connection, order: dict) -> bool:
 	"""A purchase order needs nothing when ERPNext holds its latest copy and every delivery."""
-	from koomyo_erpnext.sync.purchase_orders import deliveries, is_stale
+	from koomyo_erpnext.sync.purchase_orders import deliveries, fingerprint, is_stale, receipt_booked
 
 	po_name = find_existing("Purchase Order", connection, order["id"])
 	if order.get("status") == "draft":
@@ -82,13 +82,18 @@ def purchase_already_there(connection, order: dict) -> bool:
 	if not po_name:
 		return False
 	po = frappe.get_doc("Purchase Order", po_name)
-	if not po.get("koomyo_updated_at") or not (
-		is_stale(po, order) or po.koomyo_updated_at == order.get("updated_at")
-	):
-		return False
+	if po.get("koomyo_content"):
+		# An order made from Koomyo's copy: ERPNext holds this copy (by version, or by content when Koomyo sends none).
+		same = po.get("koomyo_updated_at") and (
+			is_stale(po, order) or po.koomyo_updated_at == order.get("updated_at")
+		)
+		if not same and not order.get("updated_at"):
+			same = po.koomyo_content == fingerprint(order)
+		if not same:
+			return False
+	# An order ERPNext made is only noted and receipted, so what is left to bring is its deliveries.
 	return all(
-		find_existing("Purchase Receipt", connection, r["id"])
-		or find_existing("Purchase Receipt", connection, order["id"])
+		receipt_booked(connection, r["id"]) or find_existing("Purchase Receipt", connection, order["id"])
 		for r in deliveries(order)
 	)
 
@@ -128,15 +133,10 @@ def envelope(connection, kind: str, record: dict) -> dict:
 	"""The live event this record would have come in, so the same handler books it."""
 	event_type, _doctype, key = KINDS[kind]
 	event_id = f"backfill:{kind}:{key(record)}"
-	if kind in ("supplier", "customer", "purchase_order") and record.get("updated_at"):
+	if kind in ("supplier", "customer", "purchase_order"):
 		# These records change: a later copy is another event, so a run after a change is not mistaken for a repeat.
-		event_id += f":{record['updated_at']}"
-	elif kind == "supplier":
-		from koomyo_erpnext.sync.suppliers import card_version
-
-		event_id += (
-			f":{card_version(record)}"  # a card without updated_at: its content says whether it changed
-		)
+		# (A record that carries no updated_at is versioned by its content.)
+		event_id += f":{version_of(record)}"
 	return {
 		"id": event_id,
 		"object": "event",

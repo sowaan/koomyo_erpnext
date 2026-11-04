@@ -4,6 +4,8 @@ Every lookup that depends on a map raises NeedsMapping with the exact row to add
 never a guess (CLAUDE.md: "A missing mapping is never guessed").
 """
 
+import hashlib
+import json
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
@@ -224,3 +226,14 @@ def utc_now() -> datetime:
 	from datetime import timezone
 
 	return datetime.now(timezone.utc)
+
+
+def version_of(record: dict) -> str:
+	"""A record's own `updated_at`, or (a Koomyo that sends none) a hash of what it says.
+
+	The hash cannot say which copy is newer, only that the content changed: enough to tell a copy already
+	handled from a changed one, and to give each version its own event id.
+	"""
+	if record.get("updated_at"):
+		return record["updated_at"]
+	return "sha1:" + hashlib.sha1(json.dumps(record, sort_keys=True, default=str).encode()).hexdigest()

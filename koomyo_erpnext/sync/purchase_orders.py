@@ -47,6 +47,7 @@ from koomyo_erpnext.sync.common import (
 	setting,
 	stamp,
 	to_field,
+	version_of,
 )
 from koomyo_erpnext.sync.events import handles, read_only, warn
 
@@ -949,7 +950,7 @@ def sync_purchase_orders(connection_name: str, client: KoomyoClient | None = Non
 	newest = connection.purchase_sync_cursor
 	for order in client.iter_list("/purchase-orders", {"updated_since": since}):
 		summary["read"] += 1
-		if order.get("object") != "purchase_order" or not order.get("id") or not order.get("updated_at"):
+		if order.get("object") != "purchase_order" or not order.get("id"):
 			continue
 		if (
 			order.get("status") == "draft"
@@ -958,11 +959,11 @@ def sync_purchase_orders(connection_name: str, client: KoomyoClient | None = Non
 		):
 			continue  # a plan: nothing to book, and nothing is created for a draft (unless drafts are kept)
 		event = {
-			"id": f"po-sync:{order['id']}:{order['updated_at']}",
+			"id": f"po-sync:{order['id']}:{version_of(order)}",
 			"type": SYNC_TYPE,
 			"seq": 0,
 			"tenant_id": connection.tenant_id,
-			"created": order["updated_at"],
+			"created": order.get("updated_at") or order.get("created_at") or "",
 			"business_date": order.get("business_date"),
 			"branch_id": order.get("branch_id"),
 			"entity": {"type": "purchase_order", "id": order["id"]},
@@ -970,8 +971,10 @@ def sync_purchase_orders(connection_name: str, client: KoomyoClient | None = Non
 		}
 		_name, created = store_event(connection, event, "Feed")
 		summary["queued"] += 1 if created else 0
-		if not newest or get_datetime(order["updated_at"]) > get_datetime(newest):
-			newest = order["updated_at"]
+		if order.get("updated_at") and (
+			not newest or get_datetime(order["updated_at"]) > get_datetime(newest)
+		):
+			newest = order["updated_at"]  # the position moves only on a real version
 	if newest and newest != connection.purchase_sync_cursor:
 		connection.db_set("purchase_sync_cursor", newest, update_modified=False)
 	summary["queued"] += check_drafts_still_exist(connection, client)

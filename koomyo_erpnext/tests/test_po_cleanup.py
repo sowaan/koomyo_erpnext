@@ -118,3 +118,46 @@ class TestDeleteAndReuse(PurchasingTestCase):
 		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
 		self.assertIn("ERPNext reused the number", log.message)
 		self.assertEqual(frappe.get_all("Purchase Receipt", filters={"company": self.conn_a.company}), [])
+
+
+class TestRecordsWithoutUpdatedAt(PurchasingTestCase):
+	"""A Koomyo that sends no `updated_at` on its records: nothing is counted as new every time."""
+
+	def test_an_order_erpnext_made_is_already_there_when_its_deliveries_are_booked(self):
+		from koomyo_erpnext.sync import backfill as engine
+
+		po = self.make_po(qty=10)
+		self.run_queue()
+		self.receive(po, 10)
+		self.run_queue()
+		frappe.db.set_value("Purchase Order", po.name, "koomyo_updated_at", None)  # never noted by an event
+		order = copy.deepcopy(self.fake_a.purchase_orders["po-1"])
+		order["status"] = "received"
+		order.pop("updated_at", None)
+		self.assertTrue(engine.purchase_already_there(self.conn_a, order), "its delivery is in ERPNext")
+		order["receipts"].append({"id": "po-1-rcpt-9", "lines": []})
+		self.assertFalse(engine.purchase_already_there(self.conn_a, order), "a delivery that is not")
+
+	def test_the_safety_net_reads_orders_without_updated_at_once_each(self):
+		from koomyo_erpnext.sync import events, purchase_orders
+		from koomyo_erpnext.tests.test_purchase_orders import make_order
+
+		self.conn_a.reload()
+		self.conn_a.update(
+			{
+				"book_koomyo_purchases": 1,
+				"main_warehouse": "Stores - _KTA",
+				"supplier_group": "_Koomyo Suppliers",
+			}
+		)
+		self.conn_a.save()
+		order = make_order("ordered")
+		order.pop("updated_at", None)
+		self.fake_a.lists["/purchase-orders"] = [order]
+		with self.koomyo():
+			first = purchase_orders.sync_purchase_orders(self.conn_a.name)
+			events.process_pending(self.conn_a.name)
+			second = purchase_orders.sync_purchase_orders(self.conn_a.name)
+		self.assertEqual((first["queued"], second["queued"]), (1, 0))
+		self.assertTrue(frappe.db.exists("Purchase Order", {"koomyo_id": order["id"]}))
+		self.assertFalse(frappe.db.get_value("Koomyo Connection", self.conn_a.name, "purchase_sync_cursor"))

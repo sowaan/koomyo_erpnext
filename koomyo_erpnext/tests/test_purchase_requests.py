@@ -357,3 +357,16 @@ class TestSafetyNet(RequestCase):
 		with self.koomyo():
 			self.conn_a.test_connection()
 		self.assertFalse([c for c in self.fake_a.calls if c["path"] == "/purchase-requests"])
+
+
+class TestCardsWithoutUpdatedAt(RequestCase):
+	def test_the_safety_net_reads_requests_without_updated_at_once_each(self):
+		card = make_request()
+		card.pop("updated_at", None)
+		self.fake_a.lists["/purchase-requests"] = [card]
+		with self.koomyo():
+			first = purchase_requests.sync_purchase_requests(self.conn_a.name)
+			events.process_pending(self.conn_a.name)
+			second = purchase_requests.sync_purchase_requests(self.conn_a.name)
+		self.assertEqual((first["queued"], second["queued"]), (1, 0))
+		self.assertTrue(self.mr(), "the request was made into a Material Request")

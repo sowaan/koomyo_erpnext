@@ -23,15 +23,12 @@ supplier.updated, and that echo changes nothing. Koomyo's text is untrusted: it 
 goes into a text field. A copy older than the one on file changes nothing.
 """
 
-import hashlib
-import json
-
 import frappe
 from frappe import _
 from frappe.utils import escape_html, get_datetime
 
 from koomyo_erpnext.exceptions import Fatal, Skipped
-from koomyo_erpnext.sync.common import find_existing, setting, stamp
+from koomyo_erpnext.sync.common import find_existing, setting, stamp, version_of
 from koomyo_erpnext.sync.events import handles
 
 SCOPES = ("purchasing.read",)
@@ -96,14 +93,7 @@ def existing_supplier(card: dict, connection) -> str | None:
 
 
 def card_version(card: dict) -> str:
-	"""The card's own `updated_at`, or (a Koomyo that sends none) a hash of what the card says.
-
-	The hash cannot say which card is newer, but it says whether the card changed, so a card already in ERPNext is
-	"already there" and a changed one is made again.
-	"""
-	if card.get("updated_at"):
-		return card["updated_at"]
-	return "sha1:" + hashlib.sha1(json.dumps(card, sort_keys=True, default=str).encode()).hexdigest()
+	return version_of(card)
 
 
 def is_stale(doc, card: dict) -> bool:

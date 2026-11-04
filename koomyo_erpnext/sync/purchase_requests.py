@@ -35,7 +35,7 @@ from frappe.utils import escape_html, get_datetime, getdate
 
 from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, Skipped
-from koomyo_erpnext.sync.common import branch_row, find_existing, money, stamp, to_field
+from koomyo_erpnext.sync.common import branch_row, find_existing, money, stamp, to_field, version_of
 from koomyo_erpnext.sync.events import handles
 
 SYNC_TYPE = "koomyo.purchase_request_sync"
@@ -471,14 +471,14 @@ def sync_purchase_requests(connection_name: str, client: KoomyoClient | None = N
 	try:
 		for card in client.iter_list("/purchase-requests", {"updated_since": since}):
 			summary["read"] += 1
-			if card.get("object") != "purchase_request" or not card.get("id") or not card.get("updated_at"):
+			if card.get("object") != "purchase_request" or not card.get("id"):
 				continue
 			event = {
-				"id": f"pr-sync:{card['id']}:{card['updated_at']}",
+				"id": f"pr-sync:{card['id']}:{version_of(card)}",
 				"type": SYNC_TYPE,
 				"seq": 0,
 				"tenant_id": connection.tenant_id,
-				"created": card["updated_at"],
+				"created": card.get("updated_at") or card.get("created_at") or "",
 				"business_date": card.get("business_date"),
 				"branch_id": card.get("branch_id"),
 				"entity": {"type": "purchase_request", "id": card["id"]},
@@ -486,8 +486,10 @@ def sync_purchase_requests(connection_name: str, client: KoomyoClient | None = N
 			}
 			_name, created = store_event(connection, event, "Feed")
 			summary["queued"] += 1 if created else 0
-			if not newest or get_datetime(card["updated_at"]) > get_datetime(newest):
-				newest = card["updated_at"]
+			if card.get("updated_at") and (
+				not newest or get_datetime(card["updated_at"]) > get_datetime(newest)
+			):
+				newest = card["updated_at"]  # the position moves only on a real version
 	except KoomyoAPIError as e:
 		if e.status == 403 and e.code in ("feature_not_available", "app_not_enabled"):
 			summary["error"] = feature_message(e)

@@ -258,7 +258,8 @@ class FakeKoomyo:
 			"opened_after": lambda r, v: when(r, "opened_at") > v,
 			"opened_before": lambda r, v: when(r, "opened_at") < v,
 			"sent_after": lambda r, v: when(r, "sent_at") > v,
-			"updated_since": lambda r, v: when(r, "updated_at") >= v,
+			"updated_since": lambda r, v: not r.get("updated_at")
+			or r["updated_at"] >= v,  # no updated_at: always listed
 		}
 		for key, test in filters.items():
 			if params.get(key) is not None:
