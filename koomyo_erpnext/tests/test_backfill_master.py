@@ -170,3 +170,21 @@ class TestMasterPlaces(MasterCase):
 		doc = self.press(self.make_master(bring_places=1), "start")
 		self.assertEqual(doc.created, 2)
 		self.assertTrue(self.mapped <= set(self.rows()))
+
+
+class TestCatalogCounts(MasterCase):
+	def test_found_counts_what_could_not_be_loaded_too(self):
+		from koomyo_erpnext.tests.helpers import configure_stock
+
+		configure_stock(self.conn_a, "_KTA")
+		self.fake_a.add_ingredient(KITCHEN, "Kitchen stock", "pcs", "12.5000")
+		self.fake_a.add_ingredient("odd-unit", "Odd Stuff", "furlong", "1.0000")  # no UOM Map row
+		self.fake_a.lists["/categories"] = []
+		self.fake_a.lists["/menu-items"] = []
+		self.fake_a.lists["/ingredients"] = [
+			self.fake_a.ingredients[KITCHEN],
+			self.fake_a.ingredients["odd-unit"],
+		]
+		doc = self.press(self.make_master(bring_catalog=1), "preview")
+		self.assertEqual(doc.failed, 1, doc.error)
+		self.assertEqual(doc.found, doc.created + doc.already_there + doc.failed)

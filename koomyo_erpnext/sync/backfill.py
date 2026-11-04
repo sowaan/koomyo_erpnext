@@ -464,10 +464,11 @@ def run_master_chunk(connection, kind: str, counts: dict, messages: list, sample
 		parts = [summary["menu"], summary["ingredients"], summary.get("variants") or {}]
 		changed = sum((p.get("created") or 0) + (p.get("updated") or 0) for p in parts)
 		same = sum(p.get("unchanged") or 0 for p in parts)
+		failed = len(summary.get("problems") or [])
 		counts["created"] += changed
 		counts["already_there"] += same
-		counts["found"] += changed + same
-		counts["failed"] += len(summary.get("problems") or [])
+		counts["found"] += changed + same + failed  # what was read, including what could not be loaded
+		counts["failed"] += failed
 		messages.append((summary.get("text") or "")[:900])
 		if len(sample) < SAMPLE_SIZE:
 			sample.append({"kind": "menu and ingredients", "text": summary.get("text")})
