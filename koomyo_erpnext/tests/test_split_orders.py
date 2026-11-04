@@ -17,6 +17,14 @@ STORES = "Stores - _KTA"
 
 
 class SplitCase(PurchasingTestCase):
+	def setUp(self):
+		super().setUp()
+		self.conn_a.reload()
+		self.conn_a.warehouse_share_branch = (
+			STORES  # the branch a share at the central warehouse is meant for
+		)
+		self.conn_a.save()
+
 	def make_split_po(self, central=50, stores=70, submit=True):
 		po = self.make_po(warehouse=STORES, qty=stores, submit=False)
 		po.append(
@@ -68,8 +76,12 @@ class TestSplitOrder(SplitCase):
 		(line,) = body["lines"]
 		self.assertEqual((line["ingredient_id"], line["quantity_ordered"]), (MOZZARELLA, "120"))
 		self.assertEqual(
-			sorted((a["destination_type"], a["destination_id"], a["quantity"]) for a in line["allocations"]),
-			sorted([("warehouse", CENTRAL_WAREHOUSE, "50"), ("branch", BRANCH, "70")]),
+			sorted(
+				(a["destination_type"], a["destination_id"], a["quantity"], a["branch_id"])
+				for a in line["allocations"]
+			),
+			sorted([("warehouse", CENTRAL_WAREHOUSE, "50", BRANCH), ("branch", BRANCH, "70", BRANCH)]),
+			"every share names the branch it is for",
 		)
 		self.assertTrue(all("request_line_id" not in a for a in line["allocations"]))
 		self.assertNotIn("branch_id", body, "the order follows its shares")
@@ -117,6 +129,38 @@ class TestSplitOrder(SplitCase):
 		self.assertEqual(log.error_class, "NeedsMapping")
 		self.assertIn("Work In Progress - _KTA", log.message)
 		self.assertEqual(self.created("/purchase-orders"), [])
+
+
+class TestWarehouseShareBranch(SplitCase):
+	def test_without_the_setting_a_warehouse_share_stops_the_order_with_what_to_set(self):
+		self.conn_a.reload()
+		self.conn_a.warehouse_share_branch = None
+		self.conn_a.save()
+		self.make_split_po()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual(log.error_class, "NeedsMapping")
+		self.assertIn("Branch For Warehouse Shares", log.message)
+		self.assertEqual(self.created("/purchase-orders"), [])
+
+	def test_the_setting_must_be_a_branch_not_a_central_warehouse(self):
+		self.conn_a.reload()
+		self.conn_a.warehouse_share_branch = CENTRAL
+		self.conn_a.save()
+		self.make_split_po()
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual(log.error_class, "NeedsMapping")
+		self.assertIn("not a branch", log.message)
+
+	def test_a_single_branch_order_needs_no_setting(self):
+		self.conn_a.reload()
+		self.conn_a.warehouse_share_branch = None
+		self.conn_a.save()
+		self.make_po(warehouse=STORES, qty=10)
+		self.run_queue()
+		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
+		self.assertEqual(log.status, "Done")
 
 
 class TestReceiptAtAnotherPlace(SplitCase):
@@ -214,6 +258,6 @@ class TestSplitByEdit(SplitCase):
 		line = patches[-1]["lines"][0]
 		self.assertEqual(line["quantity_ordered"], "120")
 		self.assertEqual(
-			sorted((a["destination_id"], a["quantity"]) for a in line["allocations"]),
-			sorted([(CENTRAL_WAREHOUSE, "50"), (BRANCH, "70")]),
+			sorted((a["destination_id"], a["quantity"], a["branch_id"]) for a in line["allocations"]),
+			sorted([(CENTRAL_WAREHOUSE, "50", BRANCH), (BRANCH, "70", BRANCH)]),
 		)

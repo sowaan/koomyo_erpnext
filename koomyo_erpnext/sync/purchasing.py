@@ -565,13 +565,36 @@ def share_destination(po, item, connection) -> tuple[str, str]:
 SPLIT = "split"  # a share that fills no request line: a row of an order split over several warehouses
 
 
-def share_entry(request_line: str, kind: str, place_id: str, qty: Decimal) -> dict:
+def share_entry(request_line: str, kind: str, place_id: str, qty: Decimal, connection=None) -> dict:
+	"""One share of an order line. Koomyo wants the branch each share is for: a request line knows its own, any
+	other share names it (a branch share is for its own branch; a share at a central warehouse is for the
+	connection's Branch For Warehouse Shares)."""
 	entry = {"quantity": text(qty), "destination_type": kind, "destination_id": place_id}
 	if request_line != SPLIT:
 		entry["request_line_id"] = request_line
 	elif kind == "branch":
-		entry["branch_id"] = place_id  # a branch share is for its own branch
+		entry["branch_id"] = place_id
+	else:
+		entry["branch_id"] = warehouse_share_branch(connection)
 	return entry
+
+
+def warehouse_share_branch(connection) -> str:
+	warehouse = connection.get("warehouse_share_branch")
+	if not warehouse:
+		raise NeedsMapping(
+			_(
+				"Set Branch For Warehouse Shares on connection {0}, then press Retry: Koomyo needs the branch every share is for, even one that is received at a central warehouse, and ERPNext has none for it."
+			).format(connection.name)
+		)
+	kind, branch_id = destination_of(connection, warehouse)
+	if kind != "branch":
+		raise NeedsMapping(
+			_(
+				"Branch For Warehouse Shares on connection {0} is Warehouse {1}, which is a central warehouse on the Branch Map, not a branch. Pick the Warehouse of a branch."
+			).format(connection.name, warehouse)
+		)
+	return branch_id
 
 
 def order_shares(po, connection) -> dict:
@@ -639,7 +662,7 @@ def order_lines_for_koomyo(po, connection, shares: dict) -> list[dict]:
 			entry["discount_percent"] = text(line["discount"])
 		if line["shares"]:
 			entry["allocations"] = [
-				share_entry(request_line, kind, place_id, qty)
+				share_entry(request_line, kind, place_id, qty, connection)
 				for (request_line, kind, place_id), qty in line["shares"].items()
 			]
 		out.append(entry)

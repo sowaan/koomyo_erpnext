@@ -518,6 +518,12 @@ class FakeKoomyo:
 					)
 			for number, share in enumerate(shares):
 				if not share.get("request_line_id"):  # a share by warehouse: no request line
+					if not share.get("branch_id"):
+						return error_response(
+							400,
+							"invalid_parameter",
+							f"Line {index + 1}: every allocation needs a branch_id (it can be left out only when request_line_id names a request line).",
+						)
 					if not share.get("destination_type") or not share.get("destination_id"):
 						return error_response(400, "invalid_parameter", "a share needs its destination")
 					made.append(

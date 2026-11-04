@@ -87,6 +87,7 @@
   "restate_costs_from_invoices",
   "section_purchasing_settings",
   "main_warehouse",
+  "warehouse_share_branch",
   "cb_purchasing",
   "supplier_group",
   "section_purchase_taxes",
@@ -605,6 +606,14 @@
    "fieldtype": "Link",
    "label": "Main Warehouse",
    "mandatory_depends_on": "book_koomyo_purchases",
+   "options": "Warehouse"
+  },
+  {
+   "depends_on": "sync_purchasing",
+   "description": "Koomyo needs, for every share of an order line, the branch the stock is meant for. A share that goes to a central warehouse has none in ERPNext, so it is sent for this branch (pick the Warehouse of that branch from the Branch Map). Needed only for a Purchase Order whose rows are in several Warehouses.",
+   "fieldname": "warehouse_share_branch",
+   "fieldtype": "Link",
+   "label": "Branch For Warehouse Shares (its Warehouse)",
    "options": "Warehouse"
   },
   {
