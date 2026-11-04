@@ -27,7 +27,7 @@ from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping
 from koomyo_erpnext.sync.common import find_existing, money, setting
 from koomyo_erpnext.sync.customers import write_reference
 from koomyo_erpnext.sync.items import category_group, get_or_create_item, menu_template, size_variant
-from koomyo_erpnext.sync.stock import ingredient_item
+from koomyo_erpnext.sync.stock import apply_purchase_unit, ingredient_item
 
 SLEEP = time.sleep
 
@@ -273,8 +273,10 @@ def load_ingredient(connection, client, record: dict) -> str:
 		"disabled": 0 if record.get("active", True) else 1,
 		"koomyo_kind": record.get("kind") or "food",
 	}
+	added = apply_purchase_unit(connection, item.name, record) == "added"
 	if all(item.get(k) == v for k, v in changes.items()):
-		return "unchanged"
+		return "updated" if added else "unchanged"
+	item = frappe.get_doc("Item", item.name)  # the purchase unit may have saved it
 	item.update(changes)
 	item.save(ignore_permissions=True)
 	return "updated"

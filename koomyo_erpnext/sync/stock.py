@@ -508,6 +508,7 @@ def ingredient_item(
 		is_purchase_item=1,
 	)
 	frappe.db.set_value("Item", code, "koomyo_kind", ingredient.get("kind") or "food")
+	apply_purchase_unit(connection, code, ingredient)
 	cost = money(ingredient.get("cost_per_unit") or "0", "cost_per_unit")
 	if cost:
 		frappe.db.set_value("Item", code, "valuation_rate", flt(str(cost), 6))
@@ -516,6 +517,45 @@ def ingredient_item(
 
 	write_reference(connection, client, "ingredient", ingredient, frappe.get_doc("Item", code))
 	return code
+
+
+def apply_purchase_unit(connection, item_code: str, ingredient: dict) -> str | None:
+	"""How Koomyo says the ingredient is bought (`purchase_unit`, `purchase_unit_factor`: read-only hints).
+
+	When the unit maps to a UOM (UOM Map), the Item gets that UOM with the conversion factor, and it becomes the
+	Purchase UOM if none is set, so a Purchase Order can be raised in packs with no setup. Nothing is ever stopped
+	for it: no purchase unit, an unmapped one, or a bad factor leaves the Item as it is. Quantities and prices in
+	Koomyo stay in the ingredient's own unit (the order is sent from stock_qty), so this changes no order.
+	A pack size that changed in Koomyo later does not change a conversion ERPNext already holds: it is noted on the
+	Item for a person to decide. Returns "added" or "kept" (None when nothing was done).
+	"""
+	unit, factor = ingredient.get("purchase_unit"), ingredient.get("purchase_unit_factor")
+	if not unit or factor in (None, ""):
+		return None
+	try:
+		uom = uom_for(connection, unit)
+		wanted = flt(str(money(factor, "purchase_unit_factor")), 6)
+	except (NeedsMapping, Fatal):
+		return None  # a hint only: carry on without it
+	item = frappe.get_doc("Item", item_code)
+	if wanted <= 0 or uom == item.stock_uom:
+		return None
+	row = next((r for r in item.get("uoms") or [] if r.uom == uom), None)
+	if row:
+		if abs(flt(row.conversion_factor) - wanted) > 1e-6:
+			note = _(
+				"Koomyo now says {0} holds {1} {2}, but this Item holds {3}. The conversion was left as it is: change it by hand if you want it to follow."
+			).format(uom, wanted, item.stock_uom, flt(row.conversion_factor))
+			if not frappe.db.exists(
+				"Comment", {"reference_doctype": "Item", "reference_name": item.name, "content": note}
+			):
+				item.add_comment("Comment", note)
+		return "kept"
+	item.append("uoms", {"uom": uom, "conversion_factor": wanted})
+	if not item.get("purchase_uom"):
+		item.purchase_uom = uom
+	item.save(ignore_permissions=True)
+	return "added"
 
 
 def uom_for(connection, unit: str | None) -> str:

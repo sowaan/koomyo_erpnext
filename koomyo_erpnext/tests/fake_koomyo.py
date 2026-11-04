@@ -155,6 +155,8 @@ class FakeKoomyo:
 			"low_stock_threshold": "0",
 			"active": True,
 			"made_in_house": False,
+			"purchase_unit": None,  # how it is bought (read-only hint): null when bought in its own unit
+			"purchase_unit_factor": None,
 			"created_at": "2026-10-01T00:00:00Z",
 			"updated_at": "2026-10-01T00:00:00Z",
 			"external_refs": refs or {},
