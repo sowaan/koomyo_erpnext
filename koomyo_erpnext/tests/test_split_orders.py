@@ -17,14 +17,6 @@ STORES = "Stores - _KTA"
 
 
 class SplitCase(PurchasingTestCase):
-	def setUp(self):
-		super().setUp()
-		self.conn_a.reload()
-		self.conn_a.warehouse_share_branch = (
-			STORES  # the branch a share at the central warehouse is meant for
-		)
-		self.conn_a.save()
-
 	def make_split_po(self, central=50, stores=70, submit=True):
 		po = self.make_po(warehouse=STORES, qty=stores, submit=False)
 		po.append(
