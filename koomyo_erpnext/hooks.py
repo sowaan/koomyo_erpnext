@@ -291,6 +291,7 @@ fixtures = [{"dt": "Custom Field", "filters": [["module", "=", "Koomyo Erpnext"]
 doc_events = {
 	"Purchase Order": {
 		"before_submit": "koomyo_erpnext.sync.purchasing.before_purchase_order_submit",
+		"on_trash": "koomyo_erpnext.sync.purchasing.on_purchase_order_trash",
 		"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_order_submit",
 		"on_cancel": "koomyo_erpnext.sync.purchasing.on_purchase_order_cancel",
 		"on_update_after_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_order_update",

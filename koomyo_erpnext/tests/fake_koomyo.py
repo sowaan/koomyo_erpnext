@@ -10,6 +10,7 @@ import copy
 import json
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
@@ -113,6 +114,7 @@ class FakeKoomyo:
 		self.purchase_requests_off = False  # GET /purchase-requests answers 403 feature_not_available
 		self.unsettled_days: set[str] = set()  # GET /stock-usage answers 409 day_not_settled for these
 		self.refs: list[dict] = []
+		self.deleted_refs: list[tuple] = []  # (entity_type, id) of each DELETE /refs call
 		self.writes: list[dict] = []  # every write call: method, path, key, body
 		# GET list endpoints for the backfill: path -> records (opaque cursors, docs filters).
 		self.lists: dict[str, list[dict]] = {}
@@ -340,6 +342,7 @@ class FakeKoomyo:
 				if body.get("external_ref")
 				else {},
 				"number": f"PO-FAKE-{len(self.purchase_orders) + 1:04d}",
+				"created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 				"updated_at": "2026-10-12T10:00:00Z",
 				"receipts": [],
 				"lines": [
@@ -414,6 +417,14 @@ class FakeKoomyo:
 				return error_response(404, "not_found")
 			ingredient["cost_per_unit"] = body["cost_per_unit"]
 			return FakeResponse(200, ingredient)
+		if method == "DELETE" and path.startswith("/refs/"):
+			_, _, entity_type, entity_id = path.split("/")
+			self.deleted_refs.append((entity_type, entity_id))
+			if entity_type == "purchase_order" and entity_id in self.purchase_orders:
+				order = self.purchase_orders[entity_id]
+				order["external_refs"] = {}
+				order["_ref"] = None
+			return FakeResponse(200, {"object": "external_ref", "deleted": True})
 		if method == "PUT" and path.startswith("/refs/"):
 			_, _, entity_type, entity_id = path.split("/")
 			ref = {"object": "external_ref", "entity_type": entity_type, "entity_id": entity_id, **body}

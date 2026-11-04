@@ -141,7 +141,7 @@ class TestPurchaseOrders(PurchasingTestCase):
 			[{"ingredient_id": MOZZARELLA, "quantity_ordered": "10", "unit_cost": "1450"}],
 		)
 		self.assertEqual(po_call["body"]["external_ref"]["external_id"], po.name)
-		self.assertTrue(po_call["key"].startswith(f"erpnext-po-{po.name}-"))
+		self.assertTrue(po_call["key"].startswith("erpnext-po-") and po.name in po_call["key"])
 		self.assertTrue(all(w["key"] for w in self.fake_a.writes), "every write has an Idempotency-Key")
 		po.reload()
 		self.assertEqual((po.koomyo_connection, po.koomyo_id), (self.conn_a.name, "po-1"))
@@ -616,7 +616,8 @@ class TestCancelInErpnext(PurchasingTestCase):
 			filters={"reference_doctype": "Purchase Order", "reference_name": po.name},
 			pluck="content",
 		)
-		self.assertTrue([c for c in comments if "Cancelled in Koomyo too" in c])
+		self.assertTrue([c for c in comments if "cleaned up and its link removed" in c])
+		self.assertEqual(self.fake_a.deleted_refs, [("purchase_order", "po-1")])
 
 	def test_the_purchase_cancelled_event_that_comes_back_changes_nothing(self):
 		from koomyo_erpnext.tests.test_purchase_orders import event_for
@@ -629,41 +630,93 @@ class TestCancelInErpnext(PurchasingTestCase):
 		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
 		self.assertEqual(frappe.db.get_value("Purchase Order", po.name, "docstatus"), 2)
 
-	def test_a_partly_received_order_says_how_to_finish_it(self):
+	def test_a_partly_received_order_is_closed_short_not_cancelled(self):
 		po = self.make_po()
 		self.run_queue()
 		self.fake_a.purchase_orders["po-1"]["status"] = "partial"
 		self.cancel_in_erpnext(po)
 		log = self.cancel_log()
-		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
-		self.assertIn("partly received", log.message)
-		self.assertIn("close", log.message)
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.assertIn("closed short, not cancelled", log.message)
+		self.assertEqual(len(self.fake_a.close_calls), 1)
+		self.assertEqual(self.writes("/purchase-orders/po-1/cancel"), [])
+		self.assertEqual(self.fake_a.deleted_refs, [("purchase_order", "po-1")])
 
-	def test_an_order_already_received_or_cancelled(self):
-		po = self.make_po()
+	def test_a_received_order_is_reversed_then_cancelled_then_unlinked(self):
+		po = self.make_po(qty=10)
 		self.run_queue()
-		self.fake_a.purchase_orders["po-1"]["status"] = "received"
+		self.receive(po, 6)
+		self.run_queue()
+		self.receive(po, 4)
+		self.run_queue()
+		self.assertEqual(self.fake_a.purchase_orders["po-1"]["status"], "received")
+		for name in frappe.get_all("Purchase Receipt", filters={"company": COMPANY_A}, pluck="name"):
+			frappe.db.set_value("Purchase Receipt", name, "koomyo_sent", 0)  # Koomyo's own deliveries
+		self.fake_a.writes.clear()
+		order = self.fake_a.purchase_orders["po-1"]
+		self.fake_a.reverse_calls.clear()
+		# ERPNext would refuse to cancel the order while its receipts stand: cancel them first, as a person would
+		for name in frappe.get_all(
+			"Purchase Receipt", filters={"company": COMPANY_A, "docstatus": 1}, pluck="name"
+		):
+			frappe.get_doc("Purchase Receipt", name).cancel()
+		frappe.db.commit()
 		self.cancel_in_erpnext(po)
 		log = self.cancel_log()
-		self.assertEqual(log.error_class, "Fatal")
-		self.assertIn("already received or closed short", log.message)
-		# cancelled in the Koomyo admin first: already_cancelled is the job done
-		self.fake_a.purchase_orders["po-1"]["status"] = "cancelled"
-		from koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koomyo_event_log import retry
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.assertEqual(
+			[c["receipt_id"] for c in self.fake_a.reverse_calls],
+			["po-1-rcpt-2", "po-1-rcpt-1"],
+			"newest first",
+		)
+		self.assertEqual(order["status"], "cancelled")
+		self.assertEqual(self.fake_a.deleted_refs, [("purchase_order", "po-1")])
+		paths = [w["path"] for w in self.fake_a.writes]
+		self.assertLess(paths.index("/purchase-orders/po-1/cancel"), paths.index("/refs/purchase_order/po-1"))
 
-		retry([log.name])
+	def test_a_delivery_that_cannot_be_reversed_stops_everything_and_keeps_the_link(self):
+		po = self.make_po(qty=10)
 		self.run_queue()
-		self.assertEqual(frappe.db.get_value("Koomyo Event Log", log.name, "status"), "Done")
+		self.receive(po, 10)
+		self.run_queue()
+		self.fake_a.distributed.add("po-1-rcpt-1")
+		for name in frappe.get_all(
+			"Purchase Receipt", filters={"company": COMPANY_A, "docstatus": 1}, pluck="name"
+		):
+			frappe.db.set_value("Purchase Receipt", name, "koomyo_sent", 0)
+			frappe.get_doc("Purchase Receipt", name).cancel()
+		frappe.db.commit()
+		self.cancel_in_erpnext(po)
+		log = self.cancel_log()
+		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
+		self.assertIn("cannot reverse delivery", log.message)
+		self.assertEqual(self.fake_a.purchase_orders["po-1"]["status"], "received")
+		self.assertEqual(self.fake_a.deleted_refs, [])
+		self.assertEqual(self.writes("/purchase-orders/po-1/cancel"), [])
+
+	def test_already_cancelled_in_koomyo_only_removes_the_link(self):
+		po = self.make_po()
+		self.run_queue()
+		self.fake_a.purchase_orders["po-1"]["status"] = "cancelled"
+		self.cancel_in_erpnext(po)
+		log = self.cancel_log()
+		self.assertEqual(log.status, "Done", (log.message, log.error[-300:]))
+		self.assertEqual(self.writes("/purchase-orders/po-1/cancel"), [])
+		self.assertEqual(self.fake_a.deleted_refs, [("purchase_order", "po-1")])
 
 	def test_a_retry_after_a_refusal_uses_a_new_key(self):
 		from koomyo_erpnext.koomyo_erpnext.doctype.koomyo_event_log.koomyo_event_log import retry
 
 		po = self.make_po()
 		self.run_queue()
-		self.fake_a.purchase_orders["po-1"]["status"] = "partial"
+		from koomyo_erpnext.tests.fake_koomyo import error_response
+
+		self.fake_a.scripted["/purchase-orders/po-1/cancel"] = [
+			error_response(409, "partially_received", "part arrived")
+		]
 		self.cancel_in_erpnext(po)
 		log = self.cancel_log()
-		self.fake_a.purchase_orders["po-1"]["status"] = "ordered"
+		self.assertEqual(log.status, "Failed")
 		retry([log.name])
 		self.run_queue()
 		self.assertEqual(frappe.db.get_value("Koomyo Event Log", log.name, "status"), "Done")

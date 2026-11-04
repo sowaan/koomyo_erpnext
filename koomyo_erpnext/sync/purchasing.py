@@ -16,12 +16,16 @@ Koomyo -> ERPNext: purchase orders (created, updated, cancelled, received) are i
 sync/purchase_orders.py; suppliers made from them are created here (`koomyo_supplier`).
 """
 
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, flt, now_datetime
+from frappe.utils import add_to_date, flt, get_datetime, now_datetime
 
 from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping, Skipped
@@ -96,12 +100,12 @@ def before_material_request_submit(doc, method=None):
 
 
 def on_purchase_order_cancel(doc, method=None):
-	"""A Purchase Order sent to Koomyo was cancelled in ERPNext: Koomyo is told (POST .../cancel)."""
+	"""A Purchase Order sent to Koomyo was cancelled in ERPNext: Koomyo is cleaned up (cancel, reverse, link removed)."""
 	if not doc.get("koomyo_connection") or not doc.get("koomyo_id") or doc.get("koomyo_content"):
 		return  # never sent to Koomyo, or an order Koomyo made itself (its own cancel comes as an event)
 	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
 	if connection.enabled and connection.sync_purchasing:
-		store_outbound(connection, "erpnext.purchase_order_cancel", doc)
+		store_outbound(connection, "erpnext.purchase_order_cancel", doc, extra={"koomyo_id": doc.koomyo_id})
 
 
 def on_purchase_receipt_submit(doc, method=None):
@@ -261,6 +265,8 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 	}
 	if not with_shares and row.location_type != "Warehouse":
 		body["branch_id"] = row.koomyo_branch_id  # leave out to receive into the main warehouse (docs)
+	# The key says which document version and which body: the same key with another body is refused (422).
+	body_hash = hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:10]
 	try:
 		answer = koomyo_write(
 			connection,
@@ -274,7 +280,7 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 				"Purchase Order",
 				po.name,
 				po.modified,
-				"po" if event.get("attempt", 1) <= 1 else f"po-{event['attempt']}",
+				f"po-{body_hash}" if event.get("attempt", 1) <= 1 else f"po-{body_hash}-{event['attempt']}",
 			),
 		)
 	except KoomyoAPIError as e:
@@ -282,6 +288,7 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 		raise
 	if answer.get("object") != "purchase_order" or not answer.get("id"):
 		raise Fatal(_("Koomyo answered the purchase order with something else."))
+	check_same_document(po, answer)  # before anything is linked: a reused number is not this document
 	po.db_set(
 		{
 			"koomyo_connection": connection.name,
@@ -292,6 +299,36 @@ def push_purchase_order(event: dict, connection, client: KoomyoClient | None = N
 	compare_totals(po, answer)
 	ensure_ordered(connection, client, po, answer)
 	return ("Purchase Order", po.name)
+
+
+def created_at_in_system_time(order: dict):
+	"""Koomyo's `created_at` (UTC) as the naive datetime ERPNext stores in `creation`."""
+	text = order.get("created_at")
+	if not text:
+		return None
+	moment = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+	if moment.tzinfo is None:
+		moment = moment.replace(tzinfo=timezone.utc)
+	return moment.astimezone(ZoneInfo(frappe.utils.get_system_timezone())).replace(tzinfo=None)
+
+
+def older_than_document(order: dict, creation) -> bool:
+	"""True when Koomyo's order was made before the ERPNext document existed: it cannot be this document's order.
+
+	ERPNext reuses a Purchase Order number after a delete, and a Koomyo order may still be linked to that number.
+	A genuine order is made after the document (minute of slack for the two clocks).
+	"""
+	made = created_at_in_system_time(order)
+	return bool(made and creation and made < get_datetime(creation) - timedelta(seconds=60))
+
+
+def check_same_document(po, order: dict):
+	if older_than_document(order, po.creation):
+		raise Fatal(
+			_(
+				"Koomyo answered with order {0}, which was made on {1}, before Purchase Order {2} was created ({3}). ERPNext reused the number {2} after a delete, and that Koomyo order is still linked to it. Nothing was linked or sent. Clear the old order in Koomyo (cancel it and remove its link), then press Retry."
+			).format(order.get("number") or order.get("id"), order.get("created_at"), po.name, po.creation)
+		)
 
 
 def ensure_ordered(connection, client, po, order: dict | None = None):
@@ -629,55 +666,185 @@ def push_purchase_receipt(event: dict, connection, client: KoomyoClient | None =
 	return send_receive(connection, client, po, receipt, body, "receive", before)
 
 
-@handles("erpnext.purchase_order_cancel", switch="sync_purchasing", scopes=WRITE_SCOPES)
+@handles("erpnext.purchase_order_cancel", switch="sync_purchasing", scopes=(*WRITE_SCOPES, "refs.write"))
 def push_purchase_order_cancel(event: dict, connection, client: KoomyoClient | None = None):
-	"""POST /purchase-orders/{id}/cancel: what the order held goes back to the purchase requests.
+	"""Clean up Koomyo when a Purchase Order is cancelled or deleted in ERPNext.
 
-	Koomyo cancels a draft or an ordered order. A partly received order answers 409 partially_received (finish
-	it with the receive call and close_short), a received one 409 already_received; one already cancelled
-	answers 409 already_cancelled, which is the job done.
+	What Koomyo holds decides the steps (nothing is guessed, a refused step stops the rest and is reported):
+	- draft or ordered: `POST .../cancel` with a reason;
+	- received: first reverse every delivery, newest first (`POST .../receipts/{id}/reverse`, reason required: it
+	  takes the stock back out), then cancel;
+	- partly received: it cannot be cancelled, so it is closed short (`POST .../close-short`);
+	- already cancelled: nothing to do.
+	Afterwards `DELETE /refs/purchase_order/{id}` removes the link, so ERPNext can reuse the number without
+	reaching the old order. The same cleanup runs when the document is deleted (it has the Koomyo id in the event).
 	"""
-	po = frappe.get_doc("Purchase Order", event["data"]["name"])
-	if po.docstatus != 2:
-		raise Skipped(_("Purchase Order {0} is not cancelled any more.").format(po.name))
-	if po.koomyo_connection != connection.name or not po.koomyo_id:
-		raise Skipped(_("Purchase Order {0} was never sent to Koomyo.").format(po.name))
+	data = event["data"]
+	name = data["name"]
+	doc = frappe.db.get_value(
+		"Purchase Order", name, ["docstatus", "koomyo_connection", "koomyo_id", "modified"], as_dict=True
+	)
+	koomyo_id = (doc.koomyo_id if doc else None) or data.get("koomyo_id")
+	if doc and (doc.docstatus != 2 or doc.koomyo_connection != connection.name):
+		raise Skipped(_("Purchase Order {0} is not a cancelled order of this connection.").format(name))
+	if not koomyo_id:
+		raise Skipped(_("Purchase Order {0} was never sent to Koomyo.").format(name))
 	client = client or KoomyoClient.for_connection(connection)
-	attempt = int(event.get("attempt", 1))
+	stand_in = frappe._dict(
+		doctype="Purchase Order",
+		name=name,
+		koomyo_id=koomyo_id,
+		modified=doc.modified if doc else now_datetime(),
+	)
+	clean_up_order(connection, client, stand_in, event)
+	if doc:
+		frappe.get_doc("Purchase Order", name).add_comment(
+			"Comment", _("Koomyo order {0} cleaned up and its link removed.").format(koomyo_id)
+		)
+	return ("Purchase Order", name) if doc else None
+
+
+def clean_up_order(connection, client, po, event: dict):
+	from koomyo_erpnext.sync.events import warn
+
+	path = f"/purchase-orders/{quote(po.koomyo_id, safe='')}"
 	try:
-		answer = koomyo_write(
+		order = client.get(path)
+	except KoomyoAPIError as e:
+		if e.status == 404:
+			raise Skipped(_("Koomyo no longer has the order of {0}.").format(po.name))
+		raise
+	attempt = int(event.get("attempt", 1))
+	suffix = "" if attempt <= 1 else f"-{attempt}"
+	status = order.get("status")
+	if status == "partial":
+		if not close_order_short(connection, client, po, order):
+			warn(_("The Koomyo order was already closed short."))
+		else:
+			warn(
+				_(
+					"The Koomyo order was partly received, so it was closed short, not cancelled: what arrived stays received."
+				)
+			)
+	elif status == "received":
+		reversed_count = reverse_deliveries(connection, client, po, order, suffix)
+		cancel_koomyo_order(connection, client, po, suffix)
+		warn(
+			_(
+				"The Koomyo order was received: {0} delivery(ies) were reversed (the stock was taken back out), then it was cancelled."
+			).format(reversed_count)
+		)
+	elif status != "cancelled":
+		cancel_koomyo_order(connection, client, po, suffix)
+	remove_link(connection, client, po, suffix)
+
+
+def cancel_koomyo_order(connection, client, po, suffix: str):
+	try:
+		koomyo_write(
 			connection,
 			client,
 			"POST",
 			f"/purchase-orders/{quote(po.koomyo_id, safe='')}/cancel",
 			{"reason": _("Cancelled in ERPNext ({0})").format(po.name)[:300]},
 			# After a refusal a retry needs a fresh key: Koomyo replays a refused answer for the same one.
-			idempotency_key(
-				"Purchase Order", po.name, po.modified, "cancel" if attempt <= 1 else f"cancel-{attempt}"
-			),
+			idempotency_key("Purchase Order", po.name, po.modified, f"cancel{suffix}"),
 		)
 	except KoomyoAPIError as e:
 		if e.code == "already_cancelled":
-			return ("Purchase Order", po.name)
-		if e.code == "partially_received":
+			return
+		if e.code in ("partially_received", "already_received"):
 			raise Fatal(
 				_(
-					"Koomyo purchase order {0} was partly received, so it cannot be cancelled. Finish it short instead: receive what arrived and close the rest (Close the Purchase Order in ERPNext, or close it short in the Koomyo admin). Purchase Order {1} stays cancelled in ERPNext."
-				).format(po.koomyo_id, po.name)
-			)
-		if e.code == "already_received":
-			raise Fatal(
-				_(
-					"Koomyo purchase order {0} is already received or closed short, so it cannot be cancelled in Koomyo. Purchase Order {1} stays cancelled in ERPNext: adjust the stock in Koomyo by hand."
-				).format(po.koomyo_id, po.name)
+					"Koomyo refused to cancel order {0} ({1}): it holds received stock. Nothing more was done and the link was kept. Close or reverse it in Koomyo, then press Retry."
+				).format(po.koomyo_id, e.code)
 			)
 		raise
-	if answer.get("object") != "purchase_order" or answer.get("status") != "cancelled":
-		raise Fatal(_("Koomyo answered the cancel of {0} with something else.").format(po.koomyo_id))
-	po.add_comment(
-		"Comment", _("Cancelled in Koomyo too (order {0}).").format(answer.get("number") or po.koomyo_id)
-	)
-	return ("Purchase Order", po.name)
+
+
+def reverse_deliveries(connection, client, po, order: dict, suffix: str) -> int:
+	"""Reverse every delivery of a received order, newest first (Koomyo reverses only the latest one)."""
+	path = f"/purchase-orders/{quote(po.koomyo_id, safe='')}"
+	count = 0
+	while True:
+		live = [r for r in order.get("receipts") or [] if r.get("id") and not r.get("reversed_at")]
+		if not live:
+			return count
+		latest = live[-1]
+		try:
+			koomyo_write(
+				connection,
+				client,
+				"POST",
+				f"{path}/receipts/{quote(latest['id'], safe='')}/reverse",
+				{
+					"reason": _("Purchase Order {0} deleted or cancelled in ERPNext").format(po.name)[:300],
+					"updated_at": order.get("updated_at"),
+				},
+				idempotency_key("Purchase Order", po.name, po.modified, f"reverse-{latest['id']}{suffix}"),
+			)
+		except KoomyoAPIError as e:
+			if e.code == "stale_version":
+				order = client.get(path)
+				continue
+			if e.code == "already_reversed":
+				order = client.get(path)
+				continue
+			if e.code in ("receipt_distributed", "receipt_returned", "not_latest_receipt"):
+				raise Fatal(
+					_(
+						"Koomyo cannot reverse delivery {0} of order {1} ({2}): part of it already went on to branches by a transfer or back to the supplier. {3} delivery(ies) were reversed before it. The order was not cancelled and its link was kept. Deal with that stock in Koomyo, then press Retry."
+					).format(latest["id"], po.koomyo_id, e.code, count)
+				)
+			raise
+		count += 1
+		order = client.get(path)
+
+
+def close_order_short(connection, client, po, order: dict) -> bool:
+	"""A partly received order cannot be cancelled: finish it short (one place at a time when it has shares)."""
+	if has_shares(order):
+		try:
+			close_by_destination(connection, client, po, order)
+		except Skipped:
+			return False
+		return True
+	return close_short_call(connection, client, po, order)
+
+
+def remove_link(connection, client, po, suffix: str):
+	"""DELETE /refs/purchase_order/{id}: the link to the ERPNext number is removed (the order is not deleted)."""
+	try:
+		koomyo_write(
+			connection,
+			client,
+			"DELETE",
+			f"/refs/purchase_order/{quote(po.koomyo_id, safe='')}",
+			None,
+			idempotency_key("Purchase Order", po.name, po.modified, f"unlink{suffix}"),
+		)
+	except KoomyoAPIError as e:
+		if e.status != 404:
+			raise
+
+
+def on_purchase_order_trash(doc, method=None):
+	"""A Purchase Order sent to Koomyo is deleted in ERPNext: Koomyo is cleaned up first, by the same steps as a cancel.
+
+	ERPNext reuses a Purchase Order number after a delete. Without this the old Koomyo order stays linked to the
+	number and a new document under it would be taken for it.
+	"""
+	if not doc.get("koomyo_connection") or not doc.get("koomyo_id") or doc.get("koomyo_content"):
+		return
+	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
+	if connection.enabled and connection.sync_purchasing:
+		store_outbound(
+			connection,
+			"erpnext.purchase_order_cancel",
+			doc,
+			action="delete",
+			extra={"koomyo_id": doc.koomyo_id},
+		)
 
 
 @handles("erpnext.purchase_order_close", switch="sync_purchasing", scopes=WRITE_SCOPES)

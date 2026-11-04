@@ -5,6 +5,7 @@ Decimals; stock value is read from the Stock Ledger.
 """
 
 import copy
+from datetime import datetime, timezone
 from decimal import Decimal as D
 
 import frappe
@@ -34,6 +35,8 @@ def make_order(status="ordered", updated_at="2026-10-12T17:40:02Z", **changes):
 			"supplier": dict(SUPPLIER),
 			"branch_id": BRANCH,
 			"receipts": [],
+			# made now, after any ERPNext document in the test (a genuine order is never older than its document)
+			"created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 		}
 	)
 	order["lines"][0].update({"id": LINE_ID, "ingredient_id": MOZZARELLA})

@@ -163,6 +163,23 @@ def existing_order(order: dict, connection):
 				po.name, po.company, connection.company
 			)
 		)
+	if po.get("koomyo_id") != order["id"] and not po.get("koomyo_content"):
+		# Found by the number only. ERPNext reuses a number after a delete: an order made before this document
+		# existed is not its order, and the link is not reused.
+		from koomyo_erpnext.sync.purchasing import older_than_document
+
+		if older_than_document(order, po.creation):
+			raise Fatal(
+				_(
+					"Koomyo order {0} is linked to the number {1}, but it was made on {2}, before Purchase Order {1} here was created ({3}): ERPNext reused the number. It is not the same document, so nothing was touched. Clear the old order's link in Koomyo (DELETE /refs/purchase_order/{4}), then press Retry."
+				).format(
+					order.get("number") or order["id"],
+					po.name,
+					order.get("created_at"),
+					po.creation,
+					order["id"],
+				)
+			)
 	return po
 
 
