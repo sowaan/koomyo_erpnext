@@ -103,9 +103,10 @@ def supplier_already_there(connection, card: dict) -> bool:
 	doc = frappe.get_doc("Supplier", name)
 	if doc.get("koomyo_branch") != "origin:koomyo":
 		return True  # made in ERPNext: it stays ERPNext's
+	from koomyo_erpnext.sync.suppliers import card_version
+
 	return bool(
-		doc.get("koomyo_updated_at")
-		and (is_stale(doc, card) or doc.koomyo_updated_at == card.get("updated_at"))
+		doc.get("koomyo_updated_at") and (is_stale(doc, card) or doc.koomyo_updated_at == card_version(card))
 	)
 
 
@@ -130,6 +131,12 @@ def envelope(connection, kind: str, record: dict) -> dict:
 	if kind in ("supplier", "customer", "purchase_order") and record.get("updated_at"):
 		# These records change: a later copy is another event, so a run after a change is not mistaken for a repeat.
 		event_id += f":{record['updated_at']}"
+	elif kind == "supplier":
+		from koomyo_erpnext.sync.suppliers import card_version
+
+		event_id += (
+			f":{card_version(record)}"  # a card without updated_at: its content says whether it changed
+		)
 	return {
 		"id": event_id,
 		"object": "event",

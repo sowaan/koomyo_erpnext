@@ -23,6 +23,9 @@ supplier.updated, and that echo changes nothing. Koomyo's text is untrusted: it 
 goes into a text field. A copy older than the one on file changes nothing.
 """
 
+import hashlib
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import escape_html, get_datetime
@@ -69,8 +72,7 @@ def apply_card(card: dict, connection) -> tuple[str, str]:
 		doc = new_supplier(card, connection)
 	notes = fill_supplier(doc, card, connection)
 	save(doc)
-	if card.get("updated_at"):
-		doc.db_set("koomyo_updated_at", card["updated_at"], update_modified=False)
+	doc.db_set("koomyo_updated_at", card_version(card), update_modified=False)
 	notes += fill_address(doc, card, connection)
 	notes += fill_contact(doc, card, connection)
 	if notes:
@@ -93,9 +95,22 @@ def existing_supplier(card: dict, connection) -> str | None:
 	return name
 
 
+def card_version(card: dict) -> str:
+	"""The card's own `updated_at`, or (a Koomyo that sends none) a hash of what the card says.
+
+	The hash cannot say which card is newer, but it says whether the card changed, so a card already in ERPNext is
+	"already there" and a changed one is made again.
+	"""
+	if card.get("updated_at"):
+		return card["updated_at"]
+	return "sha1:" + hashlib.sha1(json.dumps(card, sort_keys=True, default=str).encode()).hexdigest()
+
+
 def is_stale(doc, card: dict) -> bool:
 	seen, new = doc.get("koomyo_updated_at"), card.get("updated_at")
-	return bool(seen and new and get_datetime(new) < get_datetime(seen))
+	if not (seen and new) or str(seen).startswith("sha1:"):
+		return False
+	return get_datetime(new) < get_datetime(seen)
 
 
 def new_supplier(card: dict, connection):

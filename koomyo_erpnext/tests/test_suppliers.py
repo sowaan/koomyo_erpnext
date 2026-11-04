@@ -366,6 +366,19 @@ class TestSupplierBackfill(BackfillTestCase):
 			frappe.get_all("Supplier", filters={"koomyo_connection": self.conn_a.name}, pluck="koomyo_id")
 		)
 
+	def test_cards_without_updated_at_are_already_there_the_second_time_and_a_changed_card_is_made_again(
+		self,
+	):
+		for c in self.fake_a.lists["/suppliers"]:
+			c.pop("updated_at", None)  # a Koomyo whose cards carry no updated_at
+		first = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"))
+		self.assertEqual((first.created, first.already_there), (2, 0), first.error)
+		preview = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"), "preview")
+		self.assertEqual((preview.created, preview.already_there), (0, 2), "nothing to bring in")
+		self.fake_a.lists["/suppliers"][0]["phone"] = "0300-0000000"  # the card changed in Koomyo
+		changed = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"), "preview")
+		self.assertEqual((changed.created, changed.already_there), (1, 1))
+
 	def test_preview_counts_run_brings_them_in_and_a_second_run_changes_nothing(self):
 		doc = self.press(self.make(bring_sales=0, bring_suppliers=1, to_date="2026-10-13"), "preview")
 		self.assertEqual((doc.found, doc.created, doc.failed), (2, 2, 0), doc.error)
