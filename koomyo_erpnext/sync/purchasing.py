@@ -575,23 +575,26 @@ def share_entry(request_line: str, kind: str, place_id: str, qty: Decimal, conne
 	elif kind == "branch":
 		entry["branch_id"] = place_id
 	else:
-		entry["branch_id"] = warehouse_share_branch(connection)
+		branch = warehouse_share_branch(connection)
+		if branch:
+			entry["branch_id"] = branch
 	return entry
 
 
-def warehouse_share_branch(connection) -> str:
+def warehouse_share_branch(connection) -> str | None:
+	"""The branch a central-warehouse share is for, only if the connection names one (optional).
+
+	ERPNext warehouses have no branch. Without the setting the share is sent without `branch_id` and Koomyo
+	answers: if it refuses, its own message is shown (nothing is guessed, and no rule of Koomyo's is copied here).
+	"""
 	warehouse = connection.get("warehouse_share_branch")
 	if not warehouse:
-		raise NeedsMapping(
-			_(
-				"Set Branch For Warehouse Shares on connection {0}, then press Retry: Koomyo needs the branch every share is for, even one that is received at a central warehouse, and ERPNext has none for it."
-			).format(connection.name)
-		)
+		return None
 	kind, branch_id = destination_of(connection, warehouse)
 	if kind != "branch":
 		raise NeedsMapping(
 			_(
-				"Branch For Warehouse Shares on connection {0} is Warehouse {1}, which is a central warehouse on the Branch Map, not a branch. Pick the Warehouse of a branch."
+				"Branch For Warehouse Shares on connection {0} is Warehouse {1}, which is a central warehouse on the Branch Map, not a branch. Pick the Warehouse of a branch, or clear it."
 			).format(connection.name, warehouse)
 		)
 	return branch_id

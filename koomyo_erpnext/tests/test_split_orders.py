@@ -132,16 +132,21 @@ class TestSplitOrder(SplitCase):
 
 
 class TestWarehouseShareBranch(SplitCase):
-	def test_without_the_setting_a_warehouse_share_stops_the_order_with_what_to_set(self):
+	def test_without_the_setting_the_share_is_sent_without_a_branch_and_koomyos_answer_is_shown(self):
 		self.conn_a.reload()
 		self.conn_a.warehouse_share_branch = None
 		self.conn_a.save()
 		self.make_split_po()
 		self.run_queue()
 		(log,) = [l for l in self.outbound() if l.event_type == "erpnext.purchase_order"]
-		self.assertEqual(log.error_class, "NeedsMapping")
-		self.assertIn("Branch For Warehouse Shares", log.message)
-		self.assertEqual(self.created("/purchase-orders"), [])
+		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
+		self.assertIn("every allocation needs a branch_id", log.message)  # Koomyo's own words
+		(call,) = [w for w in self.fake_a.writes if w["path"] == "/purchase-orders"]
+		shares = call["body"]["lines"][0]["allocations"]
+		self.assertEqual(
+			{a["destination_type"]: a.get("branch_id") for a in shares}, {"warehouse": None, "branch": BRANCH}
+		)
+		self.assertEqual(self.fake_a.purchase_orders, {}, "nothing was created")
 
 	def test_the_setting_must_be_a_branch_not_a_central_warehouse(self):
 		self.conn_a.reload()
