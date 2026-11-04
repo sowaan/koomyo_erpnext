@@ -211,6 +211,60 @@ def koomyo_deliveries(receipt) -> list[str]:
 	return [i for i in [receipt.get("koomyo_id"), *(receipt.get("koomyo_extra_ids") or "").split()] if i]
 
 
+def before_purchase_receipt_cancel(doc, method=None):
+	"""A return cannot be undone in Koomyo; a delivery only while it is the latest and nothing went back from it.
+
+	So ERPNext does not cancel them either. Koomyo is asked about the order; if it cannot be read a warning is
+	shown and nothing is blocked (the cancel then reports what Koomyo said).
+	"""
+	if doc.flags.get("from_koomyo") or not doc.get("koomyo_sent") or not doc.get("koomyo_connection"):
+		return
+	if doc.get("is_return"):
+		frappe.throw(
+			_(
+				"{0} was sent to Koomyo as goods returned to the supplier, and Koomyo has no call to undo a return, so it cannot be cancelled here either. Correct the stock in Koomyo by hand if the return was a mistake."
+			).format(doc.name),
+			title=_("Koomyo cannot undo this"),
+		)
+	ids = koomyo_deliveries(doc)
+	order_name = next((i.purchase_order for i in doc.items if i.purchase_order), None)
+	po = (
+		frappe.db.get_value("Purchase Order", order_name, ["koomyo_id"], as_dict=True) if order_name else None
+	)
+	connection = frappe.get_cached_doc("Koomyo Connection", doc.koomyo_connection)
+	if not ids or not po or not po.koomyo_id or not (connection.enabled and connection.sync_purchasing):
+		return
+	try:
+		order = KoomyoClient.for_connection(connection).get(
+			f"/purchase-orders/{quote(po.koomyo_id, safe='')}"
+		)
+	except KoomyoAPIError as e:
+		frappe.msgprint(
+			_("Koomyo could not be asked about order {0} ({1}); the cancel is told to it afterwards.").format(
+				po.koomyo_id, e.code
+			),
+			indicator="orange",
+		)
+		return
+	live = [r["id"] for r in order.get("receipts") or [] if r.get("id") and not r.get("reversed_at")]
+	for delivery_id in ids:
+		if delivery_id in live and live.index(delivery_id) != len(live) - 1:
+			newer = newer_deliveries(connection, order, delivery_id)
+			frappe.throw(
+				_(
+					"Koomyo reverses only the latest delivery of an order, and {0} is not the latest, so it cannot be cancelled here yet. Cancel the newer receipt(s) first: {1}."
+				).format(doc.name, newer or _("(see the order's deliveries in Koomyo)")),
+				title=_("Koomyo cannot undo this yet"),
+			)
+	if order.get("returns"):
+		frappe.throw(
+			_(
+				"Part of order {0} was sent back to the supplier in Koomyo, and Koomyo cannot reverse a delivery after a return, so {1} cannot be cancelled here either."
+			).format(order.get("number") or po.koomyo_id, doc.name),
+			title=_("Koomyo cannot undo this"),
+		)
+
+
 def on_purchase_receipt_cancel(doc, method=None):
 	"""A Purchase Receipt that ERPNext sent to Koomyo as a delivery was cancelled: reverse the delivery there.
 

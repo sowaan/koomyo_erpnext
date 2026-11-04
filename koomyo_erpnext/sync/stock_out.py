@@ -98,6 +98,26 @@ def on_count_submit(doc, method=None):
 	)
 
 
+def before_stock_change_cancel(doc, method=None):
+	"""Waste and a closed count cannot be undone in Koomyo, so they cannot be cancelled here either."""
+	if doc.flags.get("from_koomyo") or not doc.get("koomyo_sent") or not doc.get("koomyo_connection"):
+		return
+	if doc.doctype == "Stock Reconciliation":
+		frappe.throw(
+			_(
+				"{0} was sent to Koomyo as a stock count, and a closed count is locked there (it is part of the stock history), so it cannot be cancelled here either. Count again if the quantities were wrong."
+			).format(doc.name),
+			title=_("Koomyo cannot undo this"),
+		)
+	if doc.get("purpose") != "Material Transfer" and KINDS.get(doc.get("koomyo_send_as") or "") == "waste":
+		frappe.throw(
+			_(
+				"{0} was sent to Koomyo as waste, and Koomyo has no call to undo waste, so it cannot be cancelled here either."
+			).format(doc.name),
+			title=_("Koomyo cannot undo this"),
+		)
+
+
 def on_stock_change_cancel(doc, method=None):
 	"""A sent Stock Entry or Stock Reconciliation is cancelled in ERPNext: undo what Koomyo can undo."""
 	if doc.get("purpose") == "Material Transfer" or doc.flags.get("from_koomyo"):

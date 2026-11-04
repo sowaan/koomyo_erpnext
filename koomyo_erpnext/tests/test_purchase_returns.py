@@ -119,16 +119,11 @@ class TestPurchaseReturns(PurchasingTestCase):
 		self.give_back(1)
 		self.assertEqual(self.logs_of_kind(), [])
 
-	def test_cancelling_the_return_leaves_a_note_and_calls_nothing(self):
+	def test_a_return_cannot_be_cancelled_in_erpnext_because_koomyo_cannot_undo_it(self):
 		ret = self.give_back(1)
 		self.fake_a.writes.clear()
-		frappe.get_doc("Purchase Receipt", ret.name).cancel()
-		frappe.db.commit()
-		self.run_queue()
+		with self.assertRaises(frappe.ValidationError) as caught:
+			frappe.get_doc("Purchase Receipt", ret.name).cancel()
+		self.assertIn("no call to undo a return", str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Purchase Receipt", ret.name, "docstatus"), 1)
 		self.assertEqual(self.fake_a.writes, [])
-		notes = frappe.get_all(
-			"Comment",
-			filters={"reference_doctype": "Purchase Receipt", "reference_name": ret.name},
-			pluck="content",
-		)
-		self.assertTrue([n for n in notes if "no call to undo a return" in n])

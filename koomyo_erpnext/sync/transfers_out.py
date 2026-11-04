@@ -73,6 +73,7 @@ def key_parts(koomyo_id: str | None) -> tuple[str, str, str] | None:
 def transfer_connection(doc):
 	"""The connection whose Branch Map holds a warehouse of this Material Transfer and has this switched on."""
 	warehouses = {row.get("s_warehouse") for row in doc.items} | {row.get("t_warehouse") for row in doc.items}
+	warehouses.add(doc.get("koomyo_destination"))
 	if doc.get("outgoing_stock_entry"):
 		warehouses |= {
 			w
@@ -99,11 +100,75 @@ def on_stock_entry_submit(doc, method=None):
 	"""A submitted Material Transfer that this app did not make from Koomyo: tell Koomyo (one step or a receive)."""
 	if doc.get("purpose") != "Material Transfer" or doc.get("koomyo_connection") or doc.get("koomyo_sent"):
 		return
-	if doc.get("add_to_transit") and not doc.get("outgoing_stock_entry"):
-		return  # the send of a transfer in steps: the destination is chosen when it is received
+	if (
+		doc.get("add_to_transit")
+		and not doc.get("outgoing_stock_entry")
+		and not doc.get("koomyo_destination")
+	):
+		return  # a send whose destination was not saved: the transfer is made when it is received
 	connection = transfer_connection(doc)
 	if connection:
 		store_outbound(connection, "erpnext.stock_transfer", doc)
+
+
+def validate_stock_entry(doc, method=None):
+	"""Transfers in steps fill themselves in, so nobody has to remember the Transit Warehouse.
+
+	A Send to Warehouse (Add to Transit) for places Koomyo knows: the target you chose is saved as the Final
+	Destination and the rows go into the connection's Transit Warehouse. A Receive at Warehouse made from it gets
+	that destination filled in. Both say so. Without a Transit Warehouse on the connection nothing is changed
+	(the submit then says what to set).
+	"""
+	if doc.get("purpose") != "Material Transfer" or doc.get("koomyo_connection") or doc.get("koomyo_sent"):
+		return
+	if doc.get("outgoing_stock_entry"):
+		fill_receive_destination(doc)
+		return
+	if not doc.get("add_to_transit"):
+		return
+	connection = transfer_connection(doc)
+	transit = connection.get("transit_warehouse") if connection else None
+	if not transit:
+		return
+	targets = {row.get("t_warehouse") for row in doc.items if row.get("t_warehouse")} - {transit}
+	if len(targets) > 1:
+		frappe.throw(
+			_(
+				"{0} sends to more than one destination ({1}). Koomyo takes one destination for each transfer: make one Send to Warehouse for each."
+			).format(doc.get("name") or _("This entry"), ", ".join(sorted(targets))),
+			title=_("One destination for each transfer"),
+		)
+	if targets:
+		destination = targets.pop()
+		doc.koomyo_destination = destination
+		for row in doc.items:
+			row.t_warehouse = transit
+		doc.to_warehouse = transit
+		frappe.msgprint(
+			_(
+				"The stock goes into the Transit Warehouse {0}. The final destination {1} is saved, and is filled in when you receive it (Receive at Warehouse)."
+			).format(transit, destination),
+			indicator="blue",
+			alert=True,
+		)
+
+
+def fill_receive_destination(doc):
+	sent = frappe.db.get_value("Stock Entry", doc.outgoing_stock_entry, "koomyo_destination")
+	if not sent:
+		return
+	empty = [row for row in doc.items if not row.get("t_warehouse")]
+	if not empty:
+		return
+	for row in empty:
+		row.t_warehouse = sent
+	if not doc.get("to_warehouse"):
+		doc.to_warehouse = sent
+	frappe.msgprint(
+		_("The destination {0} was filled in from {1}.").format(sent, doc.outgoing_stock_entry),
+		indicator="blue",
+		alert=True,
+	)
 
 
 def before_stock_entry_submit(doc, method=None):
@@ -116,14 +181,22 @@ def before_stock_entry_submit(doc, method=None):
 	if doc.get("purpose") != "Material Transfer" or doc.get("koomyo_connection"):
 		return
 	if doc.get("outgoing_stock_entry") is None and doc.get("add_to_transit"):
-		# The destination is not known until the stock is received, but the Send to Warehouse must go into the
-		# connection's Transit Warehouse, or Koomyo's steps cannot match (the receive step would be refused).
+		# The Send to Warehouse must go into the connection's Transit Warehouse, or Koomyo's steps cannot match;
+		# when its final destination is saved, that must be a place Koomyo knows.
 		connection = transfer_connection(doc)
 		if connection:
 			went_into = one_warehouse(doc, "t_warehouse")
 			if not connection.get("transit_warehouse") or went_into != connection.transit_warehouse:
 				frappe.throw(
 					transit_message(connection, doc, went_into).replace(_(", then press Retry"), ""),
+					title=_("Koomyo would not take this transfer in steps"),
+				)
+			destination = doc.get("koomyo_destination")
+			if destination and not place_of(connection, destination):
+				frappe.throw(
+					_(
+						"Final destination {0} is not on connection {1}'s Branch Map, so Koomyo cannot be told where the stock is going. Add it (a branch, or Location Type Warehouse), or change the destination."
+					).format(destination, connection.name),
 					title=_("Koomyo would not take this transfer in steps"),
 				)
 		return
@@ -206,6 +279,52 @@ def precheck_request(connection, request_id: str, rows: list) -> list[str]:
 	return problems
 
 
+def before_stock_entry_cancel(doc, method=None):
+	"""ERPNext does not cancel what Koomyo could not undo.
+
+	A delivery or a resolution of a transfer cannot be undone in Koomyo, and neither can a transfer once stock
+	has arrived from it (the rest is resolved there). Koomyo is asked (the transfer as it stands); if it cannot
+	be read, a warning is shown and nothing is blocked (the cancel then reports what Koomyo said).
+	"""
+	if doc.get("purpose") != "Material Transfer" or doc.flags.get("from_koomyo"):
+		return
+	if not doc.get("koomyo_sent") or not doc.get("koomyo_connection"):
+		return
+	parts = key_parts(doc.get("koomyo_id"))
+	if parts and parts[0] in ("recv", "res"):
+		frappe.throw(
+			_(
+				"{0} is a delivery or a resolution of a Koomyo transfer, and Koomyo has no call to undo one, so it cannot be cancelled here either. To put the stock back, make a transfer in the other direction."
+			).format(doc.name),
+			title=_("Koomyo cannot undo this"),
+		)
+	connection = usable_connection(doc.koomyo_connection)
+	if not connection:
+		return
+	transfer_id = parts[1] if parts else doc.koomyo_id
+	try:
+		transfer = KoomyoClient.for_connection(connection).get(
+			f"/stock-transfers/{quote(transfer_id, safe='')}"
+		)
+	except KoomyoAPIError as e:
+		frappe.msgprint(
+			_(
+				"Koomyo could not be asked about the transfer ({0}); the cancel is told to it afterwards."
+			).format(e.code),
+			indicator="orange",
+		)
+		return
+	if transfer.get("status") == "cancelled":
+		return
+	if transfer.get("receipts") or transfer.get("status") in ("partial", "received"):
+		frappe.throw(
+			_(
+				"Goods have already arrived from Koomyo transfer {0}, and Koomyo cannot cancel a transfer once part of it arrived, so it cannot be cancelled here either. Resolve what is left in Koomyo (return it or write it off), or make a transfer back."
+			).format(transfer.get("number") or transfer_id),
+			title=_("Koomyo cannot undo this"),
+		)
+
+
 def on_stock_entry_cancel(doc, method=None):
 	"""A Stock Entry that was sent to Koomyo is cancelled in ERPNext (not one Koomyo cancelled itself)."""
 	if doc.get("purpose") != "Material Transfer" or doc.flags.get("from_koomyo"):
@@ -230,6 +349,8 @@ def push_stock_transfer(event: dict, connection, client: KoomyoClient | None = N
 	client = client or KoomyoClient.for_connection(connection)
 	if doc.get("outgoing_stock_entry"):
 		return receive_step(connection, client, doc, event)
+	if doc.get("add_to_transit"):
+		return send_step(connection, client, doc, event)
 	return one_step(connection, client, doc, event)
 
 
@@ -482,6 +603,29 @@ def one_step(connection, client, doc, event):
 		]
 		post_receive(connection, client, transfer, lines, doc, event)
 	mark(doc, connection, transfer["id"])
+	return ("Stock Entry", doc.name)
+
+
+def send_step(connection, client, doc, event):
+	"""A Send to Warehouse whose final destination was saved: the transfer is made in Koomyo at once (in transit)."""
+	destination = doc.get("koomyo_destination")
+	if not destination:
+		raise Skipped(
+			_("{0} has no final destination saved: the transfer is made when it is received.").format(
+				doc.name
+			)
+		)
+	went_into = one_warehouse(doc, "t_warehouse")
+	if not connection.get("transit_warehouse") or went_into != connection.transit_warehouse:
+		raise NeedsMapping(transit_message(connection, doc, went_into))
+	from_place, to_place = places_for(connection, one_warehouse(doc, "s_warehouse"), destination, doc)
+	parts = key_parts(doc.get("koomyo_id"))
+	if parts and parts[0] == "send" and doc.get("koomyo_connection") == connection.name:
+		raise Skipped(_("{0} is already a transfer in Koomyo.").format(doc.name))
+	transfer = create_transfer(
+		connection, client, doc, from_place, to_place, body_lines(connection, doc.items), event
+	)
+	mark(doc, connection, f"transfer:{transfer['id']}:send")
 	return ("Stock Entry", doc.name)
 
 

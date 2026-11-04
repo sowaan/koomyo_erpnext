@@ -48,20 +48,18 @@ class TestReceiptReversal(PurchasingTestCase):
 		self.run_queue()
 		self.assertEqual(len(self.fake_a.reverse_calls), 1)
 
-	def test_a_newer_delivery_must_be_cancelled_first_and_then_it_works(self):
+	def test_a_newer_delivery_must_be_cancelled_first_and_erpnext_says_so(self):
 		second = self.receive(self.po, 4)
 		self.run_queue()
 		self.fake_a.writes.clear()
-		self.cancel(self.first)
-		(log,) = self.logs_of_kind()
-		self.assertEqual(log.status, "Failed")
-		self.assertIn("Cancel the newer receipt(s) first", log.message)
-		self.assertIn(second.name, log.message)
-		self.assertEqual(self.fake_a.reverse_calls, [])
+		with self.assertRaises(frappe.ValidationError) as caught:
+			frappe.get_doc("Purchase Receipt", self.first.name).cancel()
+		self.assertIn("only the latest delivery", str(caught.exception))
+		self.assertIn(second.name, str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Purchase Receipt", self.first.name, "docstatus"), 1)
+		# newest first works, then the older one
 		self.cancel(second)
-		self.assertEqual([c["receipt_id"] for c in self.fake_a.reverse_calls], ["po-1-rcpt-2"])
-		retry([log.name])
-		self.run_queue()
+		self.cancel(self.first)
 		self.assertEqual([c["receipt_id"] for c in self.fake_a.reverse_calls], ["po-1-rcpt-2", "po-1-rcpt-1"])
 		self.assertEqual(self.order["status"], "ordered")
 

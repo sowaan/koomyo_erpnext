@@ -25,6 +25,10 @@ from koomyo_erpnext.tests.test_transfer_steps import (
 class TransfersOutCase(TransferStepsCase):
 	def setUp(self):
 		super().setUp()
+		# Cancelling and submitting ask Koomyo first: a fake answers for the whole test.
+		patcher = self.koomyo()
+		patcher.__enter__()
+		self.addCleanup(patcher.__exit__, None, None, None)
 		self.conn_a.reload()
 		self.conn_a.push_stock_transfers = 1
 		self.conn_a.save()
@@ -201,15 +205,11 @@ class TestOneStep(TransfersOutCase):
 
 
 class TestSendIntoTheTransitWarehouse(TransfersOutCase):
-	def test_a_send_into_a_real_warehouse_is_refused_at_submit_with_what_to_do(self):
+	def test_a_send_into_a_real_warehouse_is_moved_into_transit_and_the_destination_is_kept(self):
 		entry = self.make_entry(CENTRAL, STORES, 5, transit=True, submit=False)
-		with self.assertRaises(frappe.ValidationError) as caught:
-			entry.submit()
-		message = str(caught.exception)
-		self.assertIn(STORES, message)
-		self.assertIn(TRANSIT, message)
-		self.assertIn("through the Transit Warehouse", message)
-		self.assertEqual(frappe.db.get_value("Stock Entry", entry.name, "docstatus"), 0)
+		entry = frappe.get_doc("Stock Entry", entry.name)
+		self.assertEqual([r.t_warehouse for r in entry.items], [TRANSIT])
+		self.assertEqual((entry.to_warehouse, entry.koomyo_destination), (TRANSIT, STORES))
 
 	def test_a_send_into_the_transit_warehouse_is_fine(self):
 		entry = self.make_entry(CENTRAL, TRANSIT, 5, transit=True)
@@ -246,6 +246,97 @@ class TestSendIntoTheTransitWarehouse(TransfersOutCase):
 		frappe.db.set_value("Stock Entry", entry.name, "docstatus", 1)  # as if it had been submitted earlier
 		frappe.get_doc("Stock Entry", entry.name).run_method("on_submit")
 		frappe.db.commit()
+
+
+class TestAutomaticTransit(TransfersOutCase):
+	"""Choose the real destination on the Send; the app puts the stock into transit and remembers where it goes."""
+
+	def send_to(self, destination, qty=10, submit=True):
+		entry = self.make_entry(CENTRAL, destination, qty, transit=True, submit=submit)
+		if submit:
+			self.run_queue()
+		return entry
+
+	def test_the_destination_is_saved_and_the_stock_goes_into_the_transit_warehouse(self):
+		entry = frappe.get_doc("Stock Entry", self.send_to(STORES, submit=False).name)
+		self.assertEqual(
+			([r.t_warehouse for r in entry.items], entry.to_warehouse, entry.koomyo_destination),
+			([TRANSIT], TRANSIT, STORES),
+		)
+
+	def test_submitting_the_send_makes_the_transfer_in_koomyo_at_once_in_transit(self):
+		entry = self.send_to(STORES)
+		(log,) = self.outbound_logs("erpnext.stock_transfer")
+		self.assertEqual(log.status, "Done", (log.message, log.error[-400:]))
+		(transfer,) = self.transfers()
+		self.assertEqual(
+			(transfer["status"], transfer["from"]["id"], transfer["to"]["id"], transfer["reference"]),
+			("in_transit", CENTRAL_WAREHOUSE, BRANCH, entry.name),
+		)
+		self.assertEqual(transfer["lines"][0]["quantity_sent"], "10.000")
+		self.assertEqual(transfer["receipts"], [], "nothing has arrived yet")
+		self.assertEqual(
+			frappe.db.get_value("Stock Entry", entry.name, "koomyo_id"), f"transfer:{transfer['id']}:send"
+		)
+
+	def test_the_receive_gets_the_destination_filled_in_and_only_the_delivery_is_sent(self):
+		sent = self.send_to(STORES)
+		from erpnext.stock.doctype.stock_entry.stock_entry import make_stock_in_entry
+
+		entry = make_stock_in_entry(sent.name)
+		for row in entry.items:
+			row.qty = 7
+		entry.insert()
+		entry = frappe.get_doc("Stock Entry", entry.name)
+		self.assertEqual([r.t_warehouse for r in entry.items], [STORES])
+		entry.submit()
+		frappe.db.commit()
+		self.run_queue()
+		(transfer,) = self.transfers()
+		self.assertEqual(
+			(
+				transfer["status"],
+				transfer["lines"][0]["quantity_received"],
+				transfer["lines"][0]["quantity_open"],
+			),
+			("partial", "7.000", "3.000"),
+		)
+		self.assertEqual(len(self.transfers()), 1, "the receive made no second transfer")
+		self.assertEqual(transfer["receipts"][0]["note"], f"ERPNext {entry.name}")
+
+	def test_cancelling_the_send_before_anything_arrived_cancels_the_transfer_in_koomyo(self):
+		sent = self.send_to(STORES)
+		frappe.get_doc("Stock Entry", sent.name).cancel()
+		frappe.db.commit()
+		self.run_queue()
+		self.assertEqual(self.transfers()[0]["status"], "cancelled")
+
+	def test_rows_going_to_two_destinations_are_refused_at_save(self):
+		entry = self.make_entry(CENTRAL, STORES, 5, transit=True, submit=False)
+		entry = frappe.get_doc("Stock Entry", entry.name)
+		entry.items[0].t_warehouse = STORES
+		entry.append(
+			"items",
+			{
+				"item_code": entry.items[0].item_code,
+				"qty": 1,
+				"s_warehouse": CENTRAL,
+				"t_warehouse": "Work In Progress - _KTA",
+			},
+		)
+		with self.assertRaises(frappe.ValidationError) as caught:
+			entry.save()
+		self.assertIn("more than one destination", str(caught.exception))
+
+	def test_without_a_transit_warehouse_nothing_is_changed_and_the_submit_says_what_to_set(self):
+		self.conn_a.reload()
+		self.conn_a.transit_warehouse = None
+		self.conn_a.save()
+		entry = frappe.get_doc("Stock Entry", self.send_to(STORES, submit=False).name)
+		self.assertEqual(([r.t_warehouse for r in entry.items], entry.koomyo_destination), ([STORES], None))
+		with self.assertRaises(frappe.ValidationError) as caught:
+			entry.submit()
+		self.assertIn("has no Transit Warehouse", str(caught.exception))
 
 
 class TestInSteps(TransfersOutCase):
@@ -373,29 +464,24 @@ class TestCancel(TransfersOutCase):
 			("cancelled", f"Cancelled in ERPNext ({entry.name})"),
 		)
 
-	def test_once_goods_arrived_koomyo_cannot_cancel_and_says_what_to_do(self):
-		entry = self.make_entry(CENTRAL, STORES, 4)
-		self.run_queue()
-		frappe.get_doc("Stock Entry", entry.name).cancel()
-		frappe.db.commit()
-		self.run_queue()
-		(log,) = self.outbound_logs("erpnext.stock_transfer_cancel")
-		self.assertEqual(log.status, "Failed")
-		self.assertIn("goods already arrived", log.message)
-		self.assertEqual(self.fake_a.transfers["tr-1"]["status"], "received")
-
-	def test_cancelling_a_delivery_only_says_koomyo_cannot_undo_it(self):
+	def test_a_delivery_cannot_be_cancelled_in_erpnext_because_koomyo_cannot_undo_it(self):
 		sent = self.make_entry(CENTRAL, TRANSIT, 10, transit=True)
 		got = self.receive_entry(sent, 5, STORES)
 		self.run_queue()
 		self.fake_a.transfer_calls.clear()
-		frappe.get_doc("Stock Entry", got.name).cancel()
-		frappe.db.commit()
-		self.run_queue()
-		(log,) = self.outbound_logs("erpnext.stock_transfer_cancel")
-		self.assertEqual(log.status, "Skipped")
-		self.assertIn("no call to undo a delivery", log.message)
+		with self.assertRaises(frappe.ValidationError) as caught:
+			frappe.get_doc("Stock Entry", got.name).cancel()
+		self.assertIn("no call to undo one", str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Stock Entry", got.name, "docstatus"), 1)
 		self.assertEqual(self.fake_a.transfer_calls, [])
+
+	def test_a_transfer_that_was_received_cannot_be_cancelled_either(self):
+		entry = self.make_entry(CENTRAL, STORES, 4)
+		self.run_queue()
+		with self.assertRaises(frappe.ValidationError) as caught:
+			frappe.get_doc("Stock Entry", entry.name).cancel()
+		self.assertIn("cannot cancel a transfer once part of it arrived", str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Stock Entry", entry.name, "docstatus"), 1)
 
 	def test_a_transfer_koomyo_cancelled_is_not_cancelled_back(self):
 		sent = self.make_entry(CENTRAL, TRANSIT, 10, transit=True)

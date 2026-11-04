@@ -217,13 +217,13 @@ class TestWaste(StockOutCase):
 		event["data"]["external_refs"] = {"erpnext": f"{doc.name}#1"}
 		self.assertEqual(self.book(event).status, "Skipped")
 
-	def test_cancelling_waste_only_says_koomyo_cannot_undo_it(self):
+	def test_waste_cannot_be_cancelled_in_erpnext_because_koomyo_cannot_undo_it(self):
 		doc = self.entry(send_as="Waste")
 		self.fake_a.stock_calls.clear()
-		self.cancel(doc)
-		(log,) = self.logs_of("erpnext.stock_change_cancel")
-		self.assertEqual(log.status, "Skipped")
-		self.assertIn("no call to undo waste", log.message)
+		with self.assertRaises(frappe.ValidationError) as caught:
+			frappe.get_doc("Stock Entry", doc.name).cancel()
+		self.assertIn("no call to undo waste", str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Stock Entry", doc.name, "docstatus"), 1)
 		self.assertEqual(self.fake_a.stock_calls, [])
 
 
@@ -338,11 +338,9 @@ class TestCounts(StockOutCase):
 		event["data"]["external_refs"] = {"erpnext": f"{doc.name}#{STORES}"}
 		self.assertEqual(self.book(event).status, "Skipped")
 
-	def test_cancelling_says_a_closed_count_is_locked(self):
+	def test_a_closed_count_cannot_be_cancelled_in_erpnext_because_koomyo_locks_it(self):
 		doc = self.reconcile(14)
-		frappe.get_doc("Stock Reconciliation", doc.name).cancel()
-		frappe.db.commit()
-		self.run_queue()
-		(log,) = self.logs_of("erpnext.stock_change_cancel")
-		self.assertEqual(log.status, "Skipped")
-		self.assertIn("closed count is locked", log.message)
+		with self.assertRaises(frappe.ValidationError) as caught:
+			frappe.get_doc("Stock Reconciliation", doc.name).cancel()
+		self.assertIn("closed count is locked", str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Stock Reconciliation", doc.name, "docstatus"), 1)
