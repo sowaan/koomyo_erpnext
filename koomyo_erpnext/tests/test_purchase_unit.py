@@ -79,8 +79,23 @@ class TestPurchaseUnit(PurchaseUnitCase):
 		self.assertEqual(summary["ingredients"]["updated"], 1)
 		self.assertEqual({r.uom: r.conversion_factor for r in self.item().uoms}["Box"], 1000)
 
-	def test_a_pack_size_that_changed_is_noted_not_applied(self):
+	def test_a_pack_size_that_changed_is_applied_without_transactions(self):
 		self.load(self.straw(factor="1000"))
+		self.load(self.straw(factor="500"))
+		self.assertEqual({r.uom: r.conversion_factor for r in self.item().uoms}["Box"], 500)
+
+	def test_a_pack_size_that_changed_is_noted_not_applied_with_transactions(self):
+		self.load(self.straw(factor="1000"))
+		item = self.item()
+		frappe.get_doc(
+			{
+				"doctype": "Bin",
+				"item_code": item.name,
+				"warehouse": frappe.db.get_value(
+					"Warehouse", {"company": self.conn_a.company, "is_group": 0}
+				),
+			}
+		).insert(ignore_permissions=True)
 		self.load(self.straw(factor="500"))
 		item = self.item()
 		self.assertEqual({r.uom: r.conversion_factor for r in item.uoms}["Box"], 1000, "kept as it was")

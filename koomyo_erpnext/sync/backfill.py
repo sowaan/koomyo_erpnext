@@ -469,6 +469,7 @@ def run_master_chunk(connection, kind: str, counts: dict, messages: list, sample
 		counts["already_there"] += same
 		counts["found"] += changed + same + failed  # what was read, including what could not be loaded
 		counts["failed"] += failed
+		counts["skipped"] += len(summary.get("attention") or [])  # flagged for a person, not failed
 		messages.append((summary.get("text") or "")[:900])
 		if len(sample) < SAMPLE_SIZE:
 			sample.append({"kind": "menu and ingredients", "text": summary.get("text")})
