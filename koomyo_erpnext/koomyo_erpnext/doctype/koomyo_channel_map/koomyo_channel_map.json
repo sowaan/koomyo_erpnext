@@ -1,0 +1,89 @@
+{
+ "actions": [],
+ "creation": "2026-11-07 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "channel_id",
+  "channel_code",
+  "channel_name",
+  "customer",
+  "receivable_account",
+  "commission_account",
+  "payout_account"
+ ],
+ "fields": [
+  {
+   "fieldname": "channel_id",
+   "fieldtype": "Data",
+   "label": "Koomyo Channel Id",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "channel_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Code",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "channel_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "receivable_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Receivable Account",
+   "options": "Account",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "description": "Optional. Empty: the connection's Channel Commission Account.",
+   "fieldname": "commission_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Commission Expense Account (override)",
+   "options": "Account"
+  },
+  {
+   "columns": 2,
+   "description": "Optional. Empty: the connection's Payout Bank Account. Give each partner its own bank or clearing account to keep their money apart.",
+   "fieldname": "payout_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Payout Bank Account (override)",
+   "options": "Account"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-07 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Koomyo Erpnext",
+ "name": "Koomyo Channel Map",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

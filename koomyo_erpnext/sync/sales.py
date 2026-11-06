@@ -25,7 +25,7 @@ from frappe import _
 from frappe.utils import escape_html
 
 from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Retryable, Skipped
-from koomyo_erpnext.sync import cod, discounts
+from koomyo_erpnext.sync import channels, cod, discounts
 from koomyo_erpnext.sync.common import (
 	branch_row,
 	check_company,
@@ -133,11 +133,14 @@ def book_order(order: dict, connection, timezone: str | None = None):
 	check_company(connection, "Account", income_account, _("Income Account"))
 	cost_center = branch.cost_center
 
+	channel = channels.channel_of(order)
+	party = channels.party_for(connection, channel) if channel else None  # the partner owes this sale
+
 	invoice = frappe.new_doc("Sales Invoice")
 	invoice.update(
 		{
 			"company": connection.company,
-			"customer": order_customer(connection, order),
+			"customer": party.customer if party else order_customer(connection, order),
 			"posting_date": posting_date(order),
 			"set_posting_time": 1,
 			"currency": company_currency,
@@ -158,6 +161,9 @@ def book_order(order: dict, connection, timezone: str | None = None):
 	if time:
 		invoice.posting_time = time
 	stamp(invoice, connection, order["id"], order.get("branch_id"))
+	if party:
+		invoice.debit_to = party.receivable_account
+		invoice.koomyo_channel = channel.get("code") or party.channel_code
 
 	book = discounts.DiscountBook(connection)
 	lines_total = Decimal(0)
@@ -249,8 +255,13 @@ def book_order(order: dict, connection, timezone: str | None = None):
 	invoice.submit()
 	discounts.reclass_entry(connection, invoice, order, book, cost_center)
 
-	book_payments(invoice, order, connection, a["amount_paid"])
-	cod.book_cod(invoice, order, connection, a)
+	if party:
+		# The partner pays later: no cash or bank payment now, the commission comes off the receivable.
+		check_payments_total(order, a["amount_paid"])
+		channels.book_commission(connection, invoice, order, channel, party)
+	else:
+		book_payments(invoice, order, connection, a["amount_paid"])
+		cod.book_cod(invoice, order, connection, a)
 	return ("Sales Invoice", invoice.name)
 
 
@@ -306,7 +317,7 @@ def account_setting(connection, fieldname: str, label: str) -> str:
 	return account
 
 
-def book_payments(invoice, order: dict, connection, amount_paid: Decimal):
+def check_payments_total(order: dict, amount_paid: Decimal) -> Decimal:
 	payments = (order.get("payment") or {}).get("payments") or []
 	total = sum((money(p.get("amount"), "payment amount") for p in payments), Decimal(0))
 	if total != amount_paid:
@@ -315,6 +326,12 @@ def book_payments(invoice, order: dict, connection, amount_paid: Decimal):
 				order.get("number"), total, amount_paid
 			)
 		)
+	return total
+
+
+def book_payments(invoice, order: dict, connection, amount_paid: Decimal):
+	payments = (order.get("payment") or {}).get("payments") or []
+	total = check_payments_total(order, amount_paid)
 	if total > doc_money(invoice.grand_total):
 		raise Fatal(_("Order {0}: more was paid than the invoice total.").format(order.get("number")))
 	for p in payments:

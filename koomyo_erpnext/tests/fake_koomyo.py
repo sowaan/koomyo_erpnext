@@ -119,6 +119,8 @@ class FakeKoomyo:
 		self.writes: list[dict] = []  # every write call: method, path, key, body
 		# GET list endpoints for the backfill: path -> records (opaque cursors, docs filters).
 		self.lists: dict[str, list[dict]] = {}
+		self.payouts: dict[str, list[dict]] = {}  # channel id -> payouts, newest first (sales channels)
+		self.channel_owed: dict[str, str] = {}  # channel id -> balance.owed
 		self.page_cap = 200
 		self.rate_limit: tuple[int, int] | None = None  # (limit, remaining) headers on every answer
 		self._idempotent: dict[str, tuple] = {}
@@ -217,6 +219,24 @@ class FakeKoomyo:
 				if group["id"] == path.split("/")[2]:
 					return FakeResponse(200, group)
 			return error_response(404, "not_found")
+		if path.startswith("/sales-channels/"):
+			parts = path.split("/")
+			channel = next((c for c in self.lists.get("/sales-channels", []) if c["id"] == parts[2]), None)
+			if not channel:
+				return error_response(404, "not_found")
+			if len(parts) == 4 and parts[3] == "payouts":
+				rows = copy.deepcopy(self.payouts.get(parts[2], []))
+				return FakeResponse(
+					200, {"object": "list", "data": rows, "has_more": False, "next_cursor": None}
+				)
+			full = copy.deepcopy(channel)
+			full["balance"] = {
+				"net_expected": "0.00",
+				"payouts_received": "0.00",
+				"adjustments": "0.00",
+				"owed": self.channel_owed.get(parts[2], "0.00"),
+			}
+			return FakeResponse(200, full)
 		if path == "/account":
 			account = copy.deepcopy(self.account)
 			if self.account_purchase_requests:
@@ -255,6 +275,8 @@ class FakeKoomyo:
 			"active": lambda r, v: str(r.get("active", True)).lower() == v,
 			"kind": lambda r, v: (r.get("reason") in MANUAL_REASONS or r.get("reason") not in SYSTEM_REASONS)
 			== (v == "manual"),
+			"order_id": lambda r, v: r.get("order_id") == v,
+			"sales_channel_id": lambda r, v: (r.get("sales_channel") or {}).get("id") == v,
 			"branch_id": lambda r, v: v in (r.get("branch_id"), (r.get("location") or {}).get("id")),
 			"created_after": lambda r, v: when(r, "created_at") > v,
 			"created_before": lambda r, v: when(r, "created_at") < v,

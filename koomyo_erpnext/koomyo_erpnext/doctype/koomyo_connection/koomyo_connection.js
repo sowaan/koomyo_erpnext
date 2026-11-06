@@ -22,6 +22,10 @@ frappe.ui.form.on("Koomyo Connection", {
 			"stock_adjustment_account",
 			"transfer_loss_account",
 			"supplies_expense_account",
+			"channel_commission_account",
+			"channel_commission_tax_account",
+			"channel_payout_account",
+			"channel_adjustment_account",
 		]) {
 			frm.set_query(field, company_filter);
 		}
@@ -35,6 +39,9 @@ frappe.ui.form.on("Koomyo Connection", {
 		frm.set_query("fee_account", "payment_map", company_filter);
 		frm.set_query("account_head", "tax_map", company_filter);
 		frm.set_query("expense_account", "waste_map", company_filter);
+		for (const field of ["commission_account", "payout_account"]) {
+			frm.set_query(field, "channel_map", company_filter);
+		}
 
 		show_status(frm);
 		render_checklist(frm);

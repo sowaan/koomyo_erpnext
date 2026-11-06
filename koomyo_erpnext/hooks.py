@@ -281,6 +281,7 @@ scheduler_events = {
 	"daily": [
 		"koomyo_erpnext.sync.events.cleanup_event_log",
 		"koomyo_erpnext.sync.events.daily_alerts",
+		"koomyo_erpnext.sync.channels.schedule_checks",
 	],
 }
 

@@ -122,6 +122,37 @@ ACCOUNT_DEFAULTS = {
 		"Stock Transfer Loss",
 	),
 }
+# Accounts for sales channels (Foodpanda, Careem, ...): only proposed when Koomyo has channels.
+CHANNEL_ACCOUNT_DEFAULTS = {
+	"channel_commission_account": (
+		["Channel Commission", "Sales Channel Commission", "Delivery Partner Commission"],
+		"",
+		"Expense",
+		["Indirect Expenses", "Direct Expenses"],
+		"Channel Commission",
+	),
+	"channel_commission_tax_account": (
+		["Input Tax on Commission", "Input Tax", "Input VAT", "Input GST"],
+		"Tax",
+		"Liability",
+		["Duties and Taxes"],
+		"Input Tax on Commission",
+	),
+	"channel_adjustment_account": (
+		["Channel Adjustments", "Channel Marketing Fees", "Marketing Expenses"],
+		"",
+		"Expense",
+		["Indirect Expenses", "Direct Expenses"],
+		"Channel Adjustments",
+	),
+	"channel_payout_account": (
+		["Channel Payouts Clearing", "Channel Payouts", "Bank Transfer Clearing"],
+		"Bank",
+		"Asset",
+		["Bank Accounts"],
+		"Channel Payouts Clearing",
+	),
+}
 WASTE_ACCOUNTS = {
 	"spoilage": (["Food Waste", "Wastage", "Waste", "Spoilage"], "Food Waste"),
 	"tasting": (["Food Waste", "Wastage", "Waste", "Spoilage"], "Food Waste"),
@@ -247,10 +278,17 @@ def read_koomyo(connection) -> dict:
 	else:
 		notes.append(_("The key has no stock.read scope, so ingredient units could not be read."))
 	branches, warehouses = read_places(client, scopes, notes)
+	channels = []
+	if "sales_channels.read" in scopes:  # an opt-in scope: a key without it simply has no channels here
+		try:
+			channels = [c for c in client.iter_list("/sales-channels", {}, max_pages=5) if c.get("id")]
+		except KoomyoAPIError as e:
+			notes.append(_("Sales channels could not be read: {0}").format(str(e)[:200]))
 	return {
 		"account": account,
 		"branches": branches,
 		"warehouses": warehouses,
+		"channels": channels,
 		"methods": methods,
 		"units": sorted(units),
 		"notes": notes,
@@ -517,6 +555,23 @@ def build_plan(connection, koomyo: dict) -> list[dict]:
 	account_default("drawer_account", label_of("drawer_account"), info.default_cash_account, "Cash")
 	for fieldname, (names, _type, root, _parents, new_name) in ACCOUNT_DEFAULTS.items():
 		account_default(fieldname, label_of(fieldname), find_account(co, names, root), new_name)
+	mapped_channels = {r.channel_id for r in connection.channel_map}
+	new_channels = [c for c in koomyo.get("channels") or [] if c["id"] not in mapped_channels]
+	if koomyo.get("channels"):
+		for fieldname, (names, atype, root, _parents, new_name) in CHANNEL_ACCOUNT_DEFAULTS.items():
+			account_default(
+				fieldname, label_of(fieldname), find_account(co, names, root, atype or None), new_name
+			)
+	for channel in new_channels:
+		name = (channel.get("name") or channel.get("code") or channel["id"])[:100]
+		existing = find_account(co, [f"{name} Bank", f"{name} Payouts", f"{name} Clearing"], "Asset", "Bank")
+		propose_account(
+			f"channel:{channel['id']}:bank",
+			_("Sales channels"),
+			_("{0}: Bank Account for its payouts").format(name),
+			existing,
+			f"{name} Bank",
+		)
 
 	restaurant = koomyo["account"]["name"]
 	if not connection.default_cost_center and info.cost_center:
@@ -698,8 +753,12 @@ class Setup:
 			root, atype, parents = "Liability", "Tax", ["Duties and Taxes"]
 		elif kind[0] in ("waste", "discount"):
 			root, atype, parents = "Expense", "", ["Indirect Expenses", "Direct Expenses"]
+		elif kind[0] == "channel":
+			root, atype, parents = "Asset", "Bank", ["Bank Accounts"]
 		elif field in ACCOUNT_DEFAULTS:
 			_n, atype, root, parents, _new = ACCOUNT_DEFAULTS[field]
+		elif field in CHANNEL_ACCOUNT_DEFAULTS:
+			_n, atype, root, parents, _new = CHANNEL_ACCOUNT_DEFAULTS[field]
 		elif field == "income_account":
 			root, atype, parents = "Income", "", ["Direct Income", "Indirect Income"]
 		elif field == "drawer_account":
@@ -908,6 +967,26 @@ def apply_plan(connection, koomyo: dict, choices: list[dict]) -> dict:
 			connection.append(
 				"payment_map", {"koomyo_method": method["code"], "mode_of_payment": mop, "account": account}
 			)
+	for channel in koomyo.get("channels") or []:
+		bank = resolved.get(f"channel:{channel['id']}:bank")
+		if not bank or any(r.channel_id == channel["id"] for r in connection.channel_map):
+			continue
+		from koomyo_erpnext.sync import channels as channel_sync
+
+		customer, receivable = channel_sync.make_party(connection, channel)
+		setup.remember("Customer", customer, _("sales channel {0}").format(channel.get("name")))
+		setup.remember("Account", receivable, _("receivable of {0}").format(channel.get("name")))
+		connection.append(
+			"channel_map",
+			{
+				"channel_id": channel["id"],
+				"channel_code": channel.get("code"),
+				"channel_name": channel.get("name"),
+				"customer": customer,
+				"receivable_account": receivable,
+				"payout_account": bank,
+			},
+		)
 	if resolved.get("tax:account"):
 		connection.append("tax_map", {"tax_rate": "", "account_head": resolved["tax:account"]})
 	for unit in koomyo["units"]:

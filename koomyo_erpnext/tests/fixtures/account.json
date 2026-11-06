@@ -17,7 +17,8 @@
    "purchasing.write",
    "ingredients.write",
    "customers.write",
-   "refs.write"
+   "refs.write",
+   "sales_channels.read"
   ]
  },
  "name": "Slice of Heaven Test Cafe",

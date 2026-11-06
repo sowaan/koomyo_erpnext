@@ -54,6 +54,12 @@
   "section_cod",
   "cod_shortfall_account",
   "cod_extra_account",
+  "section_channels",
+  "channel_commission_account",
+  "channel_commission_tax_account",
+  "channel_payout_account",
+  "channel_adjustment_account",
+  "channel_map",
   "section_shifts",
   "sync_shifts",
   "section_shift_settings",
@@ -1069,6 +1075,48 @@
    "label": "Deliver Shares To (not used)",
    "options": "Koomyo Decides\nWarehouse\nBranches",
    "hidden": 1
+  },
+  {
+   "fieldname": "section_channels",
+   "fieldtype": "Section Break",
+   "label": "Sales Channels",
+   "depends_on": "sync_sales",
+   "collapsible": 1,
+   "description": "Partners such as Foodpanda or Careem whose orders are punched in at the counter. Each channel gets its own Customer and receivable account the first time it is seen; the partner owes the whole sale, the commission is booked against it, and each payout settles it. Nothing here needs setting for a restaurant without channels."
+  },
+  {
+   "fieldname": "channel_commission_account",
+   "fieldtype": "Link",
+   "label": "Channel Commission Account",
+   "options": "Account",
+   "description": "Expense account for the partner's commission. A channel row below can use its own."
+  },
+  {
+   "fieldname": "channel_commission_tax_account",
+   "fieldtype": "Link",
+   "label": "Tax on Commission Account",
+   "options": "Account",
+   "description": "Usually an input tax account. Needed when a channel's commission carries tax."
+  },
+  {
+   "fieldname": "channel_payout_account",
+   "fieldtype": "Link",
+   "label": "Payout Bank Account",
+   "options": "Account",
+   "description": "Where a partner's payout arrives, unless its row in the Channels table names its own."
+  },
+  {
+   "fieldname": "channel_adjustment_account",
+   "fieldtype": "Link",
+   "label": "Payout Adjustment Account",
+   "options": "Account",
+   "description": "Expense account for what a partner keeps back (marketing fee, penalty)."
+  },
+  {
+   "fieldname": "channel_map",
+   "fieldtype": "Table",
+   "label": "Channels",
+   "options": "Koomyo Channel Map"
   }
  ],
  "links": [],

@@ -175,8 +175,17 @@ class KoomyoConnection(Document):
 			"stock_adjustment_account",
 			"transfer_loss_account",
 			"supplies_expense_account",
+			"channel_commission_account",
+			"channel_commission_tax_account",
+			"channel_payout_account",
+			"channel_adjustment_account",
 		):
 			self.check_account_company(self.get(fieldname), _(self.meta.get_label(fieldname)))
+		for row in self.get("channel_map") or []:
+			for fieldname in ("receivable_account", "commission_account", "payout_account"):
+				self.check_account_company(
+					row.get(fieldname), _("Channel {0}").format(row.channel_code or row.idx)
+				)
 		for fieldname in ("main_warehouse", "transit_warehouse"):
 			warehouse = self.get(fieldname)
 			if warehouse and frappe.db.get_value("Warehouse", warehouse, "company") != self.company:

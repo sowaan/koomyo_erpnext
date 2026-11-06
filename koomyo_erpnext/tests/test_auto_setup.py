@@ -17,6 +17,12 @@ from koomyo_erpnext.tests.helpers import (
 COMPANY_D = "_Koomyo Test D"
 FRESH = "Fresh Setup"
 BRANCH = "90000000-0000-4000-8000-000000000001"
+CHANNEL_ROWS = (
+	"channel:",
+	"field:channel_commission",
+	"field:channel_payout",
+	"field:channel_adjustment",
+)
 
 
 def method(code, label, cash):
@@ -63,6 +69,7 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 				"Koomyo Waste Map",
 				"Koomyo Setup Log",
 				"Koomyo Discount Map",
+				"Koomyo Channel Map",
 			):
 				frappe.db.delete(table, {"parent": stale})
 		frappe.db.delete("Koomyo Connection", {"connection_name": FRESH})
@@ -84,6 +91,9 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 	}
 
 	def tearDown(self):
+		frappe.db.delete(
+			"Koomyo Channel Map", {"parent": self.conn.name}
+		)  # they link to what is removed below
 		# Remove only what this test made, never records that were already on the site.
 		for doctype, filters in reversed(list(self.SNAPSHOT.items())):
 			for name in set(frappe.get_all(doctype, filters=filters, pluck="name")) - self.before[doctype]:
@@ -373,3 +383,64 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 		self.conn.sync_refunds = 1
 		self.conn.webhook_secret = "whsec_test"
 		self.assertEqual([t["text"] for t in auto_setup.checklist(self.conn)], [])
+
+	def channels(self):
+		self.addCleanup(self.fake_a.lists.pop, "/sales-channels", None)  # the fake is shared between tests
+		return [
+			{
+				"object": "sales_channel",
+				"id": "ch-foodpanda",
+				"code": "foodpanda",
+				"name": "Foodpanda",
+				"active": True,
+			},
+			{
+				"object": "sales_channel",
+				"id": "ch-careem",
+				"code": "careem",
+				"name": "Careem",
+				"active": True,
+			},
+		]
+
+	def test_without_sales_channels_nothing_about_channels_is_proposed(self):
+		_koomyo, plan = self.plan()
+		self.assertEqual([k for k in plan if k.startswith(CHANNEL_ROWS)], [])
+		self.fake_a.lists["/sales-channels"] = self.channels()
+		scopes = list(self.fake_a.account["key"]["scopes"])
+		self.addCleanup(self.fake_a.account["key"].__setitem__, "scopes", scopes)
+		self.fake_a.account["key"]["scopes"] = [
+			x for x in self.fake_a.account["key"]["scopes"] if x != "sales_channels.read"
+		]
+		_koomyo, plan = self.plan()
+		self.assertEqual([k for k in plan if k.startswith(CHANNEL_ROWS)], [], "no scope, no channels")
+
+	def test_each_sales_channel_gets_its_own_bank_account_customer_and_receivable(self):
+		self.fake_a.lists["/sales-channels"] = self.channels()
+		_koomyo, plan = self.plan()
+		self.assertEqual(
+			(plan["channel:ch-foodpanda:bank"]["action"], plan["channel:ch-foodpanda:bank"]["value"]),
+			(auto_setup.CREATE, "Foodpanda Bank"),
+		)
+		self.assertEqual(plan["channel:ch-careem:bank"]["value"], "Careem Bank")
+		for field in (
+			"channel_commission_account",
+			"channel_commission_tax_account",
+			"channel_adjustment_account",
+			"channel_payout_account",
+		):
+			self.assertIn(f"field:{field}", plan)
+		self.apply()
+		rows = {r.channel_id: r for r in self.conn.channel_map}
+		self.assertEqual(sorted(r.channel_code for r in rows.values()), ["careem", "foodpanda"])
+		fp, cm = rows["ch-foodpanda"], rows["ch-careem"]
+		self.assertNotEqual(fp.payout_account, cm.payout_account)
+		self.assertEqual(frappe.db.get_value("Account", fp.payout_account, "account_type"), "Bank")
+		self.assertEqual(frappe.db.get_value("Account", fp.receivable_account, "account_type"), "Receivable")
+		self.assertTrue(frappe.db.exists("Customer", fp.customer))
+		self.assertEqual(frappe.db.get_value("Customer", fp.customer, "koomyo_id"), "channel:ch-foodpanda")
+		self.assertTrue(self.conn.channel_commission_account and self.conn.channel_payout_account)
+		# run again: nothing more to propose, nothing doubled
+		_koomyo, again = self.plan()
+		self.assertEqual([k for k in again if k.startswith("channel:")], [])
+		self.assertEqual(len(self.conn.channel_map), 2)

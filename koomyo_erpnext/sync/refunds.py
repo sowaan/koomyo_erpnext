@@ -19,7 +19,7 @@ from frappe import _
 
 from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Retryable, Skipped
-from koomyo_erpnext.sync import discounts
+from koomyo_erpnext.sync import channels, discounts
 from koomyo_erpnext.sync.common import (
 	cents,
 	doc_money,
@@ -118,6 +118,9 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 		refund.get("order_number"), refund.get("reason") or "-"
 	)
 	stamp(credit_note, connection, refund["id"], refund.get("branch_id"))
+	if channels.is_channel_invoice(original):
+		credit_note.koomyo_channel = original.koomyo_channel
+		credit_note.debit_to = original.debit_to
 	credit_note.insert(ignore_permissions=True)
 	if doc_money(credit_note.grand_total) != -amount:
 		raise Fatal(
@@ -133,7 +136,11 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 		# An answer without the split (an older Koomyo): a full refund reverses the order's reclassification.
 		discounts.reverse_reclass(connection, refund["order_id"], refund["id"], credit_note.posting_date)
 
-	if refund.get("payment_method"):
+	if channels.is_channel_invoice(original):
+		# The partner never paid cash for this sale: the credit note lowers what it owes, and the commission on
+		# the refunded share comes back, so the receivable falls by the refunded share of the net.
+		channels.reverse_commission(connection, original, credit_note, refund)
+	elif refund.get("payment_method"):
 		make_payment_entry(
 			credit_note,
 			connection,
