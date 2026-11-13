@@ -65,6 +65,20 @@ ACCOUNT_DEFAULTS = {
 		["Direct Income", "Indirect Income"],
 		"Channel Markup Income",
 	),
+	"pos_fee_account": (
+		["POS Fee Income", "POS Fee", "Service Fee Income"],
+		"",
+		"Income",
+		["Direct Income", "Indirect Income"],
+		"POS Fee Income",
+	),
+	"packaging_account": (
+		["Packaging Income", "Packaging Charges", "Packaging Charge"],
+		"",
+		"Income",
+		["Direct Income", "Indirect Income"],
+		"Packaging Income",
+	),
 	"payment_adjustment_account": (
 		["Payment Method Discounts", "Payment Discounts", "Sales Discount", "Discount Allowed"],
 		"",

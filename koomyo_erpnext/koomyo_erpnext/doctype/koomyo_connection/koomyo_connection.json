@@ -50,6 +50,8 @@
   "cb_sales",
   "delivery_fee_account",
   "channel_markup_account",
+  "pos_fee_account",
+  "packaging_account",
   "payment_adjustment_account",
   "section_cod",
   "cod_shortfall_account",
@@ -1117,6 +1119,20 @@
    "fieldtype": "Table",
    "label": "Channels",
    "options": "Koomyo Channel Map"
+  },
+  {
+   "fieldname": "pos_fee_account",
+   "fieldtype": "Link",
+   "label": "POS Fee Account",
+   "options": "Account",
+   "description": "Income account for the fee a branch reporting to SRB charges on each order (amounts.pos_fee). Needed once an order carries one."
+  },
+  {
+   "fieldname": "packaging_account",
+   "fieldtype": "Link",
+   "label": "Packaging Charge Account",
+   "options": "Account",
+   "description": "Income account for what the customer was charged for packaging (amounts.packaging_charge). Needed once an order carries one."
   }
  ],
  "links": [],

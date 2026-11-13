@@ -136,6 +136,8 @@ def sales_accounts(company: str, abbr: str) -> dict:
 		"fees": f"Commission on Sales - {abbr}",
 		"delivery": ensure_account(company, abbr, "Delivery Income", "Direct Income"),
 		"markup": ensure_account(company, abbr, "Channel Markup Income", "Direct Income"),
+		"pos_fee": ensure_account(company, abbr, "POS Fee Income", "Direct Income"),
+		"packaging": ensure_account(company, abbr, "Packaging Income", "Direct Income"),
 		"payment_adj": f"Sales Expenses - {abbr}",
 		"promo": ensure_account(company, abbr, "Sales Promotions", "Direct Expenses"),
 		"voucher": ensure_account(company, abbr, "Voucher Discount", "Direct Expenses"),
@@ -161,6 +163,8 @@ def configure_sales(conn, abbr: str, branch_id: str = "90000000-0000-4000-8000-0
 			"price_list": "_Koomyo Selling",
 			"delivery_fee_account": acc["delivery"],
 			"channel_markup_account": acc["markup"],
+			"pos_fee_account": acc["pos_fee"],
+			"packaging_account": acc["packaging"],
 			"payment_adjustment_account": acc["payment_adj"],
 		}
 	)

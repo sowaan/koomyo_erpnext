@@ -14,6 +14,8 @@ frappe.ui.form.on("Koomyo Connection", {
 			"income_account",
 			"delivery_fee_account",
 			"channel_markup_account",
+			"pos_fee_account",
+			"packaging_account",
 			"payment_adjustment_account",
 			"default_cost_center",
 			"cash_over_short_account",

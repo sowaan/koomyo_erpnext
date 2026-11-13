@@ -28,6 +28,7 @@ from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Retryable, Skipped
 from koomyo_erpnext.sync import channels, cod, discounts
 from koomyo_erpnext.sync.common import (
 	branch_row,
+	cents,
 	check_company,
 	doc_money,
 	find_existing,
@@ -112,11 +113,18 @@ def book_order(order: dict, connection, timezone: str | None = None):
 	inclusive = amounts.get("prices_include_tax")
 	if not isinstance(inclusive, bool):
 		raise Fatal(_("Koomyo sent prices_include_tax as {0!r}.").format(inclusive))
+	# The POS fee (a branch that reports to SRB) and the packaging charge are inside `total`; an older Koomyo that
+	# does not send them means none (docs: conventions#how-the-total-is-built).
+	a["pos_fee"] = money(amounts.get("pos_fee") or "0.00", "amounts.pos_fee")
+	a["packaging_charge"] = money(amounts.get("packaging_charge") or "0.00", "amounts.packaging_charge")
+	packaging_taxed = bool(amounts.get("packaging_taxed"))
 
 	expected_due = (
 		a["items_subtotal"]
 		- a["discount"]
 		- a["voucher_discount"]
+		+ a["pos_fee"]
+		+ a["packaging_charge"]
 		+ (Decimal(0) if inclusive else a["tax"])
 		+ a["channel_markup"]
 		+ a["delivery_fee"]
@@ -161,6 +169,7 @@ def book_order(order: dict, connection, timezone: str | None = None):
 	if time:
 		invoice.posting_time = time
 	stamp(invoice, connection, order["id"], order.get("branch_id"))
+	note_srb(invoice, order)
 	if party:
 		invoice.debit_to = party.receivable_account
 		invoice.koomyo_channel = channel.get("code") or party.channel_code
@@ -218,11 +227,37 @@ def book_order(order: dict, connection, timezone: str | None = None):
 				},
 			)
 
+	# With tax inside the prices, the tax is taken out of the income that earned it: the items' share from sales,
+	# the fee's and the taxed packaging's share from their own accounts, so every account holds its exact net.
+	fee_tax = packaging_tax = Decimal(0)
+	if inclusive and a["tax"]:
+		base = (
+			a["items_subtotal"]
+			- a["discount"]
+			- a["voucher_discount"]
+			+ a["pos_fee"]
+			+ (a["packaging_charge"] if packaging_taxed else 0)
+		)
+		if base > 0:
+			fee_tax = cents(a["tax"] * a["pos_fee"] / base)
+			packaging_tax = cents(a["tax"] * a["packaging_charge"] / base) if packaging_taxed else Decimal(0)
 	if a["tax"]:
 		account = tax_account(connection, amounts.get("tax_rate"), order.get("branch_id"))
 		if inclusive:
-			charge(income_account, -a["tax"], _("Tax included in prices"))
+			charge(income_account, -(a["tax"] - fee_tax - packaging_tax), _("Tax included in prices"))
 		charge(account, a["tax"], _("Sales tax {0}%").format(amounts.get("tax_rate")))
+	if a["pos_fee"]:
+		charge(
+			account_setting(connection, "pos_fee_account", _("POS Fee Account")),
+			a["pos_fee"] - fee_tax,
+			_("POS fee"),
+		)
+	if a["packaging_charge"]:
+		charge(
+			account_setting(connection, "packaging_account", _("Packaging Charge Account")),
+			a["packaging_charge"] - packaging_tax,
+			_("Packaging charge"),
+		)
 	if a["delivery_fee"]:
 		charge(
 			account_setting(connection, "delivery_fee_account", _("Delivery Fee Account")),
@@ -299,6 +334,24 @@ def add_order_line(
 			row["discount_percentage"] = 100
 		invoice.append("items", row)
 	return net, listed
+
+
+def note_srb(doc, order: dict):
+	"""The SRB tax invoice number and verification link, when the order has them (never required, never trusted).
+
+	`srb` is null for orders SRB does not cover. The number and link are null until SRB accepts the invoice, so an
+	`order.paid` event can still say `pending`; the order is read again to get them.
+	"""
+	srb = order.get("srb")
+	if not isinstance(srb, dict):
+		return
+	number, link, status = srb.get("number"), srb.get("qr_link"), srb.get("status")
+	if isinstance(number, str):
+		doc.koomyo_srb_number = number[:140]
+	if isinstance(link, str) and link.startswith("https://"):
+		doc.koomyo_srb_link = link[:140]
+	if isinstance(status, str):
+		doc.koomyo_srb_status = status[:140]
 
 
 def order_customer(connection, order: dict) -> str:

@@ -168,6 +168,8 @@ class KoomyoConnection(Document):
 			"income_account",
 			"delivery_fee_account",
 			"channel_markup_account",
+			"pos_fee_account",
+			"packaging_account",
 			"payment_adjustment_account",
 			"cash_over_short_account",
 			"drawer_account",
