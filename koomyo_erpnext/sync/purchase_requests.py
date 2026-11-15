@@ -234,6 +234,10 @@ def build_request(card: dict, connection, wanted: list[dict], draft: bool = Fals
 		line_needed = str(getdate(line["needed_by"])) if line.get("needed_by") else needed
 		row = {
 			"item_code": item,
+			# Koomyo's quantity is in the ingredient's own unit, the Item's stock unit. Without a unit ERPNext
+			# would use the Item's purchase UOM (a pack), turning 1320 pieces into 1320 packs.
+			"uom": frappe.db.get_value("Item", item, "stock_uom"),
+			"conversion_factor": 1,
 			"qty": to_field(w["qty"], 6),
 			"warehouse": branch.warehouse,
 			"schedule_date": max(line_needed, date),

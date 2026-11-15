@@ -456,6 +456,9 @@ def build_order(connection, order: dict):
 				"warehouse": share_warehouse(connection, share) if share else warehouse,
 				"schedule_date": order.get("expected_date") or date,
 			}
+			# Quantities from Koomyo are in the ingredient's own unit (the Item's stock unit): say so, or ERPNext
+			# fills in the Item's purchase UOM (a pack) and 1320 pieces become 1320 packs.
+			row.update({"uom": frappe.db.get_value("Item", item_code, "stock_uom"), "conversion_factor": 1})
 			if unit:
 				row.update(
 					{
