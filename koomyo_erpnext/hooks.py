@@ -291,15 +291,23 @@ fixtures = [{"dt": "Custom Field", "filters": [["module", "=", "Koomyo Erpnext"]
 # ERPNext documents that are written to Koomyo (queued here, sent by the background processor).
 doc_events = {
 	"Purchase Order": {
+		"validate": "koomyo_erpnext.sync.unit_guard.check_row_units",
 		"before_submit": "koomyo_erpnext.sync.purchasing.before_purchase_order_submit",
 		"on_trash": "koomyo_erpnext.sync.purchasing.on_purchase_order_trash",
 		"on_submit": "koomyo_erpnext.sync.purchasing.on_purchase_order_submit",
 		"on_cancel": "koomyo_erpnext.sync.purchasing.on_purchase_order_cancel",
 		"on_update_after_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_order_update",
 	},
-	"Material Request": {"before_submit": "koomyo_erpnext.sync.purchasing.before_material_request_submit"},
-	"Purchase Invoice": {"on_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_invoice_submit"},
+	"Material Request": {
+		"validate": "koomyo_erpnext.sync.unit_guard.check_row_units",
+		"before_submit": "koomyo_erpnext.sync.purchasing.before_material_request_submit",
+	},
+	"Purchase Invoice": {
+		"validate": "koomyo_erpnext.sync.unit_guard.check_row_units",
+		"on_submit": "koomyo_erpnext.sync.purchase_edits.on_purchase_invoice_submit",
+	},
 	"Purchase Receipt": {
+		"validate": "koomyo_erpnext.sync.unit_guard.check_row_units",
 		"before_submit": "koomyo_erpnext.sync.purchasing.before_purchase_receipt_submit",
 		"on_submit": [
 			"koomyo_erpnext.sync.purchasing.on_purchase_receipt_submit",
@@ -309,6 +317,7 @@ doc_events = {
 		"on_cancel": "koomyo_erpnext.sync.purchase_edits.on_purchase_receipt_cancel",
 	},
 	"Stock Entry": {
+		"validate": "koomyo_erpnext.sync.unit_guard.check_row_units",
 		"before_validate": "koomyo_erpnext.sync.transfers_out.validate_stock_entry",
 		"before_submit": "koomyo_erpnext.sync.transfers_out.before_stock_entry_submit",
 		"on_submit": [
