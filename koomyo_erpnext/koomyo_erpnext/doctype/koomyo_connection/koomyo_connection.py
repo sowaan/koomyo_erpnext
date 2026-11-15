@@ -23,6 +23,17 @@ class KoomyoConnection(Document):
 			self.webhook_url = webhook_url(self.webhook_token)
 		self.events_to_register = events_to_register(self)
 
+	def on_trash(self):
+		"""The Event Log never blocks a document's delete (hooks), but a Connection's own log is its history."""
+		count = frappe.db.count("Koomyo Event Log", {"connection": self.name})
+		if count:
+			frappe.throw(
+				_(
+					"Connection {0} has {1} rows in the Koomyo Event Log. Delete them first (Event Log list, filter by this connection), or keep the connection and untick Enabled."
+				).format(self.name, count),
+				title=_("Cannot delete"),
+			)
+
 	def validate(self):
 		self.base_url = validate_base_url(self.base_url)
 		if not self.webhook_token:

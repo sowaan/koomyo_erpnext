@@ -1135,7 +1135,18 @@
    "description": "Income account for what the customer was charged for packaging (amounts.packaging_charge). Needed once an order carries one."
   }
  ],
- "links": [],
+ "links": [
+  {
+   "group": "Koomyo",
+   "link_doctype": "Koomyo Event Log",
+   "link_fieldname": "connection"
+  },
+  {
+   "group": "Koomyo",
+   "link_doctype": "Koomyo Backfill",
+   "link_fieldname": "connection"
+  }
+ ],
  "modified": "2026-10-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Koomyo Erpnext",

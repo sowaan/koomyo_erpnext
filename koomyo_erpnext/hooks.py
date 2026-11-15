@@ -214,7 +214,30 @@ after_sync = "koomyo_erpnext.install.after_sync"
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
 
-# ignore_links_on_delete = ["Communication", "ToDo"]
+# The Event Log keeps a record of every event, with the document it made. It must never stop that document being
+# deleted (the row stays, saying what happened); a Connection with log rows is still protected by its own check.
+ignore_links_on_delete = ["Koomyo Event Log"]
+
+# The Event Log in the Connections panel of the documents the app writes.
+override_doctype_dashboards = {
+	doctype: [f"koomyo_erpnext.dashboards.{doctype.lower().replace(' ', '_')}"]
+	for doctype in (
+		"Sales Invoice",
+		"POS Invoice",
+		"Payment Entry",
+		"Journal Entry",
+		"Customer",
+		"Item",
+		"Supplier",
+		"Purchase Order",
+		"Purchase Receipt",
+		"Stock Entry",
+		"Stock Reconciliation",
+		"Material Request",
+		"Issue",
+		"Landed Cost Voucher",
+	)
+}
 
 # Request Events
 # ----------------
