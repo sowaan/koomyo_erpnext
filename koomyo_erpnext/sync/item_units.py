@@ -352,11 +352,6 @@ def align_for_event(connection, ingredient: dict):
 	return ("Item", name)
 
 
-@handles("ingredient.created", "ingredient.updated", switch="sync_stock", scopes=SCOPES)
-def on_ingredient(event: dict, connection):
-	return align_for_event(connection, event["data"])
-
-
 @handles(EVENT_TYPE, switch="sync_stock", scopes=SCOPES)
 def on_item_unit_retry(event: dict, connection, client: KoomyoClient | None = None):
 	"""Retry of a flagged Item or an unmapped unit: read the ingredient now and align again."""

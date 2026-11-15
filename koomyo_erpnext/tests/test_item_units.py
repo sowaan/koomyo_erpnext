@@ -244,7 +244,7 @@ class TestEntryPoints(UnitCase):
 		again.update({"id": "evt-ing-2", "seq": 799})
 		self.assertEqual(self.book(again).status, "Done", "a repeat changes nothing")
 
-	def test_an_event_for_an_ingredient_with_no_item_is_skipped_not_made(self):
+	def test_an_event_for_an_ingredient_with_no_item_makes_the_item(self):
 		self.ingredient(STRAW, "Straw")
 		event = {
 			"id": "evt-ing-3",
@@ -257,35 +257,53 @@ class TestEntryPoints(UnitCase):
 			"data": copy.deepcopy(self.fake_a.ingredients[STRAW]),
 		}
 		log = self.book(event)
-		self.assertEqual(log.status, "Skipped")
-		self.assertFalse(frappe.db.exists("Item", {"koomyo_id": STRAW}))
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		code = frappe.db.get_value("Item", {"koomyo_connection": self.conn_a.name, "koomyo_id": STRAW})
+		item = frappe.get_doc("Item", code)
+		self.assertEqual((item.stock_uom, item.purchase_uom, log.reference_name), ("Nos", "Box", code))
+		self.assertEqual(self.rows(item), {"Nos": 1, "Box": 100})
+		again = {**copy.deepcopy(event), "id": "evt-ing-3b", "seq": 801, "type": "ingredient.updated"}
+		self.assertEqual(self.book(again).status, "Done", "a repeat changes nothing")
+		self.assertEqual(
+			frappe.db.count("Item", {"koomyo_connection": self.conn_a.name, "koomyo_id": STRAW}), 1
+		)
 
-	def test_an_event_for_an_item_with_transactions_fails_once_and_then_is_skipped(self):
+	def test_an_event_for_an_item_with_transactions_is_done_and_flags_it_once(self):
 		self.ingredient(STRAW, "Straw")
-		self.put_stock_on(self.item_for(STRAW, "Straw"))
+		item = self.item_for(STRAW, "Straw")
+		self.put_stock_on(item)
 		event = {
 			"id": "evt-ing-4",
 			"object": "event",
 			"type": "ingredient.updated",
-			"seq": 801,
+			"seq": 802,
 			"tenant_id": self.conn_a.tenant_id,
 			"created": "2026-11-05T09:00:00Z",
 			"entity": {"type": "ingredient", "id": STRAW},
 			"data": copy.deepcopy(self.fake_a.ingredients[STRAW]),
 		}
-		first = self.book(event)
-		self.assertEqual((first.status, first.error_class), ("Failed", "Fatal"))
-		second = self.book({**copy.deepcopy(event), "id": "evt-ing-5", "seq": 802})
-		self.assertEqual(second.status, "Skipped")
-		failed = frappe.get_all(
-			"Koomyo Event Log",
-			filters={
-				"connection": self.conn_a.name,
-				"status": "Failed",
-				"message": ["like", "%has transactions%"],
-			},
-		)
-		self.assertEqual(len(failed), 1, "the first event's own row is the one attention entry")
+		self.assertEqual(self.book(event).status, "Done", "the name and kind still follow Koomyo")
+		self.book({**copy.deepcopy(event), "id": "evt-ing-5", "seq": 803})
+		self.assertEqual(self.reload(item.name).stock_uom, "Box", "the unit is left as it was")
+		(entry,) = self.attention()
+		self.assertEqual((entry.status, entry.error_class), ("Failed", "Fatal"))
+		self.assertIn("Bin (1)", entry.message)
+
+	def test_an_ingredient_event_with_a_unit_not_on_the_map_fails_needing_a_mapping(self):
+		self.ingredient(ODD, "Odd", unit="furlong", pack=None)
+		event = {
+			"id": "evt-ing-6",
+			"object": "event",
+			"type": "ingredient.created",
+			"seq": 804,
+			"tenant_id": self.conn_a.tenant_id,
+			"created": "2026-11-05T09:00:00Z",
+			"entity": {"type": "ingredient", "id": ODD},
+			"data": copy.deepcopy(self.fake_a.ingredients[ODD]),
+		}
+		log = self.book(event)
+		self.assertEqual((log.status, log.error_class), ("Failed", "NeedsMapping"))
+		self.assertIn("furlong", log.message)
 
 	def test_the_catalog_backfill_aligns_and_counts_a_blocked_item_as_attention_not_failed(self):
 		self.ingredient(STRAW, "Straw")

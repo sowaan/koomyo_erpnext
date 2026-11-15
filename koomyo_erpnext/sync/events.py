@@ -782,6 +782,7 @@ def _short_text(value, length: int = 140):
 
 # Register the handlers of every sync (each module calls @handles at import time).
 from koomyo_erpnext.sync import (
+	catalog_events,
 	channels,
 	complaints,
 	customers,
