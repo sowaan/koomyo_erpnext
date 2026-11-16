@@ -251,12 +251,110 @@ class TestKoomyoOrderInPieces(PurchasingTestCase):
 		self.assertEqual((row.qty, row.stock_qty, row.uom), (100, 110000, "Box"))
 		self.assertEqual(pr.grand_total, 250000)
 
-	def test_an_item_without_a_fitting_unit_stops_with_what_to_do(self):
+	def test_an_item_without_a_fitting_unit_is_priced_at_two_neighbouring_rates_to_the_cent(self):
 		log = self.send(self.order())
-		self.assertEqual((log.status, log.error_class), ("Failed", "Fatal"))
-		self.assertIn("ERPNext computed 249700.00 but Koomyo's total is 250000.00", log.message)
-		self.assertIn("larger UOM", log.message)
-		self.assertIsNone(self.po())
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		po = self.po()
+		# 110000 pieces for 250000.00: 80000 at 2.27 and 30000 at 2.28, the two rates ERPNext can hold
+		rows = sorted((row.rate, row.qty) for row in po.items)
+		self.assertEqual(rows, [(2.27, 80000), (2.28, 30000)])
+		self.assertEqual((sum(r.stock_qty for r in po.items), po.grand_total), (110000, 250000))
+		notes = frappe.get_all(
+			"Comment",
+			filters={"reference_doctype": "Purchase Order", "reference_name": po.name},
+			pluck="content",
+		)
+		self.assertTrue([n for n in notes if "priced at 2.27 and 2.28" in n])
+
+	def test_the_delivery_of_a_split_line_is_booked_row_by_row_at_the_right_value(self):
+		from koomyo_erpnext.tests.test_purchase_orders import receipt
+
+		order = self.order("received", receipts=[receipt("rcpt-s", "110000.000")], fully_received=True)
+		order["lines"][0]["quantity_received"] = "110000.000"
+		log = self.send(order, "purchase.received")
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		pr = frappe.get_doc(
+			"Purchase Receipt", frappe.db.get_value("Purchase Receipt", {"koomyo_id": "rcpt-s"})
+		)
+		self.assertEqual(sorted((r.rate, r.qty) for r in pr.items), [(2.27, 80000), (2.28, 30000)])
+		self.assertEqual(pr.grand_total, 250000)
+
+	def test_a_repeat_of_the_order_changes_nothing(self):
+		self.send(self.order())
+		again = self.send(self.order(), "purchase.updated")
+		self.assertEqual(again.status, "Done")
+		self.assertEqual(frappe.db.count("Purchase Order", {"koomyo_connection": self.conn_a.name}), 1)
+		self.assertEqual(len(self.po().items), 2)
+
+	def test_the_split_is_exact_for_many_quantities_and_prices(self):
+		from decimal import Decimal as D
+
+		from koomyo_erpnext.sync.purchase_orders import split_rates
+
+		for net, qty in (
+			("7600.00", "3344"),
+			("250000.00", "110000"),
+			("100.00", "3"),
+			("1450.50", "999"),
+			("0.01", "7"),
+			("123456.78", "4321"),
+		):
+			parts = split_rates(D(net), [D(qty)])
+			if parts is None:
+				continue  # a price one rate can hold has no split
+			booked = sum(round(float(q * r), 2) for share in parts for q, r in share)
+			self.assertAlmostEqual(booked, float(net), places=2, msg=(net, qty))
+			self.assertEqual(sum(q for share in parts for q, _r in share), D(qty))
+		# branch shares: the pieces are handed out in order and the line still adds up
+		parts = split_rates(D("7600.00"), [D("1000"), D("2344")])
+		self.assertEqual(len(parts), 2)
+		self.assertAlmostEqual(sum(float(q * r) for share in parts for q, r in share), 7600.0, places=2)
+
+	def test_with_three_decimals_like_the_live_site_a_total_of_7600_is_exact(self):
+		from decimal import Decimal as D
+		from unittest.mock import patch
+
+		from koomyo_erpnext.sync.purchase_orders import split_rates
+
+		with patch("frappe.get_precision", return_value=3):
+			parts = split_rates(D("7600.00"), [D("3344")])
+		rows = [(q, r) for share in parts for q, r in share]
+		self.assertEqual(rows, [(D("912"), D("2.272")), (D("2432"), D("2.273"))])
+		self.assertEqual(sum(q * r for q, r in rows), D("7600.000"))
+		# in many parts too (a branch share each): the total still comes out exactly
+		with patch("frappe.get_precision", return_value=3):
+			shared = split_rates(D("7600.00"), [D("1000"), D("1344"), D("1000")])
+		self.assertEqual(sum(q * r for share in shared for q, r in share), D("7600.000"))
+		self.assertEqual(sum(q for share in shared for q, _r in share), D("3344"))
+
+	def test_po_2026_0018_from_the_live_site_720_pieces_at_10_55555_for_7600(self):
+		"""The live payload: ERPNext's one rate 10.556 gave 7600.32; the split gives 7600.000 exactly."""
+		from decimal import Decimal as D
+		from unittest.mock import patch
+
+		from koomyo_erpnext.sync.purchase_orders import split_rates
+
+		with patch("frappe.get_precision", return_value=3):
+			(parts,) = split_rates(D("7600.00"), [D("720")])
+		self.assertEqual(parts, [(D("320"), D("10.555")), (D("400"), D("10.556"))])
+		self.assertEqual(sum(q * r for q, r in parts), D("7600.000"))
+		self.assertEqual(D("720") * D("10.556"), D("7600.320"), "what ERPNext computed on the live site")
+		# the same order end to end (this site keeps two decimals: 320 at 10.55 and 400 at 10.56)
+		order = self.order()
+		order["lines"][0].update(
+			{
+				"quantity_ordered": "720.000",
+				"unit_cost": "10.55555000",
+				"line_total": "7600.00",
+				"ordered_value": "7600.00",
+			}
+		)
+		order.update({"total_ordered": "7600.00", "items_without_tax": "7600.00"})
+		log = self.send(order)
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		po = self.po()
+		self.assertEqual(sorted((r.rate, r.qty) for r in po.items), [(10.55, 320), (10.56, 400)])
+		self.assertEqual((sum(r.stock_qty for r in po.items), po.grand_total), (720, 7600))
 
 	def test_a_price_that_is_exact_in_pieces_is_unchanged(self):
 		from koomyo_erpnext.tests.test_purchase_orders import make_order

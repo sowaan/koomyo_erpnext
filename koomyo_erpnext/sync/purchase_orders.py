@@ -29,7 +29,7 @@ far); the last delivery takes the remainder, so the rows always add up to Koomyo
 
 import hashlib
 import json
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 import frappe
 from frappe import _
@@ -143,6 +143,11 @@ def rebuild_draft(po, order: dict, connection):
 		po.append("taxes", row.as_dict(no_default_fields=True))
 	po.save(ignore_permissions=True)
 	check_total(po, order)
+	for note in fresh.get("_koomyo_notes") or []:
+		if not frappe.db.exists(
+			"Comment", {"reference_doctype": "Purchase Order", "reference_name": po.name, "content": note}
+		):
+			po.add_comment("Comment", note)
 	po.db_set(
 		{"koomyo_updated_at": order.get("updated_at"), "koomyo_content": fingerprint(order)},
 		update_modified=False,
@@ -388,6 +393,8 @@ def create_order(connection, order: dict, draft: bool = False):
 	po = build_order(connection, order)
 	po.insert(ignore_permissions=True)
 	check_total(po, order)
+	for note in po.get("_koomyo_notes") or []:
+		po.add_comment("Comment", note)
 	if not draft:
 		submit_order(po, order)
 		write_reference(connection, KoomyoClient.for_connection(connection), "purchase_order", order, po)
@@ -445,36 +452,99 @@ def build_order(connection, order: dict):
 		shares = [a for a in line.get("allocations") or [] if money(a.get("quantity") or "0", "quantity") > 0]
 		quantities = [money(s["quantity"], "quantity") for s in shares] or [entry["qty"]]
 		unit = exact_unit(item_code, entry["net"], entry["qty"], quantities)
+		# No pack holds the price and the price per piece is not exact: price the line at two neighbouring
+		# rates ERPNext can hold, so the line's total is Koomyo's to the cent (None when the price is exact).
+		pieces = None
+		if not unit and not price_is_exact(entry["net"], entry["qty"]):
+			pieces = split_rates(entry["net"], quantities)
+			if pieces:
+				notes = po.get("_koomyo_notes") or []
+				po._koomyo_notes = [*notes, split_note(item_code, pieces)]
 		# A line with branch shares is one row per share, each for its place: the branch's Warehouse, or the
 		# warehouse the goods go to first.
-		for share in shares or [None]:
+		for index, share in enumerate(shares or [None]):
 			stock_qty = money(share["quantity"], "quantity") if share else entry["qty"]
-			row = {
-				"item_code": item_code,
-				"qty": to_field(stock_qty, 6),
-				"rate": rate,
-				"warehouse": share_warehouse(connection, share) if share else warehouse,
-				"schedule_date": order.get("expected_date") or date,
-			}
-			# Quantities from Koomyo are in the ingredient's own unit (the Item's stock unit): say so, or ERPNext
-			# fills in the Item's purchase UOM (a pack) and 1320 pieces become 1320 packs.
-			row.update({"uom": frappe.db.get_value("Item", item_code, "stock_uom"), "conversion_factor": 1})
-			if unit:
+			for part_qty, part_rate in pieces[index] if pieces else [(stock_qty, None)]:
+				row = {
+					"item_code": item_code,
+					"qty": to_field(part_qty, 6),
+					"rate": to_field(part_rate, 6) if part_rate is not None else rate,
+					"warehouse": share_warehouse(connection, share) if share else warehouse,
+					"schedule_date": order.get("expected_date") or date,
+				}
+				# Quantities from Koomyo are in the ingredient's own unit (the Item's stock unit): say so, or
+				# ERPNext fills in the Item's purchase UOM (a pack) and 1320 pieces become 1320 packs.
 				row.update(
-					{
-						"uom": unit["uom"],
-						"conversion_factor": unit["factor"],
-						"qty": to_field(stock_qty / Decimal(str(unit["factor"])), 6),
-						"rate": unit["rate"],
-					}
+					{"uom": frappe.db.get_value("Item", item_code, "stock_uom"), "conversion_factor": 1}
 				)
-			po.append("items", row)
+				if unit:
+					row.update(
+						{
+							"uom": unit["uom"],
+							"conversion_factor": unit["factor"],
+							"qty": to_field(part_qty / Decimal(str(unit["factor"])), 6),
+							"rate": unit["rate"],
+						}
+					)
+				po.append("items", row)
 	if not po.items:
 		raise Skipped(_("Purchase order {0} has no lines.").format(order["id"]))
 	for row in tax_rows(connection, order, cost_center or ""):
 		row.pop("basis")
 		po.append("taxes", row)
 	return po
+
+
+def price_is_exact(net: Decimal, qty: Decimal) -> bool:
+	"""True when one rate ERPNext can hold (to the rate field's precision) gives the line total exactly."""
+	precision = frappe.get_precision("Purchase Order Item", "rate") or 2
+	return (Decimal(str(flt(net / qty, precision))) * qty).quantize(CENT) == net.quantize(CENT)
+
+
+def split_rates(net: Decimal, quantities: list[Decimal]) -> list[list[tuple[Decimal, Decimal]]] | None:
+	"""One line over its shares priced at two neighbouring rates, so the line's total is exactly `net`.
+
+	ERPNext keeps a rate to a fixed precision (say 3 places), so 7600.00 for 3344 pieces (2.27272727 a piece) cannot be
+	one rate. Take the rate just under the true one and the one a step above: `extra` of the pieces go at the higher
+	rate and the rest at the lower, so the amounts add up to `net` exactly. The pieces are handed out share by share
+	in order (a share may be split between the two rates). Returns, for each share, its (quantity, rate) parts; None
+	when it cannot be made exact (a fractional split the quantity cannot hold, or rounding of the rows' amounts).
+	"""
+	rate_precision = frappe.get_precision("Purchase Order Item", "rate") or 2
+	amount_precision = frappe.get_precision("Purchase Order Item", "amount") or 2
+	step = Decimal(1).scaleb(-rate_precision)
+	qty_step = Decimal("0.001")
+	total = sum(quantities, ZERO)
+	if total <= 0 or net < 0:
+		return None
+	low = (net / total).quantize(step, rounding=ROUND_FLOOR)
+	extra = ((net - total * low) / step).quantize(qty_step)
+	if abs(extra - (net - total * low) / step) > Decimal("1e-9") or not (0 < extra < total):
+		return None
+	cheap_left = total - extra
+	parts: list[list[tuple[Decimal, Decimal]]] = []
+	for qty in quantities:
+		cheap = min(qty, cheap_left)
+		cheap_left -= cheap
+		share = []
+		if cheap > 0:
+			share.append((cheap, low))
+		if qty - cheap > 0:
+			share.append((qty - cheap, low + step))
+		parts.append(share)
+	booked = sum(
+		(Decimal(str(flt(float(q * r), amount_precision))) for share in parts for q, r in share), ZERO
+	)
+	if booked.quantize(CENT) != net.quantize(CENT):
+		return None
+	return parts
+
+
+def split_note(item_code: str, parts: list[list[tuple[Decimal, Decimal]]]) -> str:
+	rates = sorted({r for share in parts for _q, r in share})
+	return _(
+		"{0}: the price per piece has more places than ERPNext holds, so it is priced at {1} and {2} per piece (in the quantities shown on the rows) to make Koomyo's total exact."
+	).format(item_code, rates[0], rates[-1])
 
 
 def exact_unit(item_code: str, net: Decimal, qty: Decimal, quantities: list[Decimal]) -> dict | None:
