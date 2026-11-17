@@ -33,7 +33,7 @@ from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, get_datetime
+from frappe.utils import cint, flt, get_datetime, getdate, nowdate
 
 from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Skipped
@@ -428,12 +428,16 @@ def build_order(connection, order: dict):
 	client = KoomyoClient.for_connection(connection)
 	po = frappe.new_doc("Purchase Order")
 	date = str(posting_date(order))
+	# ERPNext refuses a required-by date before the order's own date; Koomyo lets an order name a past delivery date.
+	needed = date
+	if order.get("expected_date"):
+		needed = max(date, str(getdate(order["expected_date"])))
 	po.update(
 		{
 			"company": connection.company,
 			"supplier": koomyo_supplier(connection, order.get("supplier") or {}, client),
 			"transaction_date": date,
-			"schedule_date": order.get("expected_date") or date,
+			"schedule_date": needed,
 			"set_warehouse": warehouse if not shared else None,
 			"currency": order.get("currency") or connection.koomyo_currency,
 			"conversion_rate": 1,
@@ -470,7 +474,7 @@ def build_order(connection, order: dict):
 					"qty": to_field(part_qty, 6),
 					"rate": to_field(part_rate, 6) if part_rate is not None else rate,
 					"warehouse": share_warehouse(connection, share) if share else warehouse,
-					"schedule_date": order.get("expected_date") or date,
+					"schedule_date": needed,
 				}
 				# Quantities from Koomyo are in the ingredient's own unit (the Item's stock unit): say so, or
 				# ERPNext fills in the Item's purchase UOM (a pack) and 1320 pieces become 1320 packs.
@@ -848,6 +852,10 @@ def book_delivery(po, order: dict, receipt: dict, connection) -> str | None:
 	pr.posting_date = local_date(receipt.get("received_at"), connection.koomyo_timezone) or posting_date(
 		order
 	)
+	if getdate(pr.posting_date) > getdate(nowdate()):
+		# The restaurant's day has begun while this server's has not (Karachi is ahead of a server on UTC), and
+		# ERPNext refuses a Purchase Receipt dated in the future ("Posting Date cannot be future date").
+		pr.posting_date = nowdate()
 	pr.set_posting_time = 1
 	stamp(pr, connection, receipt_id, order.get("branch_id"))
 	if receipt.get("delivery_note"):

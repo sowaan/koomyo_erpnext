@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 import frappe
 from frappe import _
+from frappe.utils import get_time
 
 from koomyo_erpnext.client import KoomyoClient
 from koomyo_erpnext.exceptions import Fatal, NeedsMapping, Retryable, Skipped
@@ -109,6 +110,15 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 	credit_note.posting_date = posting_date(refund)
 	credit_note.set_posting_time = 1
 	time = local_time(refund.get("created_at"), timezone or connection.koomyo_timezone)
+	late_night = False
+	if str(credit_note.posting_date) == str(original.posting_date):
+		# A restaurant open past midnight: paid 23:30 and refunded 00:30 are the same business day, but ERPNext
+		# refuses a credit note dated before its invoice ("Posting timestamp must be after ..."). The credit note
+		# then takes the invoice's time of day; the date stays Koomyo's business day.
+		floor = get_time(original.posting_time or "00:00:00").strftime("%H:%M:%S")
+		if not time or time < floor:
+			late_night = bool(time)
+			time = floor
 	if time:
 		credit_note.posting_time = time
 	credit_note.due_date = credit_note.posting_date
@@ -117,6 +127,10 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 	credit_note.remarks = _("Koomyo refund for order {0}. Reason: {1}").format(
 		refund.get("order_number"), refund.get("reason") or "-"
 	)
+	if late_night:
+		credit_note.remarks += " " + _(
+			"The refund came after midnight of the same business day, so it is posted at the sale's time of day."
+		)
 	stamp(credit_note, connection, refund["id"], refund.get("branch_id"))
 	if channels.is_channel_invoice(original):
 		credit_note.koomyo_channel = original.koomyo_channel

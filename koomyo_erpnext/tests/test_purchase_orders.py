@@ -159,6 +159,28 @@ class TestPurchaseOrderEvents(PurchaseOrderCase):
 			len(frappe.get_all("Purchase Order", filters={"koomyo_connection": self.conn_a.name})), 1
 		)
 
+	def test_an_expected_date_before_the_orders_own_date_is_raised_to_it(self):
+		"""Live: 'Row #1: Reqd by Date cannot be before Transaction Date' stopped an order named for a past day."""
+		order = make_order("ordered")
+		date = order["business_date"]
+		order["expected_date"] = "2026-01-02"
+		self.assertLess(order["expected_date"], date)
+		log = self.send(order, "purchase.created")
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		po = self.po()
+		self.assertEqual((str(po.transaction_date), str(po.schedule_date)), (date, date))
+		self.assertEqual({str(r.schedule_date) for r in po.items}, {date})
+
+	def test_a_later_expected_date_is_kept(self):
+		order = make_order("ordered")
+		order["expected_date"] = "2026-12-24"
+		self.assertEqual(self.send(order, "purchase.created").status, "Done")
+		po = self.po()
+		self.assertEqual(
+			({str(po.schedule_date)}, {str(r.schedule_date) for r in po.items}),
+			({"2026-12-24"}, {"2026-12-24"}),
+		)
+
 	def test_older_copy_arriving_late_changes_nothing(self):
 		self.send(make_order("ordered", "2026-10-12T17:40:02Z"))
 		po = self.po()
@@ -184,6 +206,28 @@ class TestPurchaseOrderEvents(PurchaseOrderCase):
 		bad = self.send(unmapped, eid="evt-bad")
 		self.assertEqual(bad.error_class, "NeedsMapping")
 		self.assertIn("nowhere", bad.message)
+
+	def test_the_order_is_rebuilt_when_koomyo_moves_its_business_date_past_the_expected_date(self):
+		"""Pizza Flex PO-2026-0018: Koomyo moved business_date to the day it was received (17 Nov) while the expected
+		date stayed 13 Nov. The rebuild (cancel the old order, make the new one) failed with 'Reqd by Date cannot
+		be before Transaction Date' and left the goods without a receipt."""
+		order = make_order("ordered", "2026-10-12T17:40:02Z")
+		order["expected_date"] = order["business_date"]
+		self.send(order, "purchase.created")
+		old = self.po()
+		moved = make_order("ordered", "2026-10-17T14:26:00Z")
+		moved.update({"business_date": "2026-10-17", "expected_date": "2026-10-13"})
+		moved["lines"][0].update(  # a changed line is what makes the app rebuild the order
+			{"quantity_ordered": "12.000", "ordered_value": "17400.00", "line_total": "17400.00"}
+		)
+		moved.update({"total_ordered": "17400.00", "items_without_tax": "17400.00"})
+		log = self.send(moved)
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		new = self.po()
+		self.assertNotEqual(new.name, old.name)
+		self.assertEqual(frappe.db.get_value("Purchase Order", old.name, "docstatus"), 2)
+		self.assertEqual((str(new.transaction_date), str(new.schedule_date)), ("2026-10-17", "2026-10-17"))
+		self.assertEqual({str(r.schedule_date) for r in new.items}, {"2026-10-17"})
 
 	def test_edit_before_any_delivery_rebuilds_the_order(self):
 		self.send(make_order("ordered", "2026-10-12T17:40:02Z"))
@@ -266,6 +310,43 @@ class TestDeliveries(PurchaseOrderCase):
 		# a replay, or the same delivery again in a later copy, books nothing more
 		self.send(second, "purchase.received", eid="again")
 		self.assertEqual(len(self.receipts()), 2)
+
+	def test_a_delivery_dated_after_this_servers_today_is_booked_on_todays_date(self):
+		"""The restaurant is ahead of the server: ERPNext refuses a Purchase Receipt dated in the future."""
+		from frappe.utils import nowdate
+
+		self.send(make_order("ordered"))
+		future = "2099-01-02T00:30:00Z"
+		log = self.send(
+			make_order("received", future, receipts=[receipt("rcpt-f", "10.000", at=future)]),
+			"purchase.received",
+		)
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		pr = frappe.get_doc(
+			"Purchase Receipt", frappe.db.get_value("Purchase Receipt", {"koomyo_id": "rcpt-f"})
+		)
+		self.assertEqual(str(pr.posting_date), nowdate())
+
+	def test_a_delivery_dated_before_the_order_and_its_expected_date_is_booked(self):
+		"""ERPNext's required-by rule is for the order and the request only, never for a receipt."""
+		order = make_order("ordered")
+		order["expected_date"] = "2026-10-20"
+		self.send(order, "purchase.created")
+		early = "2026-10-05T09:00:00Z"  # before the order's date (12 Oct) and before 20 Oct
+		log = self.send(
+			make_order(
+				"received",
+				"2026-10-13T10:00:00Z",  # the copy itself is newer than the order on file
+				receipts=[receipt("rcpt-e", "10.000", at=early)],
+				expected_date="2026-10-20",
+			),
+			"purchase.received",
+		)
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		pr = frappe.get_doc(
+			"Purchase Receipt", frappe.db.get_value("Purchase Receipt", {"koomyo_id": "rcpt-e"})
+		)
+		self.assertEqual(str(pr.posting_date), "2026-10-05")
 
 	def test_receipt_date_is_the_restaurants_day(self):
 		self.send(make_order("ordered"))

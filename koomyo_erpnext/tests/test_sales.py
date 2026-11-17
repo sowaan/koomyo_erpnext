@@ -602,6 +602,32 @@ class TestRefunds(SalesTestCase):
 		self.assertEqual(self.book(load_fixture("event_order_paid") | {"tenant_id": TENANT_A}).status, "Done")
 		return self.invoice("a8955e7a-335a-4ad0-a872-56b6d2479f80")
 
+	def test_a_refund_after_midnight_of_the_same_business_day_is_not_refused(self):
+		"""Paid 21:53 on business day 12 Oct, refunded 01:10 (13 Oct by the clock, still business day 12 Oct).
+
+		ERPNext compares the credit note's date and time with the invoice's and refuses an earlier one
+		("Posting timestamp must be after ..."): the credit note takes the invoice's time of day instead.
+		"""
+		sale = self.sale()
+		self.assertEqual(str(sale.posting_time), "21:53:19")
+		late = refund_event(order_id="a8955e7a-335a-4ad0-a872-56b6d2479f80", amount="724.50")
+		late["data"]["created_at"] = "2026-10-12T20:10:00Z"  # 01:10 on 13 Oct in Karachi
+		log = self.book(late)
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		note = frappe.get_doc("Sales Invoice", log.reference_name)
+		self.assertEqual((str(note.posting_date), str(note.posting_time)), ("2026-10-12", "21:53:19"))
+		self.assertIn("after midnight", note.remarks)
+
+	def test_a_refund_later_the_same_evening_keeps_its_own_time(self):
+		self.sale()
+		evening = refund_event(order_id="a8955e7a-335a-4ad0-a872-56b6d2479f80", amount="724.50")
+		evening["data"]["created_at"] = "2026-10-12T17:30:00Z"  # 22:30 in Karachi
+		log = self.book(evening)
+		self.assertEqual(log.status, "Done", log.message)
+		note = frappe.get_doc("Sales Invoice", log.reference_name)
+		self.assertEqual(str(note.posting_time), "22:30:00")
+		self.assertNotIn("after midnight", note.remarks)
+
 	def test_docs_example_full_refund(self):
 		sale = self.sale()
 		cancel = load_fixture("event_refund_created") | {"tenant_id": TENANT_A}
