@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 koomyo_erpnext.patches.enable_discount_accounting
 koomyo_erpnext.patches.align_item_units
+koomyo_erpnext.patches.fill_koomyo_number

@@ -447,7 +447,7 @@ def build_order(connection, order: dict):
 	)
 	if order.get("notes"):
 		po.remarks += ". " + order["notes"][:300]
-	stamp(po, connection, order["id"], order.get("branch_id"))
+	stamp(po, connection, order["id"], order.get("branch_id"), number=order.get("number"))
 	lines = order_lines(order)
 	for entry in lines:
 		line = entry["line"]
@@ -857,7 +857,7 @@ def book_delivery(po, order: dict, receipt: dict, connection) -> str | None:
 		# ERPNext refuses a Purchase Receipt dated in the future ("Posting Date cannot be future date").
 		pr.posting_date = nowdate()
 	pr.set_posting_time = 1
-	stamp(pr, connection, receipt_id, order.get("branch_id"))
+	stamp(pr, connection, receipt_id, order.get("branch_id"), number=order.get("number"))
 	if receipt.get("delivery_note"):
 		pr.supplier_delivery_note = str(receipt["delivery_note"])[:140]
 	vouchers = apply_delivery_costs(pr, po, order, receipt, connection, delivered_value)

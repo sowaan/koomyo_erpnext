@@ -131,7 +131,7 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 		credit_note.remarks += " " + _(
 			"The refund came after midnight of the same business day, so it is posted at the sale's time of day."
 		)
-	stamp(credit_note, connection, refund["id"], refund.get("branch_id"))
+	stamp(credit_note, connection, refund["id"], refund.get("branch_id"), number=refund.get("order_number"))
 	if channels.is_channel_invoice(original):
 		credit_note.koomyo_channel = original.koomyo_channel
 		credit_note.debit_to = original.debit_to

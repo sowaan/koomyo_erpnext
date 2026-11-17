@@ -380,7 +380,7 @@ def receive_from_transit(
 		remaining[row.item_code] = take
 	if not entry.items:
 		raise Skipped(_("Nothing in transit to receive for transfer {0}.").format(transfer["id"]))
-	stamp(entry, connection, koomyo_id, branch_id)
+	stamp(entry, connection, koomyo_id, branch_id, number=transfer.get("number"))
 	entry.insert(ignore_permissions=True)
 	entry.submit()
 	return ("Stock Entry", entry.name)

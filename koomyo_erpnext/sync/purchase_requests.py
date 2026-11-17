@@ -218,7 +218,7 @@ def build_request(card: dict, connection, wanted: list[dict], draft: bool = Fals
 			"set_warehouse": branch.warehouse,
 		}
 	)
-	stamp(mr, connection, card["id"], card.get("branch_id"))
+	stamp(mr, connection, card["id"], card.get("branch_id"), number=card.get("number"))
 	for w in wanted:
 		line = w["line"]
 		ingredient = line.get("ingredient") or {}

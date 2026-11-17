@@ -565,7 +565,7 @@ def new_payout_entry(connection, payout: dict, row, amount: Decimal, adjustments
 					"description": f"{label} [{adj_id}]"[:140],
 				},
 			)
-	stamp(pe, connection, payout["id"])
+	stamp(pe, connection, payout["id"], number=payout.get("reference"))
 	pe.insert(ignore_permissions=True)
 	pe.submit()
 	return pe.name

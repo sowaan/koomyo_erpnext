@@ -56,10 +56,14 @@ def find_existing(doctype: str, connection, koomyo_id: str, include_cancelled: b
 	return frappe.db.get_value(doctype, filters, "name", for_update=True)
 
 
-def stamp(doc, connection, koomyo_id: str, branch_id: str | None = None):
+def stamp(doc, connection, koomyo_id: str, branch_id: str | None = None, number: str | None = None):
+	"""Mark a document as made from a Koomyo record. `number` is Koomyo's own readable number for it (an order
+	number, a purchase order number, ...), shown as Koomyo Number; the id stays for the duplicate guard."""
 	doc.koomyo_connection = connection.name
 	doc.koomyo_id = koomyo_id
 	doc.koomyo_branch = branch_id
+	if number and isinstance(number, str) and doc.meta.has_field("koomyo_number"):
+		doc.koomyo_number = number[:140]
 
 
 # ---------------------------------------------------------------- maps
