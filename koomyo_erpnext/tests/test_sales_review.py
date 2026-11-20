@@ -191,3 +191,26 @@ class TestTaxRatePatch(ReviewCase):
 		frappe.db.set_value("Sales Invoice", sale.name, "koomyo_tax_rate", "5")
 		fill_koomyo_tax_rate.execute()
 		self.assertEqual(frappe.db.get_value("Sales Invoice", sale.name, "koomyo_tax_rate"), "5")
+
+
+class TestWorkspace(ReviewCase):
+	def test_the_workspace_on_the_site_is_the_one_in_the_file_and_links_the_report(self):
+		"""ERPNext re-imports a standard workspace only when the file's `modified` changes: an edit without it never
+		reaches the site (the report link was missing for a day because of that)."""
+		import json
+		import os
+
+		path = os.path.join(
+			frappe.get_app_path("koomyo_erpnext"), "koomyo_erpnext", "workspace", "koomyo", "koomyo.json"
+		)
+		with open(path) as f:
+			filed = json.load(f)
+		self.assertEqual(
+			frappe.utils.get_datetime(frappe.db.get_value("Workspace", "Koomyo", "modified")),
+			frappe.utils.get_datetime(filed["modified"]),
+		)
+		shortcuts = frappe.get_all(
+			"Workspace Shortcut", filters={"parent": "Koomyo", "type": "Report"}, pluck="link_to"
+		)
+		self.assertEqual(shortcuts, ["Koomyo Sales by Payment Method and Tax Rate"])
+		self.assertTrue(frappe.db.exists("Report", "Koomyo Sales by Payment Method and Tax Rate"))
