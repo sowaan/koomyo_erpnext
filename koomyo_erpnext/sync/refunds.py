@@ -132,6 +132,8 @@ def book_refund(refund: dict, connection, timezone: str | None = None, client: K
 			"The refund came after midnight of the same business day, so it is posted at the sale's time of day."
 		)
 	stamp(credit_note, connection, refund["id"], refund.get("branch_id"), number=refund.get("order_number"))
+	if original.get("koomyo_tax_rate"):
+		credit_note.koomyo_tax_rate = original.koomyo_tax_rate  # a refund is reviewed at the sale's rate
 	if channels.is_channel_invoice(original):
 		credit_note.koomyo_channel = original.koomyo_channel
 		credit_note.debit_to = original.debit_to

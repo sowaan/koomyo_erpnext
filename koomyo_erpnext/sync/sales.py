@@ -170,6 +170,8 @@ def book_order(order: dict, connection, timezone: str | None = None):
 		invoice.posting_time = time
 	stamp(invoice, connection, order["id"], order.get("branch_id"), number=order.get("number"))
 	note_srb(invoice, order)
+	if amounts.get("tax_rate") not in (None, ""):
+		invoice.koomyo_tax_rate = str(amounts["tax_rate"])[:140]
 	if party:
 		invoice.debit_to = party.receivable_account
 		invoice.koomyo_channel = channel.get("code") or party.channel_code

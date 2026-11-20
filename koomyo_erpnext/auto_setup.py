@@ -14,6 +14,8 @@ Apply: creates and fills only what the user chose, in one transaction.
 Docs: docs.koomyo.com (conventions, reference/scopes); OpenAPI /branches, /payment-methods, /ingredients.
 """
 
+from decimal import Decimal
+
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, today
@@ -273,6 +275,35 @@ def read_places(client, scopes: set, notes: list) -> tuple[list, dict]:
 	return branches, warehouses
 
 
+def rate_text(value) -> str | None:
+	"""A tax rate as the Tax Map writes it: '15.00' is '15', '5.5' stays '5.5'; None when it is not a number."""
+	try:
+		return f"{Decimal(str(value)).normalize():f}"
+	except Exception:
+		return None
+
+
+def read_tax_rates(client, scopes: set, notes: list) -> list[str]:
+	"""The tax rates on recent paid orders (the rate can depend on the payment method), lowest first.
+
+	Reads at most two pages of the newest paid orders and writes nothing. Without orders.read, or when the read
+	fails, there are none and the wizard proposes the single "any rate" row as before.
+	"""
+	if "orders.read" not in scopes:
+		return []
+	rates: set[str] = set()
+	try:
+		for order in client.iter_list("/orders", {"payment_status": "paid", "limit": 100}, max_pages=2):
+			amounts = order.get("amounts") or {}
+			text = rate_text(amounts.get("tax_rate"))
+			if text is not None and Decimal(text) > 0 and Decimal(str(amounts.get("tax") or "0")) > 0:
+				rates.add(text)
+	except KoomyoAPIError as e:
+		notes.append(_("Tax rates could not be read from recent orders: {0}").format(str(e)[:200]))
+		return []
+	return sorted(rates, key=Decimal)
+
+
 def read_koomyo(connection) -> dict:
 	"""Everything the plan needs from Koomyo: reads only."""
 	client = KoomyoClient.for_connection(connection)
@@ -292,6 +323,7 @@ def read_koomyo(connection) -> dict:
 	else:
 		notes.append(_("The key has no stock.read scope, so ingredient units could not be read."))
 	branches, warehouses = read_places(client, scopes, notes)
+	tax_rates = read_tax_rates(client, scopes, notes)
 	channels = []
 	if "sales_channels.read" in scopes:  # an opt-in scope: a key without it simply has no channels here
 		try:
@@ -303,6 +335,7 @@ def read_koomyo(connection) -> dict:
 		"branches": branches,
 		"warehouses": warehouses,
 		"channels": channels,
+		"tax_rates": tax_rates,
 		"methods": methods,
 		"units": sorted(units),
 		"notes": notes,
@@ -473,7 +506,24 @@ def build_plan(connection, koomyo: dict) -> list[dict]:
 				f"{label} Clearing",
 			)
 
-	if not connection.tax_map:
+	mapped_rates = {rate_text(r.tax_rate) for r in connection.tax_map if (r.tax_rate or "").strip()}
+	new_rates = [r for r in koomyo.get("tax_rates") or [] if r not in mapped_rates]
+	for rate in new_rates:
+		# One account per rate, so the ledger (and the sales review) shows each rate on its own line.
+		existing = find_account(
+			co,
+			[f"Sales Tax {rate}%", f"Sales Tax {rate}", f"Output Tax {rate}%", f"GST {rate}%"],
+			"Liability",
+			"Tax",
+		)
+		propose_account(
+			f"tax:rate:{rate}",
+			_("Taxes"),
+			_("Tax account for {0}%").format(rate),
+			existing,
+			f"Sales Tax {rate}%",
+		)
+	if not connection.tax_map and not koomyo.get("tax_rates"):
 		existing = find_account(
 			co, ["Sales Tax", "Output Tax", "GST", "VAT"], "Liability", "Tax"
 		) or find_account(co, [], "Liability", "Tax")
@@ -1001,6 +1051,13 @@ def apply_plan(connection, koomyo: dict, choices: list[dict]) -> dict:
 				"payout_account": bank,
 			},
 		)
+	for id_, value in resolved.items():
+		if id_.startswith("tax:rate:") and value:
+			rate = id_.removeprefix("tax:rate:")
+			if not any(
+				rate_text(r.tax_rate) == rate for r in connection.tax_map if (r.tax_rate or "").strip()
+			):
+				connection.append("tax_map", {"tax_rate": rate, "account_head": value})
 	if resolved.get("tax:account"):
 		connection.append("tax_map", {"tax_rate": "", "account_head": resolved["tax:account"]})
 	for unit in koomyo["units"]:

@@ -444,3 +444,38 @@ class TestAutoSetup(KoomyoIntegrationTestCase):
 		_koomyo, again = self.plan()
 		self.assertEqual([k for k in again if k.startswith("channel:")], [])
 		self.assertEqual(len(self.conn.channel_map), 2)
+
+	def paid_order(self, rate, tax):
+		return {
+			"object": "order",
+			"id": f"order-rate-{rate}",
+			"payment": {"status": "paid"},
+			"amounts": {"tax_rate": rate, "tax": tax},
+		}
+
+	def test_a_tax_account_is_proposed_for_each_rate_koomyo_uses(self):
+		self.addCleanup(self.fake_a.lists.pop, "/orders", None)  # the fake is shared between tests
+		self.fake_a.lists["/orders"] = [
+			self.paid_order("15.00", "94.50"),
+			self.paid_order("5.00", "20.00"),
+			self.paid_order("5", "10.00"),
+			self.paid_order("0.00", "0.00"),
+		]
+		_koomyo, plan = self.plan()
+		self.assertEqual(sorted(k for k in plan if k.startswith("tax:")), ["tax:rate:15", "tax:rate:5"])
+		self.assertEqual(plan["tax:rate:15"]["value"], "Sales Tax 15%")
+		self.assertEqual(plan["tax:rate:5"]["action"], auto_setup.CREATE)
+		self.apply()
+		rows = {r.tax_rate: r.account_head for r in self.conn.tax_map}
+		self.assertEqual(sorted(rows), ["15", "5"])
+		self.assertNotEqual(rows["15"], rows["5"])
+		self.assertEqual(frappe.db.get_value("Account", rows["5"], "account_type"), "Tax")
+		# run again: nothing more to propose, nothing doubled
+		_koomyo, again = self.plan()
+		self.assertEqual([k for k in again if k.startswith("tax:")], [])
+		self.assertEqual(len(self.conn.tax_map), 2)
+
+	def test_without_orders_to_read_the_single_any_rate_row_is_proposed_as_before(self):
+		_koomyo, plan = self.plan()
+		self.assertIn("tax:account", plan)
+		self.assertEqual([k for k in plan if k.startswith("tax:rate:")], [])
