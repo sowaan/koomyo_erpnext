@@ -9,6 +9,14 @@ from koomyo_erpnext.tests import test_transfer_steps as ts_tests
 from koomyo_erpnext.tests.fake_koomyo import load_fixture
 from koomyo_erpnext.tests.test_sales import SalesTestCase, refund_event
 
+TOP_OF_FORM = {  # next to the customer or supplier, not buried in the collapsed Koomyo section
+	"Sales Invoice": "customer_name",
+	"Payment Entry": "party_name",
+	"Purchase Order": "supplier_name",
+	"Purchase Receipt": "supplier_name",
+	"Material Request": "material_request_type",
+	"Stock Entry": "stock_entry_type",
+}
 ORDER_ID = "a8955e7a-335a-4ad0-a872-56b6d2479f80"
 ORDER_NUMBER = "ORD-PFB-20261012-0002"
 
@@ -34,7 +42,7 @@ class TestKoomyoNumber(SalesTestCase):
 			frappe.db.get_value("Sales Invoice", log.reference_name, "koomyo_number"), ORDER_NUMBER
 		)
 
-	def test_the_field_is_visible_searchable_and_read_only_next_to_the_id(self):
+	def test_the_field_is_visible_searchable_read_only_and_at_the_top_of_the_form(self):
 		for doctype in fill_koomyo_number.DOCTYPES:
 			field = frappe.get_meta(doctype).get_field("koomyo_number")
 			self.assertIsNotNone(field, doctype)
@@ -46,7 +54,7 @@ class TestKoomyoNumber(SalesTestCase):
 					field.in_standard_filter,
 					field.insert_after,
 				),
-				(1, 0, 1, 1, "koomyo_connection"),
+				(1, 0, 1, 1, TOP_OF_FORM[doctype]),
 				doctype,
 			)
 			self.assertEqual(frappe.get_meta(doctype).get_field("koomyo_id").hidden, 0)
