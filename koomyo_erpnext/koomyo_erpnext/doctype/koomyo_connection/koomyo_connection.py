@@ -475,6 +475,25 @@ class KoomyoConnection(Document):
 		return undo_plan(self)
 
 	@frappe.whitelist()
+	def fill_business_days(self, preview: int = 0):
+		"""Queue the fill of Koomyo Business Day on documents booked before Koomyo sent it (or its preview)."""
+		self.check_permission("write")
+		if self.status == "Not Tested" or not self.tenant_id:
+			frappe.throw(_("Press Test Connection first."))
+		frappe.enqueue(
+			"koomyo_erpnext.sync.business_day.fill_business_days",
+			queue="long",
+			timeout=3600,
+			job_id=f"koomyo-business-day-{frappe.local.site}-{self.name}",
+			deduplicate=True,
+			connection_name=self.name,
+			preview=bool(int(preview)),
+		)
+		return _(
+			"Reading Koomyo's orders, refunds and shifts in the background. The result is a comment on this connection."
+		)
+
+	@frappe.whitelist()
 	def load_catalog(self, preview: int = 0):
 		"""Queue the menu and ingredient load (or its preview) for this connection."""
 		self.check_permission("write")

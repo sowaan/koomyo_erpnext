@@ -107,3 +107,122 @@ class TestReviewByBusinessDay(SalesTestCase):
 		self.assertEqual([r["day"] for r in rows], ["2026-10-11"])
 		plain_columns, plain = self.run_report(from_date="2026-10-01", to_date="2026-10-31")
 		self.assertNotEqual(plain_columns[0]["fieldname"], "day")
+
+
+class TestFillBusinessDay(SalesTestCase):
+	def setUp(self):
+		super().setUp()
+		from koomyo_erpnext.tests.helpers import configure_sales
+
+		configure_sales(
+			self.conn_a, "_KTA", sync_shifts=1, cash_over_short_account="Miscellaneous Expenses - _KTA"
+		)
+		self.conn_a.reload()
+		# an order, a refund and a shift booked before Koomyo sent the day (so none of them has one)
+		self.assertEqual(self.book(load_fixture("event_order_paid") | {"tenant_id": TENANT_A}).status, "Done")
+		self.refund_log = self.book(refund_event(order_id=ORDER_ID, amount="724.50"))
+		self.assertEqual(self.refund_log.status, "Done", self.refund_log.message)
+		self.book(shift_event(seq=70, shift_id="shift-fill"))
+		self.refund_id = frappe.db.get_value("Sales Invoice", self.refund_log.reference_name, "koomyo_id")
+		for doctype in ("Sales Invoice", "Payment Entry", "Journal Entry", "Stock Entry"):
+			frappe.db.sql(
+				f"update `tab{doctype}` set koomyo_business_day = null where koomyo_connection = %s",
+				self.conn_a.name,
+			)
+		frappe.db.commit()
+
+	def koomyo_lists(self, order_day="2026-10-11", refund_day="2026-10-11", shift_day="2026-10-11"):
+		order = {
+			"id": ORDER_ID,
+			"object": "order",
+			"business_date": "2026-10-12",
+			"payment": {"status": "paid"},
+		}
+		if order_day:
+			order["business_day"] = order_day
+		refund = {"id": self.refund_id, "object": "refund", "business_date": "2026-10-12"}
+		if refund_day:
+			refund["business_day"] = refund_day
+		shift = {"id": "shift-fill", "object": "shift", "status": "closed", "business_date": "2026-10-12"}
+		if shift_day:
+			shift["business_day"] = shift_day
+		unknown = {
+			"id": "never-booked",
+			"object": "order",
+			"business_day": "2026-10-11",
+			"payment": {"status": "paid"},
+		}
+		self.fake_a.lists["/orders"] = [order, unknown]
+		self.fake_a.lists["/refunds"] = [refund]
+		self.fake_a.lists["/shifts"] = [shift]
+
+	def run_fill(self, **kw):
+		from koomyo_erpnext.sync.business_day import fill_business_days
+
+		with self.koomyo():
+			return fill_business_days(self.conn_a.name, **kw)
+
+	def day(self, doctype, name):
+		return str(frappe.db.get_value(doctype, name, "koomyo_business_day") or "")
+
+	def test_it_fills_the_invoice_its_payment_the_credit_note_and_the_shift_entry(self):
+		self.koomyo_lists()
+		summary = self.run_fill()
+		self.assertEqual(summary["errors"], [])
+		self.assertEqual((summary["orders"]["filled"], summary["orders"]["not_booked"]), (1, 1))
+		self.assertEqual((summary["refunds"]["filled"], summary["shifts"]["filled"]), (1, 1))
+		inv = self.invoice(ORDER_ID)
+		self.assertEqual(self.day("Sales Invoice", inv.name), "2026-10-11")
+		self.assertEqual({self.day("Payment Entry", p.name) for p in self.payments(inv)}, {"2026-10-11"})
+		self.assertEqual(self.day("Sales Invoice", self.refund_log.reference_name), "2026-10-11")
+		entry = frappe.db.get_value(
+			"Journal Entry", {"koomyo_connection": self.conn_a.name, "koomyo_id": "shift-fill"}
+		)
+		self.assertEqual(self.day("Journal Entry", entry), "2026-10-11")
+		# the posting dates never move
+		self.assertEqual(str(inv.posting_date), "2026-10-12")
+
+	def test_a_preview_counts_and_writes_nothing_and_a_second_run_changes_nothing(self):
+		self.koomyo_lists()
+		preview = self.run_fill(preview=True)
+		self.assertEqual((preview["orders"]["filled"], preview["preview"]), (1, True))
+		self.assertEqual(self.day("Sales Invoice", self.invoice(ORDER_ID).name), "")
+		self.run_fill()
+		again = self.run_fill()
+		self.assertEqual((again["orders"]["filled"], again["orders"]["already"]), (0, 1))
+		self.assertEqual((again["refunds"]["filled"], again["shifts"]["filled"]), (0, 0))
+
+	def test_a_day_already_there_is_never_overwritten(self):
+		self.koomyo_lists(order_day="2026-10-20")
+		inv = self.invoice(ORDER_ID)
+		frappe.db.set_value("Sales Invoice", inv.name, "koomyo_business_day", "2026-10-11")
+		for payment in self.payments(inv):  # the whole order already has its day
+			frappe.db.set_value("Payment Entry", payment.name, "koomyo_business_day", "2026-10-11")
+		summary = self.run_fill()
+		self.assertEqual(summary["orders"]["already"], 1)
+		self.assertEqual(self.day("Sales Invoice", inv.name), "2026-10-11")
+
+	def test_an_older_koomyo_without_the_field_fills_nothing_and_says_so(self):
+		self.koomyo_lists(order_day=None, refund_day=None, shift_day=None)
+		summary = self.run_fill()
+		self.assertEqual((summary["orders"]["no_day"], summary["orders"]["filled"]), (1, 0))
+		self.assertEqual(self.day("Sales Invoice", self.invoice(ORDER_ID).name), "")
+
+	def test_the_result_is_a_comment_on_the_connection(self):
+		self.koomyo_lists()
+		self.run_fill()
+		notes = frappe.get_all(
+			"Comment",
+			filters={"reference_doctype": "Koomyo Connection", "reference_name": self.conn_a.name},
+			pluck="content",
+		)
+		self.assertTrue([n for n in notes if "Business day filled" in n and "Orders: 1 filled" in n])
+
+	def test_the_button_queues_the_job_once(self):
+		from unittest.mock import patch
+
+		with patch("frappe.enqueue") as queued:
+			message = self.conn_a.fill_business_days(preview=1)
+		self.assertIn("background", message)
+		kwargs = queued.call_args.kwargs
+		self.assertEqual((kwargs["preview"], kwargs["deduplicate"], kwargs["queue"]), (True, True, "long"))

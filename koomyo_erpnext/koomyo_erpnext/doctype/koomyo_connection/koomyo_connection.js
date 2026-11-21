@@ -110,6 +110,20 @@ frappe.ui.form.on("Koomyo Connection", {
 				() => load_catalog(frm, 0)
 			)
 		);
+		action(__("Preview Business Day Fill"), () =>
+			frm.call("fill_business_days", { preview: 1 }).then((r) => r.message && frappe.show_alert(r.message))
+		);
+		action(__("Fill Business Day from Koomyo"), () =>
+			frappe.confirm(
+				__(
+					"Write the business day Koomyo gives onto the invoices, payments, credit notes and shift entries that were booked without one? Only empty fields are filled."
+				),
+				() =>
+					frm
+						.call("fill_business_days", { preview: 0 })
+						.then((r) => r.message && frappe.show_alert(r.message))
+			)
+		);
 		if (frm.doc.enabled) {
 			action(__("Catch Up Now"), () =>
 				frm.call("catch_up_now").then((r) => r.message && frappe.show_alert(r.message))
