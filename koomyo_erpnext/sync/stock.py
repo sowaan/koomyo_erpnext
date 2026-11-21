@@ -402,7 +402,14 @@ def new_stock_entry(connection, purpose: str, record: dict, koomyo_id: str, bran
 	time = local_time(record.get("created_at") or record.get("received_at"), connection.koomyo_timezone)
 	if time:
 		entry.posting_time = time
-	stamp(entry, connection, koomyo_id, branch_id, number=record.get("number"))
+	stamp(
+		entry,
+		connection,
+		koomyo_id,
+		branch_id,
+		number=record.get("number"),
+		business_day=record.get("business_day"),
+	)
 	return entry
 
 

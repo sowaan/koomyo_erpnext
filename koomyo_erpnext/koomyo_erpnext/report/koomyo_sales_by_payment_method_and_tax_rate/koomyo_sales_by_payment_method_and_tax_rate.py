@@ -21,7 +21,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 import frappe
 from frappe import _
-from frappe.utils import flt
+from frappe.utils import add_days, flt, getdate
 
 CENT = Decimal("0.01")
 NOT_PAID = "Not paid"
@@ -31,11 +31,17 @@ def execute(filters=None):
 	filters = frappe._dict(filters or {})
 	if not (filters.from_date and filters.to_date):
 		frappe.throw(_("Choose the dates."))
-	return columns(), data(filters)
+	return columns(filters), data(filters)
 
 
-def columns():
+def columns(filters=None):
+	day = (
+		[{"label": _("Day"), "fieldname": "day", "fieldtype": "Data", "width": 100}]
+		if filters and filters.by_day
+		else []
+	)
 	return [
+		*day,
 		{"label": _("Payment Method"), "fieldname": "method", "fieldtype": "Data", "width": 180},
 		{"label": _("Tax Rate"), "fieldname": "rate", "fieldtype": "Data", "width": 90},
 		{"label": _("Type"), "fieldname": "kind", "fieldtype": "Data", "width": 90},
@@ -78,11 +84,17 @@ def divide(amount: Decimal, shares: list[Decimal]) -> list[Decimal]:
 
 
 def data(filters) -> list[dict]:
-	invoice_filters = {
-		"koomyo_connection": ("is", "set"),
-		"docstatus": 1,
-		"posting_date": ("between", [filters.from_date, filters.to_date]),
-	}
+	by_business_day = filters.basis == "Business day"
+	invoice_filters = {"koomyo_connection": ("is", "set"), "docstatus": 1}
+	if by_business_day:
+		# The business day can differ from the posting date by a day either way: read a little wider, then keep
+		# the invoices whose own day is in range (an older invoice with no business day counts on its posting date).
+		invoice_filters["posting_date"] = (
+			"between",
+			[add_days(filters.from_date, -2), add_days(filters.to_date, 2)],
+		)
+	else:
+		invoice_filters["posting_date"] = ("between", [filters.from_date, filters.to_date])
 	if filters.company:
 		invoice_filters["company"] = filters.company
 	if filters.connection:
@@ -96,6 +108,8 @@ def data(filters) -> list[dict]:
 		filters=invoice_filters,
 		fields=[
 			"name",
+			"posting_date",
+			"koomyo_business_day",
 			"is_return",
 			"koomyo_channel",
 			"koomyo_tax_rate",
@@ -107,6 +121,9 @@ def data(filters) -> list[dict]:
 		limit_page_length=0,
 		order_by="posting_date asc, name asc",
 	)
+	if by_business_day:
+		first, last = getdate(filters.from_date), getdate(filters.to_date)
+		invoices = [i for i in invoices if first <= getdate(i.koomyo_business_day or i.posting_date) <= last]
 	if not invoices:
 		return []
 	names = [i.name for i in invoices]
@@ -136,6 +153,9 @@ def data(filters) -> list[dict]:
 		if filters.refunds == "Net with sales":
 			sign_kind = _("Net")
 		rate = rate_label(inv.koomyo_tax_rate or rates.get(inv.return_against))
+		day = str(
+			getdate(inv.koomyo_business_day or inv.posting_date) if by_business_day else inv.posting_date
+		)
 		total = money(inv.grand_total)
 		tax = taxes[inv.name]["tax"]
 		other = taxes[inv.name]["other"]
@@ -149,8 +169,9 @@ def data(filters) -> list[dict]:
 		main = max(range(len(methods)), key=lambda i: methods[i][1])
 		for index, (method, _weight) in enumerate(methods):
 			row = rows.setdefault(
-				(method, rate, sign_kind),
+				(day if filters.by_day else "", method, rate, sign_kind),
 				{
+					"day": day if filters.by_day else None,
 					"method": method,
 					"rate": rate,
 					"kind": sign_kind,
@@ -167,7 +188,7 @@ def data(filters) -> list[dict]:
 				row[key] = money(row[key] + parts[key][index])
 	return [
 		{**row, **{k: flt(row[k], 2) for k in ("net", "tax", "other", "total")}}
-		for _key, row in sorted(rows.items(), key=lambda item: (item[0][0], item[0][1], item[0][2]))
+		for _key, row in sorted(rows.items(), key=lambda item: item[0])
 	]
 
 

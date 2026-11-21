@@ -118,7 +118,7 @@ def book_shift(shift: dict, connection):
 	)
 	for account, side in ((debit, "debit_in_account_currency"), (credit, "credit_in_account_currency")):
 		entry.append("accounts", {"account": account, "cost_center": branch.cost_center, side: amount})
-	stamp(entry, connection, shift["id"], shift.get("branch_id"))
+	stamp(entry, connection, shift["id"], shift.get("branch_id"), business_day=shift.get("business_day"))
 	entry.insert(ignore_permissions=True)
 	entry.submit()
 	return ("Journal Entry", entry.name)

@@ -333,6 +333,7 @@ class KoomyoConnection(Document):
 							"name": branch.get("name"),
 							"code": branch.get("code"),
 							"active": branch.get("active"),
+							"day_start": branch.get("business_day_start"),
 							"mapped": branch.get("id") in mapped,
 						}
 					)

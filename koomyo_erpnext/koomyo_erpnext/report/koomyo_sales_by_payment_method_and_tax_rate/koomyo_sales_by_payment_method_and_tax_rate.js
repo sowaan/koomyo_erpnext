@@ -32,6 +32,17 @@ frappe.query_reports["Koomyo Sales by Payment Method and Tax Rate"] = {
 			default: frappe.datetime.get_today(),
 		},
 		{
+			fieldname: "basis",
+			label: __("Date Basis"),
+			fieldtype: "Select",
+			options: "Posting date\nBusiness day",
+			default: "Posting date",
+			description: __(
+				"Business day is the trading day Koomyo gave each order: a sale at 01:30 belongs to the day before when the day starts at 09:00."
+			),
+		},
+		{ fieldname: "by_day", label: __("Show Each Day"), fieldtype: "Check", default: 0 },
+		{
 			fieldname: "refunds",
 			label: __("Refunds"),
 			fieldtype: "Select",

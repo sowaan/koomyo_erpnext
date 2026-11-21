@@ -46,6 +46,7 @@ class TestConnection(KoomyoIntegrationTestCase):
 		self.assertEqual(conn.missing_scopes, "")
 		self.assertEqual(result["branches"][0]["id"], BRANCH_ID)
 		self.assertFalse(result["branches"][0]["mapped"])
+		self.assertEqual(result["branches"][0]["day_start"], "09:00")  # shown, never assumed
 		self.assertTrue(any("not mapped" in w for w in result["warnings"]))
 
 	def test_missing_scopes_shown_and_block(self):

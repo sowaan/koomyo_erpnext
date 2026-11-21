@@ -168,7 +168,14 @@ def book_order(order: dict, connection, timezone: str | None = None):
 	time = local_time(order.get("paid_at") or order.get("created_at"), timezone or connection.koomyo_timezone)
 	if time:
 		invoice.posting_time = time
-	stamp(invoice, connection, order["id"], order.get("branch_id"), number=order.get("number"))
+	stamp(
+		invoice,
+		connection,
+		order["id"],
+		order.get("branch_id"),
+		number=order.get("number"),
+		business_day=order.get("business_day"),
+	)
 	note_srb(invoice, order)
 	if amounts.get("tax_rate") not in (None, ""):
 		invoice.koomyo_tax_rate = str(amounts["tax_rate"])[:140]
@@ -422,7 +429,14 @@ def make_payment_entry(
 	pe.reference_no = (reference or invoice.name)[:140]
 	pe.mode_of_payment = row.mode_of_payment
 	pe.cost_center = invoice.cost_center
-	stamp(pe, connection, koomyo_id, invoice.koomyo_branch, number=invoice.get("koomyo_number"))
+	stamp(
+		pe,
+		connection,
+		koomyo_id,
+		invoice.koomyo_branch,
+		number=invoice.get("koomyo_number"),
+		business_day=invoice.get("koomyo_business_day"),
+	)
 	if row.get("is_default"):
 		pe.custom_remarks = 1  # else ERPNext writes its own remarks over this
 		pe.remarks = _(

@@ -194,11 +194,11 @@ function test_connection(frm) {
 		if ((res.branches || []).length) {
 			html += `<table class="table table-bordered table-sm"><tr><th>${__(
 				"Branch"
-			)}</th><th>${__("Code")}</th><th>${__("Mapped")}</th></tr>`;
+			)}</th><th>${__("Code")}</th><th>${__("Day starts")}</th><th>${__("Mapped")}</th></tr>`;
 			res.branches.forEach((b) => {
 				html += `<tr><td>${esc(b.name)}${
 					b.active ? "" : " (" + __("inactive") + ")"
-				}</td><td>${esc(b.code || "")}</td><td>${
+				}</td><td>${esc(b.code || "")}</td><td>${esc(b.day_start || "")}</td><td>${
 					b.mapped ? __("Yes") : __("No")
 				}</td></tr>`;
 			});

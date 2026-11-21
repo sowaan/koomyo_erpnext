@@ -15,7 +15,8 @@
    "object": "branch",
    "phone": "+92 21 3456 7890",
    "tax_rate": "0",
-   "tax_rate_card": "0"
+   "tax_rate_card": "0",
+   "business_day_start": "09:00"
   }
  ],
  "has_more": false,
