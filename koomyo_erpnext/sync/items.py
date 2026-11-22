@@ -36,10 +36,11 @@ def menu_item(connection, line: dict) -> str:
 		return size_variant(connection, line["item_id"], name, line["size_id"], line["size"], group=group)
 	code = get_or_create_item(connection, koomyo_id, name, is_stock_item=0, item_group=group)
 	if frappe.db.get_value("Item", code, "has_variants"):
-		raise Fatal(
-			_("Koomyo order line {0} for {1} has no size, but the menu item has sizes in ERPNext.").format(
-				line.get("id"), name
-			)
+		# A line sold without a size on a menu item that now has sizes (sold before the sizes were added, or by a
+		# client that did not send one). ERPNext cannot sell a template, so the line books on a "No size" variant of
+		# it, at Koomyo's own price for the line; the sized variants and their sales are not touched.
+		return size_variant(
+			connection, line["item_id"], name, f"{line['item_id']}:{NO_SIZE_KEY}", NO_SIZE, group=group
 		)
 	return code
 
@@ -47,6 +48,8 @@ def menu_item(connection, line: dict) -> str:
 # ------------------------------------------------------------------ sizes as variants
 
 SIZE_ATTRIBUTE = "Koomyo Size"
+NO_SIZE = "No size"  # the value of a line sold without a size, on a menu item that has sizes
+NO_SIZE_KEY = "no-size"
 
 
 def ensure_size_attribute():

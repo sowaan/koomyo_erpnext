@@ -27,7 +27,13 @@ from koomyo_erpnext.exceptions import Fatal, KoomyoAPIError, NeedsMapping
 from koomyo_erpnext.sync.common import find_existing, money, setting
 from koomyo_erpnext.sync.customers import write_reference
 from koomyo_erpnext.sync.item_units import align_item, flag_blocked
-from koomyo_erpnext.sync.items import category_group, get_or_create_item, menu_template, size_variant
+from koomyo_erpnext.sync.items import (
+	NO_SIZE_KEY,
+	category_group,
+	get_or_create_item,
+	menu_template,
+	size_variant,
+)
 from koomyo_erpnext.sync.stock import ingredient_item
 
 SLEEP = time.sleep
@@ -199,7 +205,8 @@ def load_sizes(
 		filters={"variant_of": template, "koomyo_connection": connection.name, "disabled": 0},
 		fields=["name", "koomyo_id"],
 	):
-		if variant.koomyo_id not in seen:
+		if variant.koomyo_id not in seen and variant.koomyo_id != f"{record['id']}:{NO_SIZE_KEY}":
+			# (the "No size" variant of lines sold without a size is not one of Koomyo's sizes: it stays on)
 			frappe.db.set_value("Item", variant.name, "disabled", 1)
 			counts["updated"] += 1
 

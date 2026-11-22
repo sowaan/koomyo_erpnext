@@ -378,6 +378,131 @@ class TestSalesInvoice(SalesTestCase):
 		self.assertEqual(frappe.db.get_value("Item", large.item_code, "koomyo_id"), "size-L")
 		self.assertMoney(inv.grand_total, "2139.00")
 
+	def test_a_line_without_a_size_on_a_menu_item_that_has_sizes_books_on_a_no_size_variant(self):
+		"""Live: 'Koomyo order line ... for Half Broast has no size, but the menu item has sizes in ERPNext.'"""
+		sized = order_event(
+			order_id="sized-1",
+			lines=[
+				{
+					"item_id": "menu-hb",
+					"name": "Half Broast",
+					"size": "Large",
+					"size_id": "size-hb-L",
+					"quantity": 1,
+					"unit_price": "500.00",
+					"line_total": "500.00",
+				}
+			],
+			payments=[("cash", "575.00")],
+			items_subtotal="500.00",
+			tax="75.00",
+			total="575.00",
+			amount_due="575.00",
+			amount_paid="575.00",
+		)
+		self.assertEqual(self.book(sized).status, "Done")
+		plain = order_event(
+			seq=11,
+			order_id="plain-hb",
+			lines=[
+				{
+					"item_id": "menu-hb",
+					"name": "Half Broast",
+					"size": None,
+					"size_id": None,
+					"quantity": 2,
+					"unit_price": "300.00",
+					"line_total": "600.00",
+				}
+			],
+			payments=[("cash", "690.00")],
+			items_subtotal="600.00",
+			tax="90.00",
+			total="690.00",
+			amount_due="690.00",
+			amount_paid="690.00",
+		)
+		log = self.book(plain)
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		inv = self.invoice("plain-hb")
+		(row,) = inv.items
+		self.assertEqual((row.qty, D(str(row.rate)).quantize(D("0.01"))), (2, D("300.00")))
+		self.assertMoney(inv.grand_total, "690.00")
+		# its own variant of the same menu item, apart from the sized one
+		variant = frappe.get_doc("Item", row.item_code)
+		sized_item = self.invoice("sized-1").items[0].item_code
+		self.assertEqual(variant.variant_of, frappe.db.get_value("Item", sized_item, "variant_of"))
+		self.assertNotEqual(row.item_code, sized_item)
+		self.assertEqual((variant.item_name, variant.koomyo_id), ("Half Broast (No size)", "menu-hb:no-size"))
+		self.assertEqual(variant.disabled, 0)
+		# a second sale without a size uses the same variant, and the sized one is unchanged
+		again = order_event(
+			seq=12,
+			order_id="plain-hb-2",
+			lines=[
+				{
+					"item_id": "menu-hb",
+					"name": "Half Broast",
+					"size": None,
+					"size_id": None,
+					"quantity": 1,
+					"unit_price": "300.00",
+					"line_total": "300.00",
+				}
+			],
+			payments=[("cash", "345.00")],
+			items_subtotal="300.00",
+			tax="45.00",
+			total="345.00",
+			amount_due="345.00",
+			amount_paid="345.00",
+		)
+		self.assertEqual(self.book(again).status, "Done")
+		self.assertEqual(self.invoice("plain-hb-2").items[0].item_code, row.item_code)
+		self.assertEqual(
+			frappe.db.count("Item", {"koomyo_connection": self.conn_a.name, "koomyo_id": "menu-hb:no-size"}),
+			1,
+		)
+		# a menu load (or menu event) disables sizes Koomyo no longer lists, but never the No size variant
+		from koomyo_erpnext.client import KoomyoClient
+		from koomyo_erpnext.sync.catalog import load_menu_item
+
+		record = {
+			"object": "menu_item",
+			"id": "menu-hb",
+			"name": "Half Broast",
+			"category": None,
+			"has_sizes": True,
+			"active": True,
+			"base_price": "300.00",
+			"sizes": [{"id": "size-hb-L", "name": "Large", "price": "500.00", "active": True}],
+		}
+		with self.koomyo():
+			load_menu_item(self.conn_a, KoomyoClient.for_connection(self.conn_a), record, {})
+		self.assertEqual(frappe.db.get_value("Item", row.item_code, "disabled"), 0)
+		later = order_event(
+			seq=13,
+			order_id="plain-hb-3",
+			lines=[
+				{
+					"item_id": "menu-hb",
+					"name": "Half Broast",
+					"size": None,
+					"size_id": None,
+					"quantity": 1,
+					"unit_price": "300.00",
+					"line_total": "300.00",
+				}
+			],
+			payments=[("cash", "345.00")],
+			items_subtotal="300.00",
+			tax="45.00",
+			total="345.00",
+			amount_due="345.00",
+			amount_paid="345.00",
+		)
+		self.assertEqual(self.book(later).status, "Done", "still bookable after the menu load")
+
 	def test_free_order_books_at_zero_not_the_price_list(self):
 		# Koomyo sold a complimentary item: 0.00 due, 0.00 paid. ERPNext must not re-price it.
 		event = order_event(

@@ -105,6 +105,42 @@ class TestMenuEvents(SalesTestCase):
 		self.assertEqual(skipped.status, "Skipped")
 		self.assertIn("nothing to disable", skipped.message)
 
+	def test_when_koomyo_removes_the_sizes_the_size_variants_are_disabled_and_sales_still_book(self):
+		"""Half Broast: sizes taken away in Koomyo. ERPNext cannot turn an Item with variants back into a plain
+		Item, so it stays the template; its size variants are disabled and a sale without a size books on the
+		'No size' variant."""
+		sized = menu_record(
+			has_sizes=True,
+			sizes=[
+				{"id": SIZE_S, "name": "Small", "price": "300.00", "active": True},
+				{"id": SIZE_L, "name": "Large", "price": "600.00", "active": True},
+			],
+		)
+		self.assertEqual(self.book(self.event("created", sized, 950)).status, "Done")
+		template = self.item()
+		self.assertEqual(template.has_variants, 1)
+		no_sizes = menu_record(has_sizes=False, sizes=[])
+		log = self.book(self.event("updated", no_sizes, 951))
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		variants = frappe.get_all(
+			"Item", filters={"variant_of": template.name}, fields=["item_name", "disabled"]
+		)
+		self.assertEqual(
+			{v.item_name: v.disabled for v in variants},
+			{"Zinger Burger (Small)": 1, "Zinger Burger (Large)": 1},
+		)
+		self.assertEqual(self.item().has_variants, 1, "ERPNext keeps the template")
+		# a sale without a size now books (on the No size variant), and an update again changes nothing
+		from koomyo_erpnext.sync.items import menu_item
+
+		code = menu_item(
+			self.conn_a, {"item_id": MENU_ID, "name": "Zinger Burger", "size_id": None, "size": None}
+		)
+		self.assertEqual(frappe.db.get_value("Item", code, "item_name"), "Zinger Burger (No size)")
+		self.assertEqual(frappe.db.get_value("Item", code, "disabled"), 0)
+		self.assertEqual(self.book(self.event("updated", no_sizes, 952)).status, "Done")
+		self.assertEqual(frappe.db.get_value("Item", code, "disabled"), 0)
+
 	def test_a_menu_event_with_the_sales_sync_off_is_not_booked(self):
 		self.conn_a.reload()
 		self.conn_a.sync_sales = 0
