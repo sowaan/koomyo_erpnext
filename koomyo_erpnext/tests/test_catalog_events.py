@@ -105,10 +105,7 @@ class TestMenuEvents(SalesTestCase):
 		self.assertEqual(skipped.status, "Skipped")
 		self.assertIn("nothing to disable", skipped.message)
 
-	def test_when_koomyo_removes_the_sizes_the_size_variants_are_disabled_and_sales_still_book(self):
-		"""Half Broast: sizes taken away in Koomyo. ERPNext cannot turn an Item with variants back into a plain
-		Item, so it stays the template; its size variants are disabled and a sale without a size books on the
-		'No size' variant."""
+	def sized_menu(self, seq):
 		sized = menu_record(
 			has_sizes=True,
 			sizes=[
@@ -116,11 +113,80 @@ class TestMenuEvents(SalesTestCase):
 				{"id": SIZE_L, "name": "Large", "price": "600.00", "active": True},
 			],
 		)
-		self.assertEqual(self.book(self.event("created", sized, 950)).status, "Done")
+		self.assertEqual(self.book(self.event("created", sized, seq)).status, "Done")
 		template = self.item()
 		self.assertEqual(template.has_variants, 1)
-		no_sizes = menu_record(has_sizes=False, sizes=[])
-		log = self.book(self.event("updated", no_sizes, 951))
+		return template
+
+	def sell(self, size_id, size, order_id, seq):
+		from koomyo_erpnext.tests.test_sales import order_event
+
+		event = order_event(
+			seq=seq,
+			order_id=order_id,
+			lines=[
+				{
+					"item_id": MENU_ID,
+					"name": "Zinger Burger",
+					"size": size,
+					"size_id": size_id,
+					"quantity": 1,
+					"unit_price": "300.00",
+					"line_total": "300.00",
+				}
+			],
+			payments=[("cash", "345.00")],
+			items_subtotal="300.00",
+			tax="45.00",
+			total="345.00",
+			amount_due="345.00",
+			amount_paid="345.00",
+		)
+		self.assertEqual(self.book(event).status, "Done")
+
+	def test_sizes_removed_in_koomyo_that_were_never_used_make_it_a_plain_item_again(self):
+		"""Half Broast: the sizes were taken away in Koomyo and none was ever sold."""
+		template = self.sized_menu(950)
+		sizes = frappe.get_all("Item", filters={"variant_of": template.name}, pluck="name")
+		self.assertEqual(len(sizes), 2)
+		log = self.book(self.event("updated", menu_record(has_sizes=False, sizes=[]), 951))
+		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
+		item = self.item()
+		self.assertEqual((item.has_variants, item.name), (0, template.name), "the same Item, now a plain one")
+		self.assertEqual(frappe.get_all("Item", filters={"variant_of": template.name}), [])
+		self.assertFalse([n for n in sizes if frappe.db.exists("Item", n)], "the unused sizes are deleted")
+		self.assertEqual(
+			frappe.db.get_value(
+				"Item Price",
+				{"item_code": item.name, "price_list": self.conn_a.price_list},
+				"price_list_rate",
+			),
+			450,
+			"and it has its own price again",
+		)
+		notes = frappe.get_all(
+			"Comment", filters={"reference_doctype": "Item", "reference_name": item.name}, pluck="content"
+		)
+		self.assertTrue([n for n in notes if "plain Item again" in n])
+		# a sale without a size books on the Item itself: no No size variant is made
+		from koomyo_erpnext.sync.items import menu_item
+
+		code = menu_item(
+			self.conn_a, {"item_id": MENU_ID, "name": "Zinger Burger", "size_id": None, "size": None}
+		)
+		self.assertEqual(code, item.name)
+		self.assertFalse(frappe.db.exists("Item", {"koomyo_id": f"{MENU_ID}:no-size"}))
+		# an update again changes nothing
+		self.assertEqual(
+			self.book(self.event("updated", menu_record(has_sizes=False, sizes=[]), 952)).status, "Done"
+		)
+		self.assertEqual(self.item().has_variants, 0)
+
+	def test_sizes_removed_in_koomyo_that_were_sold_stay_as_disabled_sizes_and_sales_still_book(self):
+		"""ERPNext cannot delete a size that has an invoice, or turn a template back into a plain Item."""
+		template = self.sized_menu(960)
+		self.sell(SIZE_S, "Small", "sold-small", 961)
+		log = self.book(self.event("updated", menu_record(has_sizes=False, sizes=[]), 962))
 		self.assertEqual(log.status, "Done", (log.message, (log.error or "")[-300:]))
 		variants = frappe.get_all(
 			"Item", filters={"variant_of": template.name}, fields=["item_name", "disabled"]
@@ -128,9 +194,10 @@ class TestMenuEvents(SalesTestCase):
 		self.assertEqual(
 			{v.item_name: v.disabled for v in variants},
 			{"Zinger Burger (Small)": 1, "Zinger Burger (Large)": 1},
+			"nothing deleted (all or nothing: Large was never sold, but Small was), every size disabled",
 		)
-		self.assertEqual(self.item().has_variants, 1, "ERPNext keeps the template")
-		# a sale without a size now books (on the No size variant), and an update again changes nothing
+		self.assertEqual(self.item().has_variants, 1, "the template stays")
+		self.assertTrue(frappe.db.exists("Sales Invoice", {"koomyo_id": "sold-small"}))
 		from koomyo_erpnext.sync.items import menu_item
 
 		code = menu_item(
@@ -138,7 +205,9 @@ class TestMenuEvents(SalesTestCase):
 		)
 		self.assertEqual(frappe.db.get_value("Item", code, "item_name"), "Zinger Burger (No size)")
 		self.assertEqual(frappe.db.get_value("Item", code, "disabled"), 0)
-		self.assertEqual(self.book(self.event("updated", no_sizes, 952)).status, "Done")
+		self.assertEqual(
+			self.book(self.event("updated", menu_record(has_sizes=False, sizes=[]), 963)).status, "Done"
+		)
 		self.assertEqual(frappe.db.get_value("Item", code, "disabled"), 0)
 
 	def test_a_menu_event_with_the_sales_sync_off_is_not_booked(self):

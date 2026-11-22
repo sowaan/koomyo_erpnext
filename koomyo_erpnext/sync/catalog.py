@@ -157,6 +157,9 @@ def load_menu_item(connection, client, record: dict, categories: dict, summary: 
 	code = None
 	if record.get("has_sizes") and sizes:
 		code = menu_template(connection, record["id"], name, group=group, description=description)
+	elif existed and frappe.db.get_value("Item", existed, "has_variants"):
+		# Koomyo took the sizes away: back to a plain Item when no size was ever used (else the template stays)
+		unwind_template(connection, existed)
 	if not code:
 		code = existed or get_or_create_item(
 			connection, record["id"], name, is_stock_item=0, item_group=group, description=description
@@ -174,6 +177,39 @@ def load_menu_item(connection, client, record: dict, categories: dict, summary: 
 	else:
 		set_price(connection, code, record.get("base_price"))
 	return outcome
+
+
+def unwind_template(connection, template: str) -> bool:
+	"""Turn a menu item whose sizes Koomyo removed back into a plain Item, when ERPNext allows it.
+
+	ERPNext refuses to take "has variants" off an Item while a variant exists, and a variant that was ever used
+	(an invoice, a stock entry, an order) cannot be deleted. So this works only when no size of the item has any
+	history at all: the unused size Items (and any "No size" one) and their prices are deleted, the template goes
+	back to a plain Item, and a comment on it says so. Everything is tried inside one savepoint: if ERPNext
+	refuses any step, nothing changes and the template stays, with its sizes disabled as before. True when done.
+	"""
+	variants = frappe.get_all("Item", filters={"variant_of": template}, pluck="name")
+	frappe.db.savepoint("koomyo_unwind_template")
+	try:
+		for variant in variants:
+			frappe.db.delete("Item Price", {"item_code": variant})  # the app's own reference prices
+			frappe.delete_doc("Item", variant, ignore_permissions=True)
+		item = frappe.get_doc("Item", template)
+		item.has_variants = 0
+		item.set("attributes", [])
+		item.save(ignore_permissions=True)
+	except Exception:
+		frappe.db.rollback(save_point="koomyo_unwind_template")
+		frappe.local.message_log = []
+		return False
+	names = ", ".join(variants) or "-"
+	frappe.get_doc("Item", template).add_comment(
+		"Comment",
+		_(
+			"Koomyo removed this menu item's sizes. None of them had been used, so the size Items ({0}) were deleted and this is a plain Item again."
+		).format(names),
+	)
+	return True
 
 
 def load_sizes(
